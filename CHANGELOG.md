@@ -8,6 +8,41 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
+## Perier fork: [0.8.1-perier.1] - 2026-11-13
+
+The perierhq fork's build, tagged `v0.8.1-perier.1` and published to
+`ghcr.io/perierhq/openanalytics`. Upstream has not released 0.8.1; this build
+is upstream `main` after 0.8.0, which is everything under **Unreleased**
+below, plus the fork's own changes listed here.
+
+**Upgrade notes: name the fork's registry.** Run
+`OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh` from the
+`v0.8.1-perier.1` checkout; without it `upgrade.sh` points `.env` at
+upstream's registry, which has no such tag. A host that hand-served
+`/.well-known/oauth-protected-resource` to work around the issuer mismatch
+drops that workaround with this upgrade. The Unreleased notes below apply
+too: only the `object-storage` profile has a manual step.
+
+### Added
+
+- **Five more MCP tools**: `custom_events`, `performance`, `funnel_results`
+  (a stored funnel by id, or ad-hoc steps), `recent_visitors` and `visitor`.
+  They read new `/v1/read/analytics/*` routes that serve the dashboard's own
+  responses to an OAuth token or a session; a private API key gets `403`
+  there. The visitor reads show the revenue marker only to an owner whose
+  grant includes `revenue:read`, and never return individual payments. The
+  in-app assistant's tools are unchanged.
+- **`SELF-HOSTING.md` lists the MCP tools**, and a test keeps the list in step
+  with the server.
+- **`infra/hermes/`**: the fork's production host profile (Cloudflare Tunnel
+  Caddyfile, ClickHouse and Valkey tuning, a compose overlay). It takes effect
+  only where `.env` names it.
+- **`release.yml` publishes to the `OA_IMAGE_REPO` repository variable** when
+  it is set; unset, the registry is upstream's as before.
+
+The issuer-mismatch fix is listed under Unreleased, where it would land
+upstream.
+
 ## [Unreleased]
 
 **Upgrade notes: only if you enabled the `object-storage` profile.** Create
