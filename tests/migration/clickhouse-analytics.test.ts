@@ -124,6 +124,10 @@ describeIfClickHouse('analytics schema bootstrap', () => {
       'custom_events_15m',
       'performance_15m',
       'custom_event_samples_15m',
+      // The custom-event property breakdowns (migration 0030): same engine,
+      // same view pairing, additive.
+      'custom_event_properties_15m',
+      'custom_event_properties_1d',
     ]
     for (const table of rollupFamily) {
       expect(byName.get(table), `${table} should be an AggregatingMergeTree`).toBe(
@@ -227,6 +231,8 @@ describeIfClickHouse('analytics schema bootstrap', () => {
       'geography_15m',
       'devices_15m',
       'custom_events_15m',
+      'custom_event_properties_15m',
+      'custom_event_properties_1d',
     ]
     for (const table of visitorTables) {
       expect(byTable.get(table), `${table}.visitors must be an AggregateFunction(uniq)`).toMatch(

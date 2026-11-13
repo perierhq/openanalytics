@@ -168,6 +168,17 @@ export const DELETION_CLICKHOUSE_TARGETS = [
   // purged. Listed as literals, per this list's standing rule.
   'session_rollups_15m',
   'revenue_15m',
+  // The custom-event property breakdowns (DataFast gap 6; ClickHouse
+  // migration 0030).
+  //
+  // Site-scoped view targets like the rest of the family, so the existing
+  // delete-by-site statement covers them unchanged. Targets in their own right
+  // for the rollup reason: an aggregate outlives the raw rows it came from, and
+  // a deleted site whose breakdowns survived would leave every property value
+  // its events carried, per event name and quarter hour, readable from a table
+  // nothing else points at. Listed as literals, per this list's standing rule.
+  'custom_event_properties_15m',
+  'custom_event_properties_1d',
 ] as const
 export type DeletionClickhouseTarget = (typeof DELETION_CLICKHOUSE_TARGETS)[number]
 
@@ -452,7 +463,11 @@ export interface DeletionTargetName {
  *   read them, the 15m backfill's equality gate, compares with `events_raw`
  *   now. They leave this list in the same release that drops them: a target
  *   naming a table that no longer exists would fail every deletion, and a
- *   dropped table listed a release late would leave nothing to purge anyway.
+ *   dropped table listed a release late would leave nothing to purge anyway;
+ * - ClickHouse migration 0030 (Perier fork, DataFast gap 6) added the
+ *   custom-event property breakdowns, `custom_event_properties_15m` and
+ *   `custom_event_properties_1d` — so 34 became **36** and the site total 62
+ *   became **64** (63 became **65** on hosted).
  *
  * `currency_rates` (migration 0034) is deliberately **not** here and never will
  * be. It is global reference data — one row per `(rate_date, currency)`, with no

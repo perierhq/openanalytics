@@ -29,6 +29,7 @@ import {
   FILTERED_MAX_SPAN_DAYS,
   IMPORT_RUN_OPERATIONS,
   TIMEZONE_OPERATIONS,
+  customEventPropertiesOperationFor,
   customEventSamplesOperationFor,
   filteredOperationFor,
   importedReportOperationFor,
@@ -256,6 +257,17 @@ export interface RevenueJourneyRequest extends RevenueRequest {
   readonly objectId: string
 }
 
+export interface AnalyticsCustomEventPropertiesRequest extends AnalyticsRequest {
+  readonly eventName: string
+  /**
+   * The keys the event's definition declares, or null when no definition
+   * restricts it. Read from Postgres by the route (the gateway cannot).
+   */
+  readonly allowedKeys: readonly string[] | null
+  /** Values per key before the `other` row. */
+  readonly limit: number
+}
+
 export interface AnalyticsFunnelRequest extends CacheEpochScoped, ImportScoped {
   readonly siteId: string
   readonly from: string
@@ -270,6 +282,11 @@ export interface AnalyticsFunnelRequest extends CacheEpochScoped, ImportScoped {
    * never zero, and the gateway never reads the revenue facts.
    */
   readonly withRevenue: boolean
+}
+
+/** Every event one property breakdown counts: its kept values and its `other` row. */
+function totalEvents(entry: Schemas['CustomEventPropertyBreakdown']): number {
+  return entry.values.reduce((sum, value) => sum + value.events, entry.other?.events ?? 0)
 }
 
 /** Coerces a ClickHouse JSON scalar (UInt64 arrives as a string) to a number. */
@@ -1326,6 +1343,72 @@ export class AnalyticsService {
         row,
       ]),
     )
+  }
+
+  /**
+   * One custom event's property breakdown (DataFast gap 6; migration 0030):
+   * per key, the top `limit` values by events and an `other` row for the rest.
+   *
+   * Live only. An imported provider day carries event counts, never their
+   * properties, so the range's imported part has nothing to contribute and
+   * the meta says the answer is ours (the default sources).
+   */
+  async customEventProperties(
+    req: AnalyticsCustomEventPropertiesRequest,
+  ): Promise<Schemas['AnalyticsCustomEventPropertiesResponse']> {
+    const resolved = resolveAggregate(req)
+    if (!resolved.servable) this.#notServable(resolved.reason)
+    const effective = { from: resolved.effectiveFrom, to: resolved.effectiveTo }
+
+    const [result, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        customEventPropertiesOperationFor(resolved.sourceRollup),
+        {
+          site_id: req.siteId,
+          from: effective.from,
+          to: effective.to,
+          event_name: req.eventName,
+          all_keys: req.allowedKeys === null,
+          keys: req.allowedKeys ?? [],
+          limit: req.limit,
+        },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+
+    // Rows arrive ordered by key, then the kept values by events, then the
+    // key's `other` row.
+    const byKey = new Map<string, Schemas['CustomEventPropertyBreakdown']>()
+    for (const row of result.rows) {
+      const key = str(row['property_key'])
+      let entry = byKey.get(key)
+      if (entry === undefined) {
+        entry = { key, values: [], other: null }
+        byKey.set(key, entry)
+      }
+      const counts = { events: num(row['events']), visitors: num(row['visitors']) }
+      if (num(row['is_other']) === 1) entry.other = counts
+      else entry.values.push({ value: str(row['property_value']), ...counts })
+    }
+    const properties = [...byKey.values()].sort(
+      (a, b) => totalEvents(b) - totalEvents(a) || a.key.localeCompare(b.key),
+    )
+
+    return {
+      meta: this.#meta({
+        requested: { from: req.from, to: req.to },
+        effective,
+        timezone: req.timezone,
+        resolution: resolved.grain,
+        freshness,
+        comparisonRange: null,
+        truncated: result.meta.truncated,
+        cached: result.meta.cached,
+      }),
+      event_name: req.eventName,
+      properties,
+    }
   }
 
   async performance(req: AnalyticsReportRequest): Promise<Schemas['AnalyticsPerformanceResponse']> {

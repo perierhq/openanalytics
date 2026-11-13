@@ -1763,6 +1763,64 @@ paths:
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
+  /v1/read/analytics/custom-events/properties:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/CustomEventName'
+      - $ref: '#/components/parameters/PropertyValueLimit'
+    get:
+      operationId: readAnalyticsCustomEventProperties
+      tags: [read-key]
+      summary: One custom event's property values by count. Session or OAuth.
+      description: |
+        The same response as
+        `GET /v1/sites/{site_id}/analytics/custom-events/properties`.
+
+        One custom event's properties broken down by value: for each property
+        key, the `limit` values with the most events (each with its unique
+        visitors) and an `other` row folding every value below the cut, or
+        `other: null` when nothing was cut. Keys are ordered by their events.
+        At most 32 keys, the busiest first.
+
+        Values are text: a string as itself, a number or boolean as its JSON
+        text (`12`, `true`), cut to 100 characters. The reserved `oa_*` keys
+        and `order_id` are never broken down. When the event has a dashboard
+        definition that declares properties (`property_schema`), only those
+        keys are returned; without a definition, or with one that declares
+        none, every key is. Counts start when the property rollup was
+        installed (ClickHouse migration 0030) plus its 92-day history fill, and
+        imported provider data carries no properties.
+
+        A person's read, not a key's, for the reason `custom-events` gives: a
+        private key gets `403`.
+
+        Requires the `analytics:read` scope.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: The event's property breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsCustomEventPropertiesResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/read/analytics/performance:
     parameters:
       - $ref: '#/components/parameters/SiteSelector'
@@ -2911,6 +2969,51 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AnalyticsCustomEventsResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/SiteSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/sites/{site_id}/analytics/custom-events/properties:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/CustomEventName'
+      - $ref: '#/components/parameters/PropertyValueLimit'
+    get:
+      operationId: getAnalyticsCustomEventProperties
+      tags: [analytics]
+      summary: One custom event's property values by count.
+      description: |
+        One custom event's properties broken down by value: for each property
+        key, the `limit` values with the most events (each with its unique
+        visitors) and an `other` row folding every value below the cut, or
+        `other: null` when nothing was cut. Keys are ordered by their events.
+        At most 32 keys, the busiest first.
+
+        Values are text: a string as itself, a number or boolean as its JSON
+        text (`12`, `true`), cut to 100 characters. The reserved `oa_*` keys
+        and `order_id` are never broken down. When the event has a dashboard
+        definition that declares properties (`property_schema`), only those
+        keys are returned; without a definition, or with one that declares
+        none, every key is. Counts start when the property rollup was
+        installed (ClickHouse migration 0030) plus its 92-day history fill, and
+        imported provider data carries no properties.
+      responses:
+        '200':
+          description: The event's property breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsCustomEventPropertiesResponse'
         '400':
           $ref: '#/components/responses/AnalyticsBadRange'
         '401':
@@ -9515,6 +9618,67 @@ components:
           items:
             $ref: '#/components/schemas/CustomEventRow'
 
+    AnalyticsCustomEventPropertiesResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, event_name, properties]
+      properties:
+        meta:
+          $ref: '#/components/schemas/AnalyticsMeta'
+        event_name:
+          type: string
+        properties:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/CustomEventPropertyBreakdown'
+
+    CustomEventPropertyBreakdown:
+      type: object
+      additionalProperties: false
+      required: [key, values, other]
+      properties:
+        key:
+          type: string
+        values:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CustomEventPropertyValue'
+        other:
+          description: Every value below the cut, together; null when nothing was cut.
+          oneOf:
+            - $ref: '#/components/schemas/CustomEventPropertyCounts'
+            - type: 'null'
+
+    CustomEventPropertyValue:
+      type: object
+      additionalProperties: false
+      required: [value, events, visitors]
+      properties:
+        value:
+          type: string
+          maxLength: 100
+        events:
+          type: integer
+          format: int64
+        visitors:
+          type: integer
+          format: int64
+
+    CustomEventPropertyCounts:
+      type: object
+      additionalProperties: false
+      required: [events, visitors]
+      properties:
+        events:
+          type: integer
+          format: int64
+        visitors:
+          type: integer
+          format: int64
+          description: Unique visitors across the folded values, each counted once.
+
     PerformanceRow:
       type: object
       additionalProperties: false
@@ -12457,6 +12621,25 @@ components:
       schema:
         type: string
         enum: [hour, day]
+    CustomEventName:
+      name: event_name
+      in: query
+      required: true
+      description: The custom event or conversion name to break down.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+    PropertyValueLimit:
+      name: limit
+      in: query
+      required: false
+      description: Values per property key before the `other` row.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 10
     TopNLimit:
       name: limit
       in: query

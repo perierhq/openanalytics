@@ -7,6 +7,7 @@ import {
   createPool,
   createSiteWithOwner,
   getEventDefinition,
+  getEventPropertyAllowlist,
   listDeletionTargets,
   listEventDefinitionVersions,
   listEventDefinitions,
@@ -630,6 +631,58 @@ describeIfPostgres('event definitions', () => {
     })
   })
 
+  describe('the property allowlist a breakdown reads (DataFast gap 6)', () => {
+    it('is the published version’s declared keys, else the newest, else none', async () => {
+      const siteId = await makeSite()
+      expect(await getEventPropertyAllowlist(db, { siteId, eventName: 'nobody' })).toBeNull()
+
+      const { definition } = await createEventDefinition(db, {
+        siteId,
+        eventName: 'plan_selected',
+        content: content({ propertySchema: [{ key: 'plan', type: 'string' }] }),
+      })
+      // Unpublished: the newest version decides.
+      expect(await getEventPropertyAllowlist(db, { siteId, eventName: 'plan_selected' })).toEqual([
+        'plan',
+      ])
+
+      await publishEventDefinition(db, {
+        id: definition.id,
+        siteId,
+        version: 1,
+        expectedPublishedVersion: null,
+      })
+      await saveEventDefinitionVersion(db, {
+        id: definition.id,
+        siteId,
+        content: content({
+          propertySchema: [
+            { key: 'plan', type: 'string' },
+            { key: 'trigger', type: 'string' },
+          ],
+        }),
+      })
+      // A newer draft does not widen what the published version declares.
+      expect(await getEventPropertyAllowlist(db, { siteId, eventName: 'plan_selected' })).toEqual([
+        'plan',
+      ])
+
+      // A label-only definition declares nothing and restricts nothing.
+      await createEventDefinition(db, {
+        siteId,
+        eventName: 'label_only',
+        content: content({ propertySchema: [], displayTemplate: null, rules: [] }),
+      })
+      expect(await getEventPropertyAllowlist(db, { siteId, eventName: 'label_only' })).toBeNull()
+
+      // Site-scoped: another site's definition is absent.
+      const other = await makeSite()
+      expect(
+        await getEventPropertyAllowlist(db, { siteId: other, eventName: 'plan_selected' }),
+      ).toBeNull()
+    })
+  })
+
   describe('deletion', () => {
     it('purges both tables and books them in the target snapshot', async () => {
       const siteId = await makeSite()
@@ -651,8 +704,8 @@ describeIfPostgres('event definitions', () => {
       const targets = await listDeletionTargets(db, {
         deletionRequestId: started.deletionRequestId,
       })
-      // 62, not 63: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(62)
+      // 64, not 65: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(64)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       const names = new Set(targets.map((t) => `${t.store}:${t.target}`))
       expect(names.has('postgres:event_definitions')).toBe(true)

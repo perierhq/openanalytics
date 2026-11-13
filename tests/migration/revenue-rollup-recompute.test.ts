@@ -712,11 +712,11 @@ describeIfPostgres('reporting currency and the rollup re-roll marker', () => {
         deletionRequestId: started.deletionRequestId,
       })
 
-      expect(SITE_DELETION_TARGETS).toHaveLength(62)
-      // 62, not 63: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(62)
+      expect(SITE_DELETION_TARGETS).toHaveLength(64)
+      // 64, not 65: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(64)
       const clickhouse = targets.filter((t) => t.store === 'clickhouse').map((t) => t.target)
-      expect(clickhouse).toHaveLength(34)
+      expect(clickhouse).toHaveLength(36)
       // A vocabulary name with no purge statement verifies silently at
       // `deleted: 0`, so the names are asserted rather than only the count.
       // `revenue_1h` left with ClickHouse migration 0029 (v0.8.0).

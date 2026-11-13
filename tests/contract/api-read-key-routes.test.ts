@@ -281,6 +281,7 @@ describe('the person-only reads refuse a key (ADR-0042 D4)', () => {
 
     for (const surface of [
       'custom-events',
+      'custom-events/properties',
       'performance',
       'funnel',
       'recent-visitors',

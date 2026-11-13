@@ -1852,6 +1852,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/analytics/custom-events/properties": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One custom event's property values by count. Session or OAuth.
+         * @description The same response as
+         *     `GET /v1/sites/{site_id}/analytics/custom-events/properties`.
+         *
+         *     One custom event's properties broken down by value: for each property
+         *     key, the `limit` values with the most events (each with its unique
+         *     visitors) and an `other` row folding every value below the cut, or
+         *     `other: null` when nothing was cut. Keys are ordered by their events.
+         *     At most 32 keys, the busiest first.
+         *
+         *     Values are text: a string as itself, a number or boolean as its JSON
+         *     text (`12`, `true`), cut to 100 characters. The reserved `oa_*` keys
+         *     and `order_id` are never broken down. When the event has a dashboard
+         *     definition that declares properties (`property_schema`), only those
+         *     keys are returned; without a definition, or with one that declares
+         *     none, every key is. Counts start when the property rollup was
+         *     installed (ClickHouse migration 0030) plus its 92-day history fill, and
+         *     imported provider data carries no properties.
+         *
+         *     A person's read, not a key's, for the reason `custom-events` gives: a
+         *     private key gets `403`.
+         *
+         *     Requires the `analytics:read` scope.
+         */
+        get: operations["readAnalyticsCustomEventProperties"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/read/analytics/performance": {
         parameters: {
             query: {
@@ -3081,6 +3160,52 @@ export interface paths {
         };
         /** Top custom events and conversions by count. */
         get: operations["getAnalyticsCustomEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/analytics/custom-events/properties": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * One custom event's property values by count.
+         * @description One custom event's properties broken down by value: for each property
+         *     key, the `limit` values with the most events (each with its unique
+         *     visitors) and an `other` row folding every value below the cut, or
+         *     `other: null` when nothing was cut. Keys are ordered by their events.
+         *     At most 32 keys, the busiest first.
+         *
+         *     Values are text: a string as itself, a number or boolean as its JSON
+         *     text (`12`, `true`), cut to 100 characters. The reserved `oa_*` keys
+         *     and `order_id` are never broken down. When the event has a dashboard
+         *     definition that declares properties (`property_schema`), only those
+         *     keys are returned; without a definition, or with one that declares
+         *     none, every key is. Counts start when the property rollup was
+         *     installed (ClickHouse migration 0030) plus its 92-day history fill, and
+         *     imported provider data carries no properties.
+         */
+        get: operations["getAnalyticsCustomEventProperties"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7482,6 +7607,33 @@ export interface components {
             meta: components["schemas"]["AnalyticsMeta"];
             items: components["schemas"]["CustomEventRow"][];
         };
+        AnalyticsCustomEventPropertiesResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            event_name: string;
+            properties: components["schemas"]["CustomEventPropertyBreakdown"][];
+        };
+        CustomEventPropertyBreakdown: {
+            key: string;
+            values: components["schemas"]["CustomEventPropertyValue"][];
+            /** @description Every value below the cut, together; null when nothing was cut. */
+            other: components["schemas"]["CustomEventPropertyCounts"] | null;
+        };
+        CustomEventPropertyValue: {
+            value: string;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            visitors: number;
+        };
+        CustomEventPropertyCounts: {
+            /** Format: int64 */
+            events: number;
+            /**
+             * Format: int64
+             * @description Unique visitors across the folded values, each counted once.
+             */
+            visitors: number;
+        };
         /**
          * @description Web-vital percentiles are the merged t-digest read at
          *     [0.5, 0.75, 0.9, 0.95, 0.99]; `mean` is `value_sum / samples`.
@@ -9661,6 +9813,10 @@ export interface components {
          *     honestly serve is refused with `RESOLUTION_NOT_AVAILABLE`.
          */
         OverviewResolution: "hour" | "day";
+        /** @description The custom event or conversion name to break down. */
+        CustomEventName: string;
+        /** @description Values per property key before the `other` row. */
+        PropertyValueLimit: number;
         /** @description Maximum rows to return for a top-N report. */
         TopNLimit: number;
         /**
@@ -11864,6 +12020,70 @@ export interface operations {
             503: components["responses"]["AnalyticsUnavailable"];
         };
     };
+    readAnalyticsCustomEventProperties: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event's property breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsCustomEventPropertiesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["MissingScopeOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
     readAnalyticsPerformance: {
         parameters: {
             query: {
@@ -13350,6 +13570,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsCustomEventsResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["SiteSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getAnalyticsCustomEventProperties: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event's property breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsCustomEventPropertiesResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];

@@ -45,6 +45,10 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
   // without the bound one journey load scans every partition the site has ever
   // had, because the sort key leads on site and object id rather than on time.
   'analytics.revenue_order_objects': { object_id: 'ch_1' },
+  // One event's property breakdown (DataFast gap 6): the event and the
+  // allowlist the api read from Postgres.
+  'analytics.custom_event_properties_hour': { event_name: 'e', all_keys: true, keys: [] },
+  'analytics.custom_event_properties_day': { event_name: 'e', all_keys: false, keys: ['plan'] },
 }
 
 /**

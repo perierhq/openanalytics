@@ -34,6 +34,21 @@ export {
 } from './backfill-ledger.ts'
 
 export {
+  EVENT_PROPERTY_ARRAY_JOIN,
+  EVENT_PROPERTY_BACKFILL_DAYS,
+  EVENT_PROPERTY_GROUP_BY,
+  EVENT_PROPERTY_ROLLUPS,
+  EVENT_PROPERTY_SELECT,
+  EVENT_PROPERTY_WHERE,
+  backfillEventProperties,
+  eventPropertyBackfillStatement,
+  type BackfillEventPropertiesOptions,
+  type BackfillEventPropertiesResult,
+  type BackfillEventPropertiesTableReport,
+  type EventPropertyRollupSpec,
+} from './backfill-event-properties.ts'
+
+export {
   SESSION_BACKFILL_GENERATION,
   backfillSessionRollups15m,
   type BackfillSessionRollupsOptions,

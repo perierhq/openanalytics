@@ -364,8 +364,8 @@ const EVENT_DEFINITION_CONTENT_PROPERTIES = {
  * intersection). Everyone the dashboard refuses is refused here, and the
  * refusal arrives as tool content the model has to read.
  *
- * **The person-only reads** (`custom_events`, `performance`, `funnel_results`,
- * `recent_visitors`, `visitor`) dispatch into `/v1/read/analytics/*` paths a
+ * **The person-only reads** (`custom_events`, `custom_event_properties`,
+ * `performance`, `funnel_results`, `recent_visitors`, `visitor`) dispatch into `/v1/read/analytics/*` paths a
  * private key cannot reach (`PERSON_ONLY_ANALYTICS_READS` in `read-key.ts`).
  * Every MCP caller is a person, so for this surface they are ordinary reads.
  * The visitor reads are pseudonymous rows, not customer rows: their route
@@ -459,6 +459,28 @@ const mcpTools: McpToolDefinition[] = [
       'Custom events on one site over a range, by count: event name and type, events, billable events and unique visitors, plus `display_name` and the unrendered `display_template` where the event has a dashboard definition (null where it has none). Use it to read conversions and other tracked actions. Takes no filters. Needs a person’s credential: a site API key is refused.',
     path: '/read/analytics/custom-events',
     params: [...RANGE_PARAMS, LIMIT_PARAM],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
+    name: 'custom_event_properties',
+    title: 'Custom Event Properties',
+    description:
+      'One custom event’s properties broken down by value over a range: for each property key, the values with the most events (with unique visitors) and an `other` row for the rest (null when nothing was cut). Use it for questions like which plan people picked or which trigger opened a paywall. A number or boolean value reads as its JSON text. Keys an event definition does not declare are left out when it declares any; order_id and the reserved oa_ keys never appear. Takes no filters. Needs a person’s credential: a site API key is refused.',
+    path: '/read/analytics/custom-events/properties',
+    params: [
+      ...RANGE_PARAMS,
+      {
+        name: 'event_name',
+        description: 'The custom event or conversion to break down, as custom_events names it.',
+        required: true,
+      },
+      {
+        name: 'limit',
+        description: 'Values per property key before the other row, 1 to 50. Defaults to 10.',
+        required: false,
+      },
+    ],
     needsSite: true,
     scope: 'analytics:read',
   },

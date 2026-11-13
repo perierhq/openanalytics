@@ -38,6 +38,7 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
     getMembership: async () => membership.value,
     getSiteBasics: async () => siteBasics.value,
     getFinalizerState: async () => finalizerState.value,
+    getEventPropertyAllowlist: async () => ['plan', 'trigger'],
   }
 })
 
@@ -89,6 +90,23 @@ function buildApp(hasSession: boolean) {
             pageviews: '9',
             total_session_duration_ms: '400000',
             total_active_duration_ms: '120000',
+          },
+        ]
+      } else if (operation.startsWith('analytics.custom_event_properties')) {
+        rows = [
+          {
+            property_key: 'trigger',
+            property_value: 'paywall',
+            is_other: 0,
+            events: '2',
+            visitors: '2',
+          },
+          {
+            property_key: 'plan',
+            property_value: 'yearly',
+            is_other: 0,
+            events: '5',
+            visitors: '4',
           },
         ]
       } else if (operation.startsWith('analytics.funnel_')) {
@@ -323,6 +341,28 @@ describe('analytics read authorization', () => {
       ),
     )
     expect(bad.status).toBe(400)
+  })
+
+  it('serves one event’s property breakdown, busiest key first, to any member', async () => {
+    const app = buildApp(true)
+    membership.value = { role: 'viewer', isBillingOwner: false }
+    siteBasics.value = { siteId: SITE, slug: 's', name: 'S', status: 'active' }
+    const res = await app.fetch(
+      new Request(
+        `http://api.test/v1/sites/${SITE}/analytics/custom-events/properties?from=2026-07-16T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC&event_name=plan_selected`,
+      ),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { properties: { key: string; other: unknown }[] }
+    expect(body.properties.map((p) => [p.key, p.other])).toEqual([
+      ['plan', null],
+      ['trigger', null],
+    ])
+    const op = gatewayCalls.find((call) => call.startsWith('analytics.custom_event_properties'))!
+    expect(gatewayParams[op]).toMatchObject({
+      all_keys: false,
+      keys: ['plan', 'trigger'],
+    })
   })
 
   describe('recent visitors (ADR-0024)', () => {

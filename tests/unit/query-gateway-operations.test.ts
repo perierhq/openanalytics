@@ -67,6 +67,8 @@ describe('operation registry', () => {
       // The custom-events decoration (ADR-0038, D5): a separate operation, so
       // the counts a public surface may read and the sample a member's
       // dashboard may read are not the same allowlist entry.
+      'analytics.custom_event_properties_day',
+      'analytics.custom_event_properties_hour',
       'analytics.custom_event_samples_day',
       'analytics.custom_event_samples_hour',
       'analytics.custom_events_day',
@@ -474,6 +476,47 @@ describe('operation registry', () => {
         }),
       ).toThrow(ApiError)
     }
+  })
+
+  it('binds the property allowlist as a JSON value and caps keys and values', () => {
+    const op = findOperation('analytics.custom_event_properties_day')!
+    const bound = op.bindParams({
+      site_id: SITE,
+      from: '2026-07-01T00:00:00.000Z',
+      to: '2026-07-08T00:00:00.000Z',
+      event_name: 'plan_selected',
+      all_keys: false,
+      keys: ['plan', "it's"],
+      limit: 5,
+    })
+    expect(bound['all_keys']).toBe(0)
+    expect(bound['keys_json']).toBe('["plan","it\'s"]')
+    expect(bound['limit']).toBe(5)
+    expect(op.sql).toContain("JSONExtract({keys_json:String}, 'Array(String)')")
+    expect(op.sql).not.toContain('events_raw')
+    expect(op.maxRows).toBe(32 * 51)
+    // A quarter-aligned range is the hour twin's; the day twin refuses it.
+    expect(() =>
+      op.bindParams({
+        site_id: SITE,
+        from: '2026-07-01T00:15:00.000Z',
+        to: '2026-07-08T00:00:00.000Z',
+        event_name: 'plan_selected',
+        all_keys: true,
+        keys: [],
+      }),
+    ).toThrow(ApiError)
+    expect(() =>
+      op.bindParams({
+        site_id: SITE,
+        from: '2026-07-01T00:00:00.000Z',
+        to: '2026-07-08T00:00:00.000Z',
+        event_name: 'plan_selected',
+        all_keys: true,
+        keys: [],
+        limit: 51,
+      }),
+    ).toThrow(ApiError)
   })
 
   it('is a single statement with no comment escape', () => {

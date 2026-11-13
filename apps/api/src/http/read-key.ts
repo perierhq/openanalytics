@@ -34,7 +34,9 @@ import type { AnalyticsReportRequest, AnalyticsService } from '../analytics/serv
 import {
   OVERVIEW_RESOLUTIONS,
   TIMESERIES_RESOLUTIONS,
+  customEventPropertiesWithAllowlist,
   customEventsWithLabels,
+  parseCustomEventPropertiesQuery,
   parseCompare,
   parseFunnel,
   parseRecentHours,
@@ -79,6 +81,7 @@ import type { RateLimiter } from './rate-limit.ts'
  */
 export const PERSON_ONLY_ANALYTICS_READS: readonly string[] = [
   '/custom-events',
+  '/custom-events/properties',
   '/performance',
   '/funnel',
   '/recent-visitors',
@@ -1006,6 +1009,21 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         importPointer: c.get('siteImportPointer'),
         ...parseRange(query),
         limit: parseLimit(query),
+      }),
+    )
+  })
+
+  // One custom event's property values (DataFast gap 6). Person-only, like
+  // the custom-events report it breaks down.
+  reads.get('/custom-events/properties', async (c) => {
+    const query = c.req.query()
+    return c.json(
+      await customEventPropertiesWithAllowlist(db, analytics(), {
+        siteId: c.get('readPrincipal').siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        ...parseCustomEventPropertiesQuery(query),
       }),
     )
   })

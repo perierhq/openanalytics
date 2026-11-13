@@ -82,6 +82,8 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
     getFinalizerState: async () => null,
     getFunnel: async (_db: unknown, input: { id: string; siteId: string }) =>
       input.id === STORED_FUNNEL && input.siteId === SITE ? storedFunnel : null,
+    getEventPropertyAllowlist: async (_db: unknown, input: { eventName: string }) =>
+      input.eventName === 'plan_selected' ? ['plan'] : null,
     listEventDisplayNames: async () => [
       { eventName: 'signup', displayName: 'Signed up', displayTemplate: '{{plan}} signup' },
     ],
@@ -183,6 +185,13 @@ function rowsFor(operation: string): Record<string, unknown>[] {
         conversion_source: 'identity',
         session_id: 's-1',
       },
+    ]
+  }
+  if (operation.startsWith('analytics.custom_event_properties')) {
+    return [
+      { property_key: 'plan', property_value: 'yearly', is_other: 0, events: '7', visitors: '6' },
+      { property_key: 'plan', property_value: 'monthly', is_other: 0, events: '3', visitors: '3' },
+      { property_key: 'plan', property_value: '', is_other: 1, events: '2', visitors: '2' },
     ]
   }
   if (operation.startsWith('analytics.funnel_')) {
@@ -309,8 +318,69 @@ describe('custom events and performance, for a person', () => {
     expect(charges).toEqual([`user:${USER}`])
   })
 
+  it('breaks one event down by property value, under its definition’s allowlist', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/custom-events/properties?${RANGE}&event_name=plan_selected&limit=2`,
+      asToken(OAUTH_TOKEN),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      event_name: string
+      properties: {
+        key: string
+        values: { value: string; events: number }[]
+        other: { events: number } | null
+      }[]
+    }
+    expect(body.event_name).toBe('plan_selected')
+    expect(body.properties).toEqual([
+      {
+        key: 'plan',
+        values: [
+          { value: 'yearly', events: 7, visitors: 6 },
+          { value: 'monthly', events: 3, visitors: 3 },
+        ],
+        other: { events: 2, visitors: 2 },
+      },
+    ])
+    const op = gatewayCalls.find((call) => call.startsWith('analytics.custom_event_properties'))!
+    expect(gatewayParams[op]).toMatchObject({
+      site_id: SITE,
+      event_name: 'plan_selected',
+      all_keys: false,
+      keys: ['plan'],
+      limit: 2,
+    })
+    expect(charges).toEqual(['oauth:grant-1'])
+  })
+
+  it('reads every key of an event no definition restricts, and refuses a bad name', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/custom-events/properties?${RANGE}&event_name=signup`,
+      asSession(),
+    )
+    expect(res.status).toBe(200)
+    const op = gatewayCalls.find((call) => call.startsWith('analytics.custom_event_properties'))!
+    expect(gatewayParams[op]).toMatchObject({ all_keys: true, keys: [], limit: 10 })
+
+    for (const query of ['', '&event_name=%20bad', '&event_name=ok&limit=51']) {
+      gatewayCalls = []
+      const bad = await get(
+        buildApp(),
+        `/v1/read/analytics/custom-events/properties?${RANGE}${query}`,
+        asSession(),
+      )
+      expect(bad.status, query).toBe(400)
+      expect(gatewayCalls, query).toHaveLength(0)
+    }
+  })
+
   it('refuses a token without analytics:read, before the gateway', async () => {
-    for (const path of ['custom-events', 'performance', 'funnel']) {
+    for (const path of ['custom-events', 'custom-events/properties', 'performance', 'funnel']) {
       const app = buildApp()
       const res = await get(
         app,

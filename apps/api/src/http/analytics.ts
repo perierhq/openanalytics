@@ -1,5 +1,6 @@
 import {
   ApiError,
+  eventNameSchema,
   resolutionSchema,
   timezoneSchema,
   utcInstantSchema,
@@ -12,9 +13,19 @@ import {
   type AnalyticsFilter,
   type FunnelScope,
 } from '@openanalytics/domain'
-import { getFinalizerState, listEventDisplayNames, type Database } from '@openanalytics/postgres'
+import {
+  getEventPropertyAllowlist,
+  getFinalizerState,
+  listEventDisplayNames,
+  type Database,
+} from '@openanalytics/postgres'
 import { Hono } from 'hono'
-import type { AnalyticsReportRequest, AnalyticsService, PagesSort } from '../analytics/service.ts'
+import type {
+  AnalyticsRequest,
+  AnalyticsReportRequest,
+  AnalyticsService,
+  PagesSort,
+} from '../analytics/service.ts'
 import { requireAnalyticsAccess, siteMembership, type ApiVariables } from './middleware.ts'
 
 /**
@@ -348,6 +359,58 @@ export async function customEventsWithLabels(
   }
 }
 
+/** Values per key before the `other` row, as the gateway operation caps it. */
+const PROPERTY_VALUES_MAX = 50
+const PROPERTY_VALUES_DEFAULT = 10
+
+/** The event name and the per-key value count of a property breakdown read. */
+export function parseCustomEventPropertiesQuery(query: Record<string, string | undefined>): {
+  eventName: string
+  limit: number
+} {
+  const name = eventNameSchema.safeParse(query['event_name'])
+  if (!name.success) {
+    throw new ApiError('VALIDATION_FAILED', 'event_name must be a custom event name', {
+      details: { issues: [{ path: 'event_name', message: 'required, a custom event name' }] },
+    })
+  }
+  const raw = query['limit']
+  const limit = raw === undefined ? PROPERTY_VALUES_DEFAULT : Number(raw)
+  if (!Number.isInteger(limit) || limit < 1 || limit > PROPERTY_VALUES_MAX) {
+    throw new ApiError(
+      'VALIDATION_FAILED',
+      `limit must be an integer in [1, ${PROPERTY_VALUES_MAX}]`,
+      {
+        details: {
+          issues: [{ path: 'limit', message: `must be an integer in [1, ${PROPERTY_VALUES_MAX}]` }],
+        },
+      },
+    )
+  }
+  return { eventName: name.data, limit }
+}
+
+/**
+ * One custom event's property breakdown, under its definition's allowlist
+ * (DataFast gap 6).
+ *
+ * The allowlist is read here, at read time, rather than at ingest: the rollup
+ * keeps every sanitized key, and a definition that declares its properties
+ * decides which of them a breakdown shows. Both the dashboard route and the
+ * `/v1/read` one go through this, so the two cannot disagree on it.
+ */
+export async function customEventPropertiesWithAllowlist(
+  db: Database,
+  service: AnalyticsService,
+  req: AnalyticsRequest & { eventName: string; limit: number },
+) {
+  const allowedKeys = await getEventPropertyAllowlist(db, {
+    siteId: req.siteId,
+    eventName: req.eventName,
+  })
+  return await service.customEventProperties({ ...req, allowedKeys })
+}
+
 export function createAnalyticsRoutes(deps: {
   db: Database
   service: AnalyticsService
@@ -464,6 +527,20 @@ export function createAnalyticsRoutes(deps: {
         importPointer: c.get('siteImportPointer'),
         ...parseRange(query),
         limit: parseLimit(query),
+      }),
+    )
+  })
+  // One custom event's property values (DataFast gap 6).
+  app.get(`${base}/custom-events/properties`, async (c) => {
+    const { siteId } = c.get('membership')
+    const query = c.req.query()
+    return c.json(
+      await customEventPropertiesWithAllowlist(db, service, {
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        ...parseCustomEventPropertiesQuery(query),
       }),
     )
   })
