@@ -307,6 +307,47 @@ export function parseTimezone(query: Record<string, string | undefined>): string
   return timezone.data
 }
 
+/**
+ * Custom events, decorated with their dashboard labels (ADR-0034, D7).
+ *
+ * The decoration happens in the route layer rather than in the analytics
+ * service because the service talks only to the query gateway — giving it a
+ * Postgres handle to fetch labels would put a database read inside the one
+ * component D-208 keeps free of them. Shared by the dashboard route and the
+ * `/v1/read` route, so the two doors cannot label one event differently.
+ *
+ * `display_template` is returned **unrendered**. Rendering a sentence needs
+ * one event's properties, and this surface is an aggregate grouped by name —
+ * there is no single event to render. The template travels so the per-event
+ * surfaces can render it against the events they do have.
+ */
+export async function customEventsWithLabels(
+  db: Database,
+  service: AnalyticsService,
+  req: AnalyticsReportRequest,
+) {
+  const [report, labels] = await Promise.all([
+    service.customEvents(req),
+    listEventDisplayNames(db, req.siteId),
+  ])
+
+  const byName = new Map(labels.map((label) => [label.eventName, label]))
+  return {
+    ...report,
+    items: report.items.map((item) => {
+      const label = byName.get(item.event_name)
+      return {
+        ...item,
+        // Required-and-nullable, the ADR-0027 convention: `null` states "this
+        // event has no dashboard definition", which is a fact a client renders
+        // differently from "we did not look".
+        display_name: label?.displayName ?? null,
+        display_template: label?.displayTemplate ?? null,
+      }
+    }),
+  }
+}
+
 export function createAnalyticsRoutes(deps: {
   db: Database
   service: AnalyticsService
@@ -412,48 +453,19 @@ export function createAnalyticsRoutes(deps: {
   reportRoute('sources', (s, req) => s.sources(req), { filterable: true })
   reportRoute('geography', (s, req) => s.geography(req), { filterable: true })
   reportRoute('devices', (s, req) => s.devices(req), { filterable: true })
-  /**
-   * Custom events, decorated with their dashboard labels (ADR-0034, D7).
-   *
-   * The decoration happens here rather than in the analytics service because
-   * the service talks only to the query gateway — giving it a Postgres handle
-   * to fetch labels would put a database read inside the one component D-208
-   * keeps free of them.
-   *
-   * `display_template` is returned **unrendered**. Rendering a sentence needs
-   * one event's properties, and this surface is an aggregate grouped by name —
-   * there is no single event to render. The template travels so the per-event
-   * surfaces can render it against the events they do have.
-   */
+  // Custom events, with their dashboard labels; see `customEventsWithLabels`.
   app.get(`${base}/custom-events`, async (c) => {
     const { siteId } = c.get('membership')
-    const range = parseRange(c.req.query())
-    const [report, labels] = await Promise.all([
-      service.customEvents({
+    const query = c.req.query()
+    return c.json(
+      await customEventsWithLabels(db, service, {
         siteId,
         cacheEpoch: c.get('siteCacheEpoch'),
         importPointer: c.get('siteImportPointer'),
-        ...range,
-        limit: parseLimit(c.req.query()),
+        ...parseRange(query),
+        limit: parseLimit(query),
       }),
-      listEventDisplayNames(db, siteId),
-    ])
-
-    const byName = new Map(labels.map((label) => [label.eventName, label]))
-    return c.json({
-      ...report,
-      items: report.items.map((item) => {
-        const label = byName.get(item.event_name)
-        return {
-          ...item,
-          // Required-and-nullable, the ADR-0027 convention: `null` states "this
-          // event has no dashboard definition", which is a fact a client renders
-          // differently from "we did not look".
-          display_name: label?.displayName ?? null,
-          display_template: label?.displayTemplate ?? null,
-        }
-      }),
-    })
+    )
   })
   reportRoute('performance', (s, req) => s.performance(req))
 

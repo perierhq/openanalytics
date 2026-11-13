@@ -122,13 +122,7 @@ describe('the read-key surface (ADR-0042)', () => {
    * are absent for everybody.
    */
   it('exposes no individual visitor, and no surface D4 excluded', () => {
-    for (const excluded of [
-      'recent-visitors',
-      'visitor',
-      'custom-events',
-      'funnel',
-      'performance',
-    ]) {
+    for (const excluded of ['recent-visitors', 'visitor', 'funnel']) {
       expect(spec, `${excluded} must not be readable here`).not.toContain(
         `/v1/read/analytics/${excluded}`,
       )
@@ -145,6 +139,19 @@ describe('the read-key surface (ADR-0042)', () => {
       const block = pathBlock(path)
       expect(block, `${path} must not accept a key`).not.toContain('privateApiKey')
       expect(block).toContain("oauthAccessToken: ['revenue:read']")
+    }
+  })
+
+  it('keeps the person-only analytics reads off every key-accepting route', () => {
+    // D4 kept these reports off the key surface. They are `/v1/read` paths now,
+    // for an OAuth token or a session, so the precise form of D4 is the one
+    // revenue uses: the contract must not list `privateApiKey` for them.
+    for (const surface of ['custom-events', 'performance']) {
+      const block = pathBlock(`/v1/read/analytics/${surface}`)
+      expect(block, `${surface} must not accept a key`).not.toContain('privateApiKey')
+      expect(block).toContain('- sessionCookie: []')
+      expect(block).toContain("oauthAccessToken: ['analytics:read']")
+      expect(block, `${surface} takes no site id`).not.toContain('SiteIdPath')
     }
   })
 

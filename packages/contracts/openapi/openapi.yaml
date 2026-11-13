@@ -1717,6 +1717,92 @@ paths:
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
+  /v1/read/analytics/custom-events:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/TopNLimit'
+    get:
+      operationId: readAnalyticsCustomEvents
+      tags: [read-key]
+      summary: Top custom events by count, with their dashboard labels. Session or OAuth.
+      description: |
+        The same response as `GET /v1/sites/{site_id}/analytics/custom-events`,
+        including `display_name` and the unrendered `display_template` of every
+        event that has a dashboard definition. No `filters`: custom events have
+        no filtered operation (ADR-0075, D-F2).
+
+        **A person's read, not a key's.** ADR-0042 D4 kept this report off the
+        site-bound key surface, and it stays off it: a private key gets `403`.
+        An OAuth token and a session resolve to a user whose live membership is
+        re-checked on every request, which is the check the dashboard route makes.
+
+        Requires the `analytics:read` scope.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: Top custom events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsCustomEventsResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/read/analytics/performance:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/TopNLimit'
+    get:
+      operationId: readAnalyticsPerformance
+      tags: [read-key]
+      summary: Web-vital percentiles, mean and rating distribution per metric. Session or OAuth.
+      description: |
+        The same response as `GET /v1/sites/{site_id}/analytics/performance`.
+        A person's read, not a key's, for the reason `custom-events` gives: a
+        private key gets `403`.
+
+        Requires the `analytics:read` scope.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: Performance metrics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsPerformanceResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/sites/{site_id}/members:
     parameters:
       - name: site_id
@@ -5490,7 +5576,7 @@ components:
           refreshUrl: /api/auth/oauth2/token
           scopes:
             'site:read': The sites you may select, and their install details.
-            'analytics:read': The seven aggregate reads.
+            'analytics:read': The analytics reads under /v1/read/analytics.
             'realtime:read': A realtime token for the selected site.
             'revenue:read': Revenue on the selected site, if you own it.
             'team:read': A site's members and invites, including their email addresses.
@@ -6705,8 +6791,10 @@ components:
           (`GET /v1/read/site`) and the selectable-site list
           (`GET /v1/read/sites`). The minimum, always implied, and the default
           when a create request names no scopes.
-        - `analytics:read` — the seven aggregate reads under
-          `/v1/read/analytics/`. Never granted implicitly.
+        - `analytics:read` — the aggregate reads under `/v1/read/analytics/`:
+          seven for a key, plus the person-only reads (custom events,
+          performance) for an OAuth token or a session. Never granted
+          implicitly.
         - `realtime:read` — a realtime token for the selected site
           (`POST /v1/read/realtime/token`).
         - `revenue:read` — the revenue reads on the selected site.

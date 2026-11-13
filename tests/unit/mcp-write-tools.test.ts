@@ -135,6 +135,8 @@ const EXPECTED_READ_TOOLS = [
   'geography',
   'devices',
   'sessions',
+  'custom_events',
+  'performance',
   'revenue_summary',
   'revenue_timeseries',
   'site_install',
@@ -177,9 +179,10 @@ describe('the tool roster is pinned by name, not derived', () => {
     // the assistant's catalogue); D3 added seven management reads and twelve
     // writes. 10 + 19 = 29 was the arithmetic until the open-core split moved
     // `billing_usage` out to the surface that serves it, so a build with no such
-    // surface advertises 28.
-    expect(MCP_TOOLS).toHaveLength(28)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(28)
+    // surface advertised 28. The person-only analytics reads (`custom_events`,
+    // `performance`) make it 30.
+    expect(MCP_TOOLS).toHaveLength(30)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(30)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -279,6 +282,13 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
     // are refused by the path allowlist, which is why it exists.
     for (const name of ['team_members', 'site_install', 'share_settings']) {
       expect(names, `${name} must not reach the assistant`).not.toContain(name)
+    }
+  })
+
+  it('excludes the person-only analytics reads MCP gained after ADR-0046 D3', () => {
+    const names = ASSISTANT_TOOLS.map((t) => t.name)
+    for (const name of ['custom_events', 'performance']) {
+      expect(names, `${name} was not decided for the assistant`).not.toContain(name)
     }
   })
 

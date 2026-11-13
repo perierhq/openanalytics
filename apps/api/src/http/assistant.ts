@@ -27,6 +27,7 @@ import {
   isReadOnlyTool,
   toolArgumentRefusal,
 } from './mcp.ts'
+import { PERSON_ONLY_ANALYTICS_READS } from './read-key.ts'
 
 /**
  * The AI analytics assistant (ADR-0046).
@@ -118,9 +119,17 @@ export interface AssistantRoutesDeps {
  */
 const ASSISTANT_READ_PATHS = ['/read/sites']
 const ASSISTANT_READ_PREFIXES = ['/read/analytics/', '/read/revenue/']
+/**
+ * The person-only analytics reads MCP gained after ADR-0046 D3 drew this
+ * roster. They live under `/read/analytics/`, so the prefix alone would hand
+ * them to the model; which tools the assistant has is a decision about the
+ * assistant, and nobody has made it for these.
+ */
+const ASSISTANT_EXCLUDED_PATHS = PERSON_ONLY_ANALYTICS_READS.map((path) => `/read/analytics${path}`)
 export const ASSISTANT_TOOLS = MCP_TOOLS.filter(
   (tool) =>
     isReadOnlyTool(tool) &&
+    !ASSISTANT_EXCLUDED_PATHS.includes(tool.path) &&
     (ASSISTANT_READ_PATHS.includes(tool.path) ||
       ASSISTANT_READ_PREFIXES.some((prefix) => tool.path.startsWith(prefix))),
 )

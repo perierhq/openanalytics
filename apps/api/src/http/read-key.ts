@@ -33,6 +33,7 @@ import type { AnalyticsReportRequest, AnalyticsService } from '../analytics/serv
 import {
   OVERVIEW_RESOLUTIONS,
   TIMESERIES_RESOLUTIONS,
+  customEventsWithLabels,
   parseCompare,
   parseFilters,
   parseLimit,
@@ -62,6 +63,13 @@ import type { RateLimiter } from './rate-limit.ts'
  * depend on a value we invent per request — the fabricated role would be the
  * only thing standing between a key and the revenue fields.
  */
+
+/**
+ * The `/v1/read/analytics/*` paths only a person may read: an OAuth token or a
+ * session, never a site-bound API key. Exported so the tests pin the same list
+ * the middleware enforces.
+ */
+export const PERSON_ONLY_ANALYTICS_READS: readonly string[] = ['/custom-events', '/performance']
 
 /**
  * Who is asking, and what they are allowed to ask for.
@@ -840,6 +848,31 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
   // Everything below reads analytics, so it needs the scope, the site's gates,
   // the cost gate, and a configured gateway.
   const reads = new Hono<Env>()
+  /**
+   * The dashboard's remaining analytics reads, for a **person** only.
+   *
+   * ADR-0042 D4 kept custom events, performance, funnels and the visitor
+   * reads off this surface, which was a surface for site-bound keys and
+   * unattended integrations. An OAuth token and a session are neither: each
+   * resolves to a user whose live membership `selectSite` re-reads on every
+   * request, which is exactly what the dashboard's own route checks. So these
+   * paths take the person arms and refuse a key with `403`, the way the revenue
+   * reads do — a key still reads what D4 gave it and nothing more.
+   *
+   * Registered before the `'*'` gate, so a key is refused before it is
+   * charged to the cost ledger or reaches the gateway.
+   */
+  for (const path of PERSON_ONLY_ANALYTICS_READS) {
+    reads.use(path, async (c, next) => {
+      if (c.get('readCredential').kind === 'api_key') {
+        throw new ApiError(
+          'FORBIDDEN',
+          'This read needs a credential that belongs to a person; an API key belongs to a site. Use an OAuth token or a signed-in session.',
+        )
+      }
+      await next()
+    })
+  }
   reads.use('*', requireScope('analytics:read'), selectSite, requireSiteReadable, costGate)
 
   reads.get('/overview', async (c) => {
@@ -943,6 +976,35 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         importPointer: c.get('siteImportPointer'),
         ...parseRange(c.req.query()),
         finalizedThrough: state ? state.finalizedThrough : null,
+      }),
+    )
+  })
+
+  // Custom events with their dashboard labels, and web vitals. Person-only
+  // (see `PERSON_ONLY_ANALYTICS_READS`); neither takes `filters`, because
+  // neither has a filtered operation (ADR-0075, D-F2).
+  reads.get('/custom-events', async (c) => {
+    const query = c.req.query()
+    return c.json(
+      await customEventsWithLabels(db, analytics(), {
+        siteId: c.get('readPrincipal').siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        limit: parseLimit(query),
+      }),
+    )
+  })
+
+  reads.get('/performance', async (c) => {
+    const query = c.req.query()
+    return c.json(
+      await analytics().performance({
+        siteId: c.get('readPrincipal').siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        limit: parseLimit(query),
       }),
     )
   })

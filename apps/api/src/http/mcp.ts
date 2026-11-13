@@ -437,6 +437,26 @@ const mcpTools: McpToolDefinition[] = [
     scope: 'analytics:read',
   },
   {
+    name: 'custom_events',
+    title: 'Custom Events',
+    description:
+      'Custom events on one site over a range, by count: event name and type, events, billable events and unique visitors, plus `display_name` and the unrendered `display_template` where the event has a dashboard definition (null where it has none). Use it to read conversions and other tracked actions. Takes no filters. Needs a person’s credential: a site API key is refused.',
+    path: '/read/analytics/custom-events',
+    params: [...RANGE_PARAMS, LIMIT_PARAM],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
+    name: 'performance',
+    title: 'Web Vitals',
+    description:
+      'Web-vital measurements per metric and device type over a range: sample count, mean, p50/p75/p90/p95/p99 and the good / needs-improvement / poor split. Takes no filters. Needs a person’s credential: a site API key is refused.',
+    path: '/read/analytics/performance',
+    params: [...RANGE_PARAMS, LIMIT_PARAM],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
     name: 'revenue_summary',
     title: 'Revenue Summary',
     description:
