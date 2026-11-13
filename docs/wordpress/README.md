@@ -1,7 +1,7 @@
 # WordPress integration contract
 
 What the plugin talks to, and what the backend promises it. The design and its
-reasoning are [ADR-0042](../adr/0042-milestone-14-the-wordpress-plugin-reads-through-a-scoped-key.md);
+reasoning are recorded in ADR-0042, which is kept outside this repository;
 this file is the working document a plugin author codes against.
 
 **Scope.** M14 shipped the backend half. The PHP plugin is written elsewhere,
