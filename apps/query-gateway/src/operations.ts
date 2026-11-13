@@ -2469,7 +2469,10 @@ const revenueTransactionsOperation = defineOperation({
     '  cur.product_name AS product_name,',
     '  att.matched_via AS matched_via,',
     '  att.confidence AS confidence,',
-    '  att.identity_scope AS identity_scope',
+    '  att.identity_scope AS identity_scope,',
+    // Perier gap 7: new / renewal / plan_change / one_off for a charge, '' for
+    // a refund or dispute. See `SUBSCRIPTION_INVOICE_KIND_MAP`.
+    `  ${purchaseKindExpr('cur.object_kind')} AS purchase_kind`,
     'FROM (',
     '  SELECT',
     '    re.object_id AS object_id,',
@@ -2512,6 +2515,7 @@ const revenueTransactionsOperation = defineOperation({
     "    AND ra.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
     '  GROUP BY ra.site_id, ra.provider, ra.object_id',
     ') AS att ON att.object_id = cur.object_id',
+    ...purchaseKindJoins('cur.object_id', 'cur.order_id'),
     'ORDER BY cur.occurred_at DESC, cur.object_id DESC',
     'LIMIT {limit:UInt32}',
   ].join('\n'),
@@ -2735,6 +2739,276 @@ const revenueOperations: readonly QueryOperation[] = [
   revenueTransactionsOperation,
   revenueTransactionJourneyOperation,
   revenueOrderObjectsOperation,
+]
+
+// ---------------------------------------------------------------------------
+// Subscription lifecycle and purchase kinds (Perier fork, DataFast gap 7;
+// ClickHouse 0030).
+//
+// Three reads, kept in this block so neighbouring gaps can rebase around it:
+//
+//   * `subscription_lifecycle_totals` — MRR, active and trialing counts at the
+//     start and end of a range, and the movements inside it (new, expansion,
+//     contraction, churn; trials started/converted/expired; cancellations).
+//   * `subscription_timeseries_day` — the same movements per site-local day,
+//     which the api runs forward from the totals' `*_start` columns.
+//   * `revenue_purchase_kinds` — the range's charges split new / renewal /
+//     plan_change / one_off by the invoice join.
+//
+// MRR is a running sum from a subscription's first fact, so the lifecycle
+// reads scan every CURRENT fact of the site, not a range. That is bounded by
+// construction: a handful of facts per subscription the site has ever had,
+// never `events_raw`, never a fact table of money. The read rule is 0030's:
+// per subscription, only the rows of its highest generation, deduplicated per
+// position by `argMax`.
+//
+// The purchase-kind join is `SUBSCRIPTION_INVOICE_KIND_MAP` below, exported so
+// any other read that counts conversions (gap 3's revenue by source) can
+// exclude renewals with the same join instead of a second definition of it.
+// ---------------------------------------------------------------------------
+
+/** The current lifecycle facts of one site, as `f`. */
+const CURRENT_LIFECYCLE_FACTS = [
+  'FROM (',
+  '  SELECT',
+  '    sl.provider AS provider,',
+  '    sl.subscription_id AS subscription_id,',
+  '    sl.seq AS seq,',
+  '    max(sl.generation) AS generation,',
+  '    argMax(sl.kind, sl.generation) AS kind,',
+  '    argMax(sl.occurred_at, sl.generation) AS occurred_at,',
+  '    argMax(sl.reporting_mrr_delta_minor, sl.generation) AS mrr_delta,',
+  '    argMax(sl.active_delta, sl.generation) AS active_delta,',
+  '    argMax(sl.trial_delta, sl.generation) AS trial_delta,',
+  '    argMax(sl.conversion_source, sl.generation) AS conversion_source',
+  '  FROM subscription_lifecycle AS sl',
+  '  WHERE sl.site_id = {site_id:UUID}',
+  '  GROUP BY sl.provider, sl.subscription_id, sl.seq',
+  ') AS f',
+  'INNER JOIN (',
+  '  SELECT',
+  '    h.provider AS provider,',
+  '    h.subscription_id AS subscription_id,',
+  '    max(h.generation) AS head_generation',
+  '  FROM subscription_lifecycle AS h',
+  '  WHERE h.site_id = {site_id:UUID}',
+  '  GROUP BY h.provider, h.subscription_id',
+  ') AS heads ON heads.provider = f.provider AND heads.subscription_id = f.subscription_id',
+  'WHERE f.generation = heads.head_generation',
+].join('\n')
+
+const LC_FROM = "toDateTime64({from:String}, 3, 'UTC')"
+const LC_TO = "toDateTime64({to:String}, 3, 'UTC')"
+const LC_IN_RANGE = `f.occurred_at >= ${LC_FROM} AND f.occurred_at < ${LC_TO}`
+
+/** The movements of a set of facts, as SELECT items over `f`. `cond` narrows
+ * them (a range, or nothing). */
+function lifecycleMovements(cond: string): string[] {
+  const and = cond === '' ? '' : `${cond} AND `
+  return [
+    `  sumIf(f.mrr_delta, ${and}f.kind = 'started') AS new_mrr_minor,`,
+    `  sumIf(f.mrr_delta, ${and}f.kind = 'plan_changed' AND f.mrr_delta > 0) AS expansion_mrr_minor,`,
+    `  -sumIf(f.mrr_delta, ${and}f.kind = 'plan_changed' AND f.mrr_delta < 0) AS contraction_mrr_minor,`,
+    `  -sumIf(f.mrr_delta, ${and}f.kind = 'ended') AS churned_mrr_minor,`,
+    `  countIf(${and}f.kind = 'started') AS new_subscriptions,`,
+    `  countIf(${and}f.kind = 'ended') AS churned_subscriptions,`,
+    `  countIf(${and}f.kind = 'trial_started') AS trials_started,`,
+    `  countIf(${and}f.kind = 'trial_converted') AS trials_converted,`,
+    `  countIf(${and}f.kind = 'trial_expired') AS trials_expired,`,
+    `  countIf(${and}f.kind = 'cancel_scheduled') AS cancels_scheduled,`,
+    `  countIf(${and}f.kind = 'cancel_undone') AS cancels_undone`,
+  ]
+}
+
+const subscriptionLifecycleTotalsOperation = defineOperation({
+  id: 'analytics.subscription_lifecycle_totals',
+  summary:
+    'Subscription MRR, active and trialing counts at both ends of a range, and the movements in it.',
+  requiresSiteScope: true,
+  params: rangeParamsSchema({
+    maxRangeMs: MAX_SPAN_DAY_MS,
+    alignment: 'minute',
+    withTimezone: false,
+    withLimit: false,
+  }),
+  sql: [
+    'SELECT',
+    `  sumIf(f.mrr_delta, f.occurred_at < ${LC_FROM}) AS mrr_start_minor,`,
+    `  sumIf(f.mrr_delta, f.occurred_at < ${LC_TO}) AS mrr_end_minor,`,
+    `  sumIf(f.active_delta, f.occurred_at < ${LC_FROM}) AS active_start,`,
+    `  sumIf(f.active_delta, f.occurred_at < ${LC_TO}) AS active_end,`,
+    `  sumIf(f.trial_delta, f.occurred_at < ${LC_FROM}) AS trialing_start,`,
+    `  sumIf(f.trial_delta, f.occurred_at < ${LC_TO}) AS trialing_end,`,
+    "  uniqExactIf(tuple(f.provider, f.subscription_id), f.conversion_source = 'unavailable') AS unconverted_subscriptions,",
+    ...lifecycleMovements(LC_IN_RANGE),
+    CURRENT_LIFECYCLE_FACTS,
+  ].join('\n'),
+  maxRows: 1,
+  bind: (params: Record<string, unknown>) => ({
+    site_id: params['site_id'] as string,
+    from: toClickHouseInstant(params['from'] as string),
+    to: toClickHouseInstant(params['to'] as string),
+  }),
+})
+
+/** One row per site-local day of the range that has a movement. */
+const SUBSCRIPTION_TIMESERIES_MAX_ROWS = CONFIG.MAX_SPAN_DAY_DAYS + 1
+
+/**
+ * Movements per site-local day. The running MRR and active count the chart
+ * draws are the api's: it starts them from `subscription_lifecycle_totals`'
+ * `*_start` columns for the same range and adds these deltas day by day, so
+ * this statement can stay inside the range and the bucket keeps the registry's
+ * one local-day form.
+ */
+const subscriptionTimeseriesDayOperation = defineOperation({
+  id: 'analytics.subscription_timeseries_day',
+  summary: 'Subscription MRR movements per site-local day.',
+  requiresSiteScope: true,
+  params: rangeParamsSchema({
+    maxRangeMs: MAX_SPAN_DAY_MS,
+    alignment: 'minute',
+    withTimezone: true,
+    withLimit: false,
+  }),
+  sql: [
+    'SELECT',
+    "  toDateTime64(toStartOfDay(f.occurred_at, {tz:String}), 3, 'UTC') AS bucket,",
+    '  sum(f.mrr_delta) AS net_mrr_minor,',
+    '  sum(f.active_delta) AS active_delta,',
+    '  sum(f.trial_delta) AS trial_delta,',
+    ...lifecycleMovements(''),
+    CURRENT_LIFECYCLE_FACTS,
+    `  AND ${LC_IN_RANGE}`,
+    'GROUP BY bucket',
+    'ORDER BY bucket',
+  ].join('\n'),
+  maxRows: SUBSCRIPTION_TIMESERIES_MAX_ROWS,
+  bind: (params: Record<string, unknown>) => ({
+    site_id: params['site_id'] as string,
+    from: toClickHouseInstant(params['from'] as string),
+    to: toClickHouseInstant(params['to'] as string),
+    tz: params['timezone'] as string,
+  }),
+})
+
+/**
+ * Charge/PaymentIntent id → purchase kind, from the current generation of
+ * every invoice paid within a week of the range (an invoice is paid within
+ * seconds of its charge, so the margin is generous and keeps the scan to the
+ * range's neighbourhood). Invoices whose billing reason is still unknown are
+ * left out, so their charge reads as a one-off until `invoice.paid` lands.
+ *
+ * Use as `LEFT JOIN (SUBSCRIPTION_INVOICE_KIND_MAP) AS x ON x.join_key = <id>`
+ * and treat `x.purchase_kind = ''` as "no invoice". Binds `site_id`, `from`,
+ * `to`.
+ */
+export const SUBSCRIPTION_INVOICE_KIND_MAP = subscriptionInvoiceKindMapSql()
+
+/** A function rather than only the constant above, because the transactions
+ * operation earlier in this module is built at load time, before this block's
+ * constants are initialized. Declarations are hoisted, constants are not. */
+function subscriptionInvoiceKindMapSql(): string {
+  return [
+    'SELECT',
+    '  k.join_key AS join_key,',
+    '  argMax(k.purchase_kind, k.generation) AS purchase_kind',
+    'FROM (',
+    '  SELECT',
+    "    arrayJoin(arrayFilter(x -> x != '', [inv.order_id, inv.charge_id])) AS join_key,",
+    '    inv.purchase_kind AS purchase_kind,',
+    '    inv.generation AS generation',
+    '  FROM (',
+    '    SELECT',
+    '      argMax(si.order_id, si.generation) AS order_id,',
+    '      argMax(si.charge_id, si.generation) AS charge_id,',
+    '      argMax(si.purchase_kind, si.generation) AS purchase_kind,',
+    '      max(si.generation) AS generation',
+    '    FROM subscription_invoices AS si',
+    '    WHERE si.site_id = {site_id:UUID}',
+    "      AND si.occurred_at >= toDateTime64({from:String}, 3, 'UTC') - INTERVAL 7 DAY",
+    "      AND si.occurred_at <  toDateTime64({to:String}, 3, 'UTC') + INTERVAL 7 DAY",
+    '    GROUP BY si.provider, si.invoice_id',
+    '  ) AS inv',
+    "  WHERE inv.purchase_kind != ''",
+    ') AS k',
+    'GROUP BY k.join_key',
+  ].join('\n')
+}
+
+/** A charge's purchase kind from the two joins: by charge id, then by
+ * PaymentIntent, else a one-off. Refunds and disputes get ''. */
+function purchaseKindExpr(kindAlias: string): string {
+  return [
+    `if(${kindAlias} != 'charge', '',`,
+    "  if(pk_charge.purchase_kind != '', pk_charge.purchase_kind,",
+    "    if(pk_order.purchase_kind != '', pk_order.purchase_kind, 'one_off')))",
+  ].join(' ')
+}
+
+function purchaseKindJoins(objectIdExpr: string, orderIdExpr: string): string[] {
+  return [
+    `LEFT JOIN (${subscriptionInvoiceKindMapSql()}) AS pk_charge ON pk_charge.join_key = ${objectIdExpr}`,
+    `LEFT JOIN (${subscriptionInvoiceKindMapSql()}) AS pk_order ON pk_order.join_key = ${orderIdExpr}`,
+  ]
+}
+
+const revenuePurchaseKindsOperation = defineOperation({
+  id: 'analytics.revenue_purchase_kinds',
+  summary:
+    'Charges in a range split into new, renewal, plan change and one-off by the invoice join.',
+  requiresSiteScope: true,
+  params: rangeParamsSchema({
+    // A fact scan, like `revenue_unconverted`, so the hour-rollup cap.
+    maxRangeMs: MAX_SPAN_HOUR_MS,
+    alignment: 'minute',
+    withTimezone: false,
+    withLimit: false,
+  }),
+  sql: [
+    'SELECT',
+    '  kinds.purchase_kind AS purchase_kind,',
+    '  count() AS charges,',
+    '  sum(kinds.reporting_gross_minor) AS reporting_gross_minor,',
+    "  countIf(kinds.conversion_source = 'unavailable') AS unconverted_count",
+    'FROM (',
+    '  SELECT',
+    `    ${purchaseKindExpr('cur.object_kind')} AS purchase_kind,`,
+    '    cur.reporting_gross_minor AS reporting_gross_minor,',
+    '    cur.conversion_source AS conversion_source',
+    '  FROM (',
+    '    SELECT',
+    '      re.object_id AS object_id,',
+    '      argMax(re.object_kind, re.version) AS object_kind,',
+    '      argMax(re.status, re.version) AS status,',
+    '      argMax(re.order_id, re.version) AS order_id,',
+    '      argMax(re.reporting_gross_minor, re.version) AS reporting_gross_minor,',
+    '      argMax(re.conversion_source, re.version) AS conversion_source',
+    '    FROM revenue_events AS re',
+    '    WHERE re.site_id = {site_id:UUID}',
+    `      AND re.occurred_at >= ${LC_FROM}`,
+    `      AND re.occurred_at < ${LC_TO}`,
+    '    GROUP BY re.site_id, re.provider, re.object_id',
+    '  ) AS cur',
+    ...purchaseKindJoins('cur.object_id', 'cur.order_id').map((line) => `  ${line}`),
+    "  WHERE cur.object_kind = 'charge'",
+    "    AND cur.status NOT IN ('failed', 'canceled', 'cancelled')",
+    ') AS kinds',
+    'GROUP BY kinds.purchase_kind',
+    'ORDER BY kinds.purchase_kind',
+  ].join('\n'),
+  maxRows: 8,
+  bind: (params: Record<string, unknown>) => ({
+    site_id: params['site_id'] as string,
+    from: toClickHouseInstant(params['from'] as string),
+    to: toClickHouseInstant(params['to'] as string),
+  }),
+})
+
+const subscriptionOperations: readonly QueryOperation[] = [
+  subscriptionLifecycleTotalsOperation,
+  subscriptionTimeseriesDayOperation,
+  revenuePurchaseKindsOperation,
 ]
 
 // ---------------------------------------------------------------------------
@@ -3587,6 +3861,7 @@ const OPERATIONS: readonly QueryOperation[] = [
   ...recentVisitorOperations,
   ...filteredOperations,
   ...revenueOperations,
+  ...subscriptionOperations,
   ...siteCardOperations,
   freshnessOperation,
 ]

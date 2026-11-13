@@ -127,6 +127,7 @@ describe('operation registry', () => {
       // bucket cannot carry a currency dimension without breaking its own unit
       // of replacement.
       'analytics.revenue_order_objects',
+      'analytics.revenue_purchase_kinds',
       'analytics.revenue_summary_day',
       'analytics.revenue_summary_hour',
       'analytics.revenue_timeseries_day',
@@ -149,6 +150,9 @@ describe('operation registry', () => {
       'analytics.sites_all_time_revenue',
       'analytics.sources_day',
       'analytics.sources_hour',
+      // Perier gap 7: subscription lifecycle (ClickHouse 0030).
+      'analytics.subscription_lifecycle_totals',
+      'analytics.subscription_timeseries_day',
       'analytics.timeseries_day',
       'analytics.timeseries_day_utc',
       'analytics.timeseries_hour',
@@ -1053,6 +1057,7 @@ describe('timezone binding', () => {
       'analytics.sessions_provisional_hour',
       'analytics.sources_day',
       'analytics.sources_hour',
+      'analytics.subscription_timeseries_day',
       'analytics.timeseries_day',
       'analytics.timeseries_hour',
       'analytics.timeseries_minute',

@@ -614,6 +614,8 @@ export const TIMEZONE_OPERATIONS: ReadonlySet<string> = new Set([
   // bound to any of the three is a "bound unused parameter" rejection.
   'analytics.revenue_timeseries_hour',
   'analytics.revenue_timeseries_day_local',
+  // The subscription MRR chart (Perier gap 7) buckets in the site's local day.
+  'analytics.subscription_timeseries_day',
   // The filtered charts (ADR-0075). Only the four that bucket in local time:
   // the two UTC variants take no zone, and the filtered breakdowns and totals
   // have no bucket to label and no cutover to render, so a zone bound to any of
