@@ -108,7 +108,7 @@ override is meant to hold only secrets.
 ```sh
 cd /opt/openanalytics
 git fetch perier --tags
-git checkout v0.8.2-perier.1           # whichever release
+git checkout v0.9.1                    # whichever release
 cd infra/selfhost
 OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh
 ```

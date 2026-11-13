@@ -219,6 +219,8 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           provenance: false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
       - name: Also tag latest
         if: needs.check.outputs.push == 'true' && needs.check.outputs.prerelease == 'false'

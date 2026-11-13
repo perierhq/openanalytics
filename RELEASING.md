@@ -143,15 +143,22 @@ repository variable `OA_IMAGE_REPO` to the fork's registry path, in lower case
 there instead of `ghcr.io/openlabs-so/openanalytics`. Everything else in this
 file applies, including the package visibility check below.
 
-Tag a fork's build as a pre-release (`vX.Y.Z-<fork>.N`), so it never moves
-`latest`. The version check compares only the part before the `-`, so the
-perierhq build `v0.8.1-perier.1` has `0.8.1` in `package.json`. A deployment
-then names the fork's registry when it upgrades, because `upgrade.sh` defaults
-to this repository's:
+**The perierhq fork has its own version line** (decided 2026-11-13: upstream
+development has stopped and the fork is maintained on its own). Tags are plain
+`vX.Y.Z` from `v0.9.0` on, following the rules above, and move `latest` like
+upstream did. `v0.8.1-perier.1` is the one earlier pre-release-style tag. A
+deployment names the fork's registry when it upgrades, because `upgrade.sh`
+defaults to OpenLabs':
 
 ```sh
-OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.8.1-perier.1
+OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.9.0
 ```
+
+The ten packages are linked to `perierhq/openanalytics` with Actions **Write**
+access (package settings, Manage Actions access). A package first pushed from
+a laptop is not linked, and the workflow then fails with `permission_denied`;
+the images also carry `org.opencontainers.image.source` so a new package links
+itself.
 
 ## Check that a new package is public. Do not assume either way
 

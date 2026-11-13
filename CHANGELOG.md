@@ -8,16 +8,16 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
-## Perier fork: [0.9.0-perier.1] - 2026-11-13
+## [0.9.0] - 2026-11-13 (perierhq fork)
 
-The perierhq fork's build, tagged `v0.9.0-perier.1` and published to
+The perierhq fork's first release on its own version line, tagged `v0.9.0` and published to
 `ghcr.io/perierhq/openanalytics`. It is 0.8.1-perier.1 plus the fork's
 DataFast gap work: revenue by source and entry page, events before purchase,
 custom-event property breakdowns, funnel step kinds with revenue per step, and
 subscription MRR and churn.
 
 **Upgrade notes.** Run `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics
-./upgrade.sh` from the `v0.9.0-perier.1` checkout, as for 0.8.1-perier.1. Then:
+./upgrade.sh` from the `v0.9.0` checkout, as for 0.8.1-perier.1. Then:
 
 1. **Migrations run on their own** with the rest: ClickHouse 0030
    (`custom_event_properties_15m` / `_1d` and their views) and 0031
