@@ -1,3 +1,4 @@
+import { propertyKeySchema } from '@openanalytics/contracts'
 import { z } from 'zod'
 
 /**
@@ -33,16 +34,48 @@ import { z } from 'zod'
  *
  * The D-102 anonymous id is the visitor (ADR-0036 D3: unit-counting reads key
  * on the anonymous id; the funnel population — page_view/custom_event/
- * conversion — never carries a `user_id`, so this is what the old
- * resolved-identity expression always evaluated to here). Two scopes are
- * offered, both computable from `events_raw` without a join:
+ * conversion — never carries a `user_id` itself). Two scopes are offered, both
+ * computable from `events_raw`:
  *
- *   - **`visitor`** — the unit is the anonymous id. The whole funnel is one
- *     person's journey across visits, bounded only by `windowMs`.
+ *   - **`visitor`** — the unit is the anonymous id, or the identify hash it was
+ *     paired with (below). The whole funnel is one person's journey across
+ *     visits, bounded only by `windowMs`.
  *   - **`session`** — the unit is `(anonymous id, client session hint)`. The
  *     hint (`events_raw.session_id`, the site-scoped HMAC of the tracker's
  *     `client_session_id`) approximates a browser session; pairing it with the
  *     identity stops two visitors who reused a hint value from being merged.
+ *
+ * **Visitor scope folds the identify hash in where one exists.** The anonymous id
+ * rotates at UTC midnight, so a funnel keyed on it alone splits every multi-day
+ * journey into one unit per day. An `identify` event pairs the day's anonymous id
+ * with the stable `identify()` HMAC (`events_raw.user_id`, set on identify rows
+ * only), and the operation maps every anonymous id that has such a pairing to
+ * that hash: a signed-in person's days become one unit, an anonymous visitor's
+ * unit is unchanged. It is the same resolved identity
+ * `revenue_attributions.visitor_id` carries, which is what lets a step's units be
+ * joined to the buyers among them. The pure matcher takes the unit key as given,
+ * so the mapping is the caller's (`resolveFunnelUnits` below is its reference).
+ *
+ * ## Step kinds
+ *
+ * A step is a string, stored and sent exactly as before, in one of two forms:
+ *
+ *   - **a key** (every funnel saved before step kinds existed): matched against
+ *     the page path of a pageview and the name of any other event, exactly.
+ *   - **a JSON step object**, recognised by its leading `{` — no key can start
+ *     with one, because a page path starts with `/` and an event name with a
+ *     letter or digit (`eventNameSchema`):
+ *       `{"page":"/de/search/*"}` — a pageview whose path matches, `*` matching
+ *       any run of characters (slashes included);
+ *       `{"event":"plan_selected","where":{"plan":"yearly"}}` — a custom event
+ *       or conversion with that name whose properties equal every listed value.
+ *       A number or boolean property is compared as its JSON text (`12`,
+ *       `true`), the same text the property breakdown reports.
+ *
+ * Keeping the step a string is the compatibility argument: the stored column,
+ * the contract's `FunnelStepKeys`, the repeated `steps=` query parameter and the
+ * response's `key` all keep their shape, so an old client reads a new funnel's
+ * steps as opaque keys rather than failing to parse them.
  *
  * The `session` scope is the client-hint session, **not** the canonical 30-minute
  * sessionizer session: `session_facts_versions` stores per-session aggregates, not
@@ -86,9 +119,115 @@ export const FUNNEL_STEP_KEY_MAX_LENGTH = 512
  * these bounds is exactly how that stops being true.
  */
 export const funnelStepsSchema = z
-  .array(z.string().min(1).max(FUNNEL_STEP_KEY_MAX_LENGTH))
+  .array(
+    z
+      .string()
+      .min(1)
+      .max(FUNNEL_STEP_KEY_MAX_LENGTH)
+      .superRefine((raw, ctx) => {
+        const parsed = parseFunnelStep(raw)
+        if (!parsed.ok) ctx.addIssue({ code: 'custom', message: parsed.reason })
+      }),
+  )
   .min(MIN_FUNNEL_STEPS)
   .max(MAX_FUNNEL_STEPS)
+
+/** Most property conditions one event step may carry; the gateway's slots are fixed. */
+export const MAX_FUNNEL_STEP_CONDITIONS = 3
+
+/** One `key = value` condition on an event step's properties. */
+export interface FunnelStepCondition {
+  readonly key: string
+  readonly value: string
+}
+
+/**
+ * A parsed step. `key` is the legacy form, matched exactly against a pageview's
+ * path or another event's name; `page` carries the path pattern with its `*`
+ * wildcards; `event` carries a name and its property conditions.
+ */
+export type FunnelStepSpec =
+  | { readonly kind: 'key'; readonly key: string }
+  | { readonly kind: 'page'; readonly pattern: string }
+  | {
+      readonly kind: 'event'
+      readonly name: string
+      readonly where: readonly FunnelStepCondition[]
+    }
+
+const funnelStepObjectSchema = z.union([
+  z.strictObject({
+    page: z.string().min(1).max(FUNNEL_STEP_KEY_MAX_LENGTH).startsWith('/'),
+  }),
+  z.strictObject({
+    event: z.string().min(1).max(64),
+    where: z
+      .record(propertyKeySchema, z.string().max(256))
+      .refine((value) => Object.keys(value).length <= MAX_FUNNEL_STEP_CONDITIONS, {
+        message: `at most ${MAX_FUNNEL_STEP_CONDITIONS} property conditions per step`,
+      })
+      .optional(),
+  }),
+])
+
+/**
+ * Parses one stored or requested step string. Total: a malformed JSON step is a
+ * typed refusal, never a throw, so the schema above can report it as an issue.
+ */
+export function parseFunnelStep(
+  raw: string,
+): { ok: true; step: FunnelStepSpec } | { ok: false; reason: string } {
+  if (!raw.startsWith('{')) return { ok: true, step: { kind: 'key', key: raw } }
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    return { ok: false, reason: 'a step starting with { must be a JSON step object' }
+  }
+  const parsed = funnelStepObjectSchema.safeParse(json)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: `invalid step object: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`,
+    }
+  }
+  const value = parsed.data
+  if ('page' in value) return { ok: true, step: { kind: 'page', pattern: value.page } }
+  return {
+    ok: true,
+    step: {
+      kind: 'event',
+      name: value.event,
+      where: Object.entries(value.where ?? {}).map(([key, v]) => ({ key, value: v })),
+    },
+  }
+}
+
+/**
+ * A page pattern as a ClickHouse `LIKE` pattern: `\`, `%` and `_` escaped, `*`
+ * turned into `%`. A pattern without `*` is therefore an exact match.
+ */
+export function funnelPagePatternToLike(pattern: string): string {
+  return pattern.replace(/[\\%_]/g, (c) => `\\${c}`).replace(/\*/g, '%')
+}
+
+function pagePatternMatches(pattern: string, path: string): boolean {
+  const source = pattern
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*')
+  return new RegExp(`^${source}$`, 's').test(path)
+}
+
+/**
+ * A property value as a step condition compares it: a string as itself, a
+ * number or boolean as its JSON text. Mirrors the gateway's expression.
+ */
+export function funnelPropertyText(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return JSON.stringify(value)
+  return null
+}
 
 export const funnelConfigSchema = z
   .object({
@@ -162,6 +301,47 @@ export interface FunnelEvent {
   readonly eventId: string
   /** The event's funnel key: page_path for a pageview, event name otherwise. */
   readonly stepKey: string
+  /** Whether the event is a pageview; only `page` steps need it. Default: not. */
+  readonly isPageView?: boolean
+  /** The event's properties; only `event` steps with conditions read them. */
+  readonly properties?: Readonly<Record<string, unknown>>
+}
+
+/** Whether an event matches one parsed step — the reference for the SQL slot. */
+export function funnelStepMatches(step: FunnelStepSpec, event: FunnelEvent): boolean {
+  switch (step.kind) {
+    case 'key':
+      return event.stepKey === step.key
+    case 'page':
+      return event.isPageView === true && pagePatternMatches(step.pattern, event.stepKey)
+    case 'event':
+      return (
+        event.isPageView !== true &&
+        event.stepKey === step.name &&
+        step.where.every(
+          (condition) => funnelPropertyText(event.properties?.[condition.key]) === condition.value,
+        )
+      )
+  }
+}
+
+/**
+ * The visitor-scope unit of each anonymous id: the identify hash it was paired
+ * with, the latest pairing winning, or the anonymous id itself. The reference
+ * for the gateway's identity map.
+ */
+export function resolveFunnelUnits(
+  identifies: readonly { anonymousId: string; userId: string; occurredMs: number }[],
+): (anonymousId: string) => string {
+  const latest = new Map<string, { userId: string; occurredMs: number }>()
+  for (const pairing of identifies) {
+    if (pairing.userId === '') continue
+    const seen = latest.get(pairing.anonymousId)
+    if (seen === undefined || pairing.occurredMs >= seen.occurredMs) {
+      latest.set(pairing.anonymousId, pairing)
+    }
+  }
+  return (anonymousId) => latest.get(anonymousId)?.userId ?? anonymousId
 }
 
 /** One row of a funnel result. */
@@ -186,13 +366,13 @@ export interface FunnelStepResult {
  */
 function unitLevel(
   sortedEvents: readonly FunnelEvent[],
-  steps: readonly string[],
+  steps: readonly FunnelStepSpec[],
   windowMs: number,
 ): number {
   const eventTs: number[] = new Array(steps.length).fill(Number.NaN)
   for (const event of sortedEvents) {
     for (let stage = steps.length - 1; stage >= 0; stage -= 1) {
-      if (event.stepKey !== steps[stage]) continue
+      if (!funnelStepMatches(steps[stage]!, event)) continue
       if (stage === 0) {
         eventTs[0] = event.occurredMs
       } else if (
@@ -235,10 +415,16 @@ export function computeFunnel(
     else unit.push(event)
   }
 
+  // An unparseable step matches nothing rather than throwing: the function is
+  // total, and the schema is where a bad step is refused.
+  const specs = config.steps.map((raw) => {
+    const parsed = parseFunnelStep(raw)
+    return parsed.ok ? parsed.step : ({ kind: 'event', name: '', where: [] } as const)
+  })
   const counts = new Array(config.steps.length).fill(0)
   for (const unitEvents of byUnit.values()) {
     const sorted = [...unitEvents].sort(compareFunnelEvents)
-    const level = unitLevel(sorted, config.steps, config.windowMs)
+    const level = unitLevel(sorted, specs, config.windowMs)
     for (let i = 0; i < level; i += 1) counts[i] += 1
   }
 

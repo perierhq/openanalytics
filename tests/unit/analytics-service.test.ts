@@ -518,6 +518,7 @@ describe('funnels', () => {
       scope: 'visitor',
       steps: ['/pricing', 'signup_started', 'signup'],
       windowMs: 1_800_000,
+      withRevenue: false,
     })
     expect(gateway.calls.some((c) => c.operation === 'analytics.funnel_visitor')).toBe(true)
     expect(res.steps.map((s) => s.count)).toEqual([4200, 1890, 940])
@@ -525,6 +526,69 @@ describe('funnels', () => {
     expect(res.steps[2]!.conversion_rate).toBeCloseTo(940 / 4200)
     expect(res.meta.scope).toBe('visitor')
     expect(res.meta.window_ms).toBe(1_800_000)
+    // Without revenue the money fields are absent, never zero.
+    expect(res.steps[0]).not.toHaveProperty('buyers')
+    expect(res.steps[0]).not.toHaveProperty('revenue_minor')
+    expect(res).not.toHaveProperty('currency')
+    const call = gateway.calls.find((c) => c.operation === 'analytics.funnel_visitor')
+    expect(call?.params).toMatchObject({ with_revenue: false })
+  })
+
+  it('serves buyers and revenue per step, and the currency, when asked', async () => {
+    const { service, gateway } = serviceWith((op) => {
+      if (op === 'analytics.freshness')
+        return [{ watermark: '2026-07-07 23:00:00.000', buckets: '9' }]
+      if (op === 'analytics.funnel_session')
+        return [
+          {
+            step_1: '40',
+            step_2: '10',
+            buyers_1: '3',
+            buyers_2: '2',
+            revenue_1: '11997',
+            revenue_2: '7998',
+            currency: 'EUR',
+          },
+        ]
+      return []
+    })
+    const res = await service.funnel({
+      siteId: SITE,
+      from: '2026-07-01T00:00:00.000Z',
+      to: '2026-07-08T00:00:00.000Z',
+      timezone: 'UTC',
+      scope: 'session',
+      steps: ['/pricing', '{"event":"plan_selected","where":{"plan":"yearly"}}'],
+      windowMs: 1_800_000,
+      withRevenue: true,
+    })
+    const call = gateway.calls.find((c) => c.operation === 'analytics.funnel_session')
+    expect(call?.params).toMatchObject({ with_revenue: true })
+    expect(res.steps.map((s) => [s.buyers, s.revenue_minor])).toEqual([
+      [3, 11997],
+      [2, 7998],
+    ])
+    expect(res.currency).toBe('EUR')
+  })
+
+  it('reports a null currency when no step had a buyer', async () => {
+    const { service } = serviceWith((op) => {
+      if (op === 'analytics.funnel_visitor')
+        return [{ step_1: '5', step_2: '1', buyers_1: '0', revenue_1: '0', currency: '' }]
+      return []
+    })
+    const res = await service.funnel({
+      siteId: SITE,
+      from: '2026-07-01T00:00:00.000Z',
+      to: '2026-07-08T00:00:00.000Z',
+      timezone: 'UTC',
+      scope: 'visitor',
+      steps: ['/a', '/b'],
+      windowMs: 1_000,
+      withRevenue: true,
+    })
+    expect(res.currency).toBeNull()
+    expect(res.steps[0]).toMatchObject({ buyers: 0, revenue_minor: 0 })
   })
 
   it('refuses a range beyond the synchronous cap (async is a follow-up)', async () => {
@@ -538,6 +602,7 @@ describe('funnels', () => {
         scope: 'visitor',
         steps: ['/a', '/b'],
         windowMs: 1_000,
+        withRevenue: false,
       }),
     ).rejects.toMatchObject({ code: 'RESOLUTION_NOT_AVAILABLE' })
     expect(gateway.calls).toHaveLength(0)

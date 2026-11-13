@@ -26,7 +26,11 @@ export default function FunnelsDocsPage() {
         <DocList
           items={[
             "A step is a page path or a custom event. The editor suggests from what your site actually sends, so you pick real names instead of guessing spellings.",
-            "Steps are ordered: a visitor counts for step three only having matched one and two first, within the same session.",
+            "A page step can use * to match many paths: /discount/* counts any page under /discount/.",
+            "An event step can require property values, such as plan=yearly, up to three per step.",
+            "Steps are ordered: a visitor counts for step three only after matching one and two first, all within the funnel's window.",
+            "Counted per visitor, someone who signs in on several days counts once: identify() ties those days together. Before that, each day was a separate visitor.",
+            "Owners also see, under each step, how many of the people who reached it bought something in the range and what they paid.",
             "Funnels are computed over the range you pick, like every other view; change the range and the funnel recomputes.",
             "Owners and admins edit funnels; viewers see results read-only.",
           ]}

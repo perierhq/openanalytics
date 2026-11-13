@@ -376,3 +376,26 @@ compared nothing.) The one thing the hour tables held that raw does not is rows
 whose raw events were purged by hand after they were rolled up — the hosted
 deployment's 2026-08-25 cleanup, the reason `--accept-site` exists; the `_1d`
 twins keep those days.
+
+### 0030 — custom-event property breakdowns (Perier fork, DataFast gap 6)
+
+| Version | Subject                                                                           |
+| ------- | --------------------------------------------------------------------------------- |
+| 0030    | `custom_event_properties_15m` / `_1d` + views, keyed (event, property key, value) |
+
+Additive: two targets and two views reading straight from `events_raw`, nothing
+existing touched. `oa_*` keys and `order_id` are never stored, values are cut to
+100 characters, and the cardinality cap (top N values per key plus an `other`
+row, at most 32 keys) is applied at read time by
+`analytics.custom_event_properties_{hour,day}`. Both tables are deletion targets.
+
+History is a separate, explicit step:
+`node packages/clickhouse/dist/cli.js backfill-event-properties [--dry-run] [--days N]`
+fills the last 92 days (at most), `(site, bucket)` pairs with no row only, one
+UTC day per statement, never the live bucket. It is safe beside a running worker
+and a second run writes nothing; it records itself in `backfill_ledger` as
+`custom_event_properties`. It is not wired into the migrate container's start,
+so it costs nothing until an operator runs it.
+
+Rollback: drop the two views, then the two tables, and take the two names out
+of `DELETION_CLICKHOUSE_TARGETS` in the same release.

@@ -579,7 +579,7 @@ describe('the published fixture is what the route actually returns', () => {
   })
 })
 
-describe('the deletion registry, at 62 after migration 0029 dropped the hour tables', () => {
+describe('the deletion registry, at 64 after migration 0030 added the property breakdowns', () => {
   /**
    * Pinned here as well as in the migration suite because that suite needs a
    * database and therefore only runs in CI: a widget table that is not a
@@ -588,12 +588,13 @@ describe('the deletion registry, at 62 after migration 0029 dropped the hour tab
    */
   it('names the widget table as a Postgres target', () => {
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
-    // 62, not 63: `billing_transfer_offers` is registered by the hosted surface
+    // 64, not 65: `billing_transfer_offers` is registered by the hosted surface
     // (`CLOUD_DELETION_EXTENSION`), so what this pins is the set a build with no
     // such surface erases. 62 became 72 when ADR-0079 booked the ten `*_15m`
-    // rollups (ClickHouse migrations 0025/0026), and 72 became 62 again when
-    // migration 0029 dropped the ten hour tables.
-    expect(SITE_DELETION_TARGETS).toHaveLength(62)
+    // rollups (ClickHouse migrations 0025/0026), 72 became 62 again when
+    // migration 0029 dropped the ten hour tables, and 62 became 64 when 0030
+    // added the two custom-event property breakdowns.
+    expect(SITE_DELETION_TARGETS).toHaveLength(64)
     expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(22)
     expect(SITE_DELETION_TARGETS).toContainEqual({ store: 'postgres', target: 'widgets' })
   })

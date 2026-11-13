@@ -500,11 +500,11 @@ describeIfPostgres('import runs', () => {
       // 47 was M11's end state; M12 took it to 57 across CP1-CP5 (ADR-0033, D8
       // and its CP3 amendment). The object target deliberately did not multiply
       // and revenue adds none — provider bodies are never persisted.
-      // 62, not 63: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(62)
+      // 64, not 65: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(64)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       const byStore = (store: string) => targets.filter((t) => t.store === store).length
-      expect(byStore('clickhouse')).toBe(34)
+      expect(byStore('clickhouse')).toBe(36)
       expect(byStore('redis')).toBe(5)
       expect(byStore('postgres')).toBe(22)
       expect(byStore('object')).toBe(1)

@@ -1986,6 +1986,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/analytics/custom-events/properties": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One custom event's property values by count. Session or OAuth.
+         * @description The same response as
+         *     `GET /v1/sites/{site_id}/analytics/custom-events/properties`.
+         *
+         *     One custom event's properties broken down by value: for each property
+         *     key, the `limit` values with the most events (each with its unique
+         *     visitors) and an `other` row folding every value below the cut, or
+         *     `other: null` when nothing was cut. Keys are ordered by their events.
+         *     At most 32 keys, the busiest first.
+         *
+         *     Values are text: a string as itself, a number or boolean as its JSON
+         *     text (`12`, `true`), cut to 100 characters. The reserved `oa_*` keys
+         *     and `order_id` are never broken down. When the event has a dashboard
+         *     definition that declares properties (`property_schema`), only those
+         *     keys are returned; without a definition, or with one that declares
+         *     none, every key is. Counts start when the property rollup was
+         *     installed (ClickHouse migration 0030) plus its 92-day history fill, and
+         *     imported provider data carries no properties.
+         *
+         *     A person's read, not a key's, for the reason `custom-events` gives: a
+         *     private key gets `403`.
+         *
+         *     Requires the `analytics:read` scope.
+         */
+        get: operations["readAnalyticsCustomEventProperties"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/read/analytics/performance": {
         parameters: {
             query: {
@@ -2114,6 +2193,11 @@ export interface paths {
          *
          *     A person's read, not a key's, for the reason `custom-events` gives: a
          *     private key gets `403`.
+         *
+         *     `buyers` and `revenue_minor` per step, and `currency`, are served to an
+         *     **owner** (ADR-0036 CP7) whose credential also carries `revenue:read`,
+         *     as the visitor reads' `revenue` marker is; for anyone else they are
+         *     absent, never zero.
          *
          *     Requires the `analytics:read` scope.
          */
@@ -3218,6 +3302,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{site_id}/analytics/custom-events/properties": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * One custom event's property values by count.
+         * @description One custom event's properties broken down by value: for each property
+         *     key, the `limit` values with the most events (each with its unique
+         *     visitors) and an `other` row folding every value below the cut, or
+         *     `other: null` when nothing was cut. Keys are ordered by their events.
+         *     At most 32 keys, the busiest first.
+         *
+         *     Values are text: a string as itself, a number or boolean as its JSON
+         *     text (`12`, `true`), cut to 100 characters. The reserved `oa_*` keys
+         *     and `order_id` are never broken down. When the event has a dashboard
+         *     definition that declares properties (`property_schema`), only those
+         *     keys are returned; without a definition, or with one that declares
+         *     none, every key is. Counts start when the property rollup was
+         *     installed (ClickHouse migration 0030) plus its 92-day history fill, and
+         *     imported provider data carries no properties.
+         */
+        get: operations["getAnalyticsCustomEventProperties"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/analytics/performance": {
         parameters: {
             query: {
@@ -3294,8 +3424,15 @@ export interface paths {
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
                 /**
-                 * @description Ordered funnel step keys, as repeated `steps=` parameters (2–8). Each key
-                 *     matches a pageview's path or another event's name.
+                 * @description Ordered funnel steps, as repeated `steps=` parameters (2–8).
+                 *
+                 *     A step is either a plain key, matching a pageview's path or another
+                 *     event's name exactly, or a JSON step object (it starts with `{`):
+                 *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+                 *     `*` standing for any run of characters; `{"event":"plan_selected",
+                 *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+                 *     when every listed property equals the given text (a number or boolean
+                 *     compares as its JSON text), at most 3 conditions per step.
                  */
                 steps: components["parameters"]["FunnelSteps"];
                 /** @description Conversion window in milliseconds; a unit's steps must fall within it. */
@@ -3312,12 +3449,19 @@ export interface paths {
         /**
          * An ordered multi-step funnel over the canonical event facts.
          * @description Ordered steps matched per unit within a window (docs snapshot 02 §15, plan
-         *     Milestone 8 item 7). The unit is the resolved visitor identity (`scope=
-         *     visitor`) or that identity paired with the client session hint (`scope=
-         *     session`). Each event's funnel key is the page path for a pageview and the
-         *     event name otherwise. Steps are ordered by `(occurred_at, event_id)` — a
-         *     deterministic tie-break. The synchronous range is bounded; a larger range
-         *     is an async job (a documented follow-up).
+         *     Milestone 8 item 7). With `scope=visitor` the unit is the resolved
+         *     visitor: the `identify()` hash an anonymous id was paired with in the
+         *     range, else the anonymous id, so a signed-in person's days are one unit
+         *     although the anonymous id rotates at UTC midnight. With `scope=session`
+         *     it is the anonymous id paired with the client session hint. Steps are
+         *     plain keys or JSON step objects (see the `steps` parameter) and are
+         *     ordered by `(occurred_at, event_id)` — a deterministic tie-break. The
+         *     synchronous range is bounded; a larger range is an async job (a
+         *     documented follow-up).
+         *
+         *     For a caller holding `revenue:read` (owner-only) each step also carries
+         *     `buyers` and `revenue_minor`, and the response its `currency`; for anyone
+         *     else those fields are absent, never zero.
          */
         get: operations["getAnalyticsFunnel"];
         put?: never;
@@ -7713,6 +7857,33 @@ export interface components {
             meta: components["schemas"]["AnalyticsMeta"];
             items: components["schemas"]["CustomEventRow"][];
         };
+        AnalyticsCustomEventPropertiesResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            event_name: string;
+            properties: components["schemas"]["CustomEventPropertyBreakdown"][];
+        };
+        CustomEventPropertyBreakdown: {
+            key: string;
+            values: components["schemas"]["CustomEventPropertyValue"][];
+            /** @description Every value below the cut, together; null when nothing was cut. */
+            other: components["schemas"]["CustomEventPropertyCounts"] | null;
+        };
+        CustomEventPropertyValue: {
+            value: string;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            visitors: number;
+        };
+        CustomEventPropertyCounts: {
+            /** Format: int64 */
+            events: number;
+            /**
+             * Format: int64
+             * @description Unique visitors across the folded values, each counted once.
+             */
+            visitors: number;
+        };
         /**
          * @description Web-vital percentiles are the merged t-digest read at
          *     [0.5, 0.75, 0.9, 0.95, 0.99]; `mean` is `value_sum / samples`.
@@ -7827,6 +7998,26 @@ export interface components {
             count: number;
             /** @description count / step-1 count, in [0, 1]; 0 when the funnel entry is empty. */
             conversion_rate: number;
+            /**
+             * Format: int64
+             * @description Resolved visitors (the `identify()` hash where one was paired in the
+             *     range, else the anonymous id) who reached at least this step and have
+             *     at least one attributed, converted charge in the range. Counted per
+             *     visitor in both scopes, because a charge is attributed to a visitor,
+             *     not to a session. The charge need not come after the step.
+             *
+             *     **Owner-only, like `VisitorRevenue`:** present only for a caller
+             *     holding `revenue:read` (on `/v1/read`, also as a granted scope);
+             *     absent, never `0`, for anyone else.
+             */
+            buyers?: number;
+            /**
+             * Format: int64
+             * @description Gross amount of those buyers' attributed, converted charges in the
+             *     range, in the site's reporting currency (`currency` on the response),
+             *     minor units. Present exactly when `buyers` is.
+             */
+            revenue_minor?: number;
         };
         FunnelMeta: {
             requested_range: components["schemas"]["DateRange"];
@@ -7841,12 +8032,25 @@ export interface components {
         AnalyticsFunnelResponse: {
             meta: components["schemas"]["FunnelMeta"];
             steps: components["schemas"]["FunnelStep"][];
+            /**
+             * @description The site's reporting currency for every step's `revenue_minor`, or
+             *     null when no step had a buyer. Present exactly when the steps carry
+             *     `buyers` and `revenue_minor` (owner-only).
+             */
+            currency?: components["schemas"]["Currency"] | null;
         };
         /**
-         * @description Ordered funnel step keys, each matching a pageview's path or another
-         *     event's name. Exactly the shape
+         * @description Ordered funnel steps. Exactly the shape
          *     `GET /v1/sites/{site_id}/analytics/funnel` takes as repeated `steps=`
          *     parameters, so a stored definition can be handed to it unchanged.
+         *
+         *     A step is either a plain key, matching a pageview's path or another
+         *     event's name exactly, or a JSON step object (it starts with `{`):
+         *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+         *     `*` standing for any run of characters; `{"event":"plan_selected",
+         *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+         *     when every listed property equals the given text (a number or boolean
+         *     compares as its JSON text), at most 3 conditions per step.
          */
         FunnelStepKeys: string[];
         /**
@@ -9965,6 +10169,10 @@ export interface components {
          *     honestly serve is refused with `RESOLUTION_NOT_AVAILABLE`.
          */
         OverviewResolution: "hour" | "day";
+        /** @description The custom event or conversion name to break down. */
+        CustomEventName: string;
+        /** @description Values per property key before the `other` row. */
+        PropertyValueLimit: number;
         /** @description Maximum rows to return for a top-N report. */
         TopNLimit: number;
         /**
@@ -10064,8 +10272,15 @@ export interface components {
          */
         VisitorHash: string;
         /**
-         * @description Ordered funnel step keys, as repeated `steps=` parameters (2–8). Each key
-         *     matches a pageview's path or another event's name.
+         * @description Ordered funnel steps, as repeated `steps=` parameters (2–8).
+         *
+         *     A step is either a plain key, matching a pageview's path or another
+         *     event's name exactly, or a JSON step object (it starts with `{`):
+         *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+         *     `*` standing for any run of characters; `{"event":"plan_selected",
+         *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+         *     when every listed property equals the given text (a number or boolean
+         *     compares as its JSON text), at most 3 conditions per step.
          */
         FunnelSteps: string[];
         /** @description Conversion window in milliseconds; a unit's steps must fall within it. */
@@ -12311,6 +12526,70 @@ export interface operations {
             503: components["responses"]["AnalyticsUnavailable"];
         };
     };
+    readAnalyticsCustomEventProperties: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event's property breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsCustomEventPropertiesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["MissingScopeOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
     readAnalyticsPerformance: {
         parameters: {
             query: {
@@ -13806,6 +14085,44 @@ export interface operations {
             503: components["responses"]["AnalyticsUnavailable"];
         };
     };
+    getAnalyticsCustomEventProperties: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description The custom event or conversion name to break down. */
+                event_name: components["parameters"]["CustomEventName"];
+                /** @description Values per property key before the `other` row. */
+                limit?: components["parameters"]["PropertyValueLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event's property breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsCustomEventPropertiesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["SiteSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
     getAnalyticsPerformance: {
         parameters: {
             query: {
@@ -13886,8 +14203,15 @@ export interface operations {
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
                 /**
-                 * @description Ordered funnel step keys, as repeated `steps=` parameters (2–8). Each key
-                 *     matches a pageview's path or another event's name.
+                 * @description Ordered funnel steps, as repeated `steps=` parameters (2–8).
+                 *
+                 *     A step is either a plain key, matching a pageview's path or another
+                 *     event's name exactly, or a JSON step object (it starts with `{`):
+                 *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+                 *     `*` standing for any run of characters; `{"event":"plan_selected",
+                 *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+                 *     when every listed property equals the given text (a number or boolean
+                 *     compares as its JSON text), at most 3 conditions per step.
                  */
                 steps: components["parameters"]["FunnelSteps"];
                 /** @description Conversion window in milliseconds; a unit's steps must fall within it. */

@@ -15,6 +15,8 @@ export const BACKFILL_LEDGER_NAMES = [
   'rollups_15m',
   'session_rollups_15m',
   'revenue_15m_reroll',
+  // The custom-event property rollups of 0030 (`backfill-event-properties`).
+  'custom_event_properties',
 ] as const
 export type BackfillLedgerName = (typeof BACKFILL_LEDGER_NAMES)[number]
 

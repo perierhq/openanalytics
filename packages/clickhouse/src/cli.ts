@@ -9,6 +9,7 @@ import {
   recordBackfill,
   type BackfillLedgerName,
 } from './backfill-ledger.ts'
+import { backfillEventProperties } from './backfill-event-properties.ts'
 import { backfillSessionRollups15m } from './backfill-sessions-15m.ts'
 import { createClient } from '@clickhouse/client'
 import { migrateClickHouse } from './migrate.ts'
@@ -17,6 +18,7 @@ import { migrateClickHouse } from './migrate.ts'
  * `pnpm run migrate:clickhouse [--dry-run]`
  * `pnpm run migrate:clickhouse backfill-15m [--dry-run] [--if-needed] [--sessions] [--settle-seconds N] [--accept-site <uuid>]...`
  * `pnpm run migrate:clickhouse ledger [record <name> <detail-json>]`
+ * `pnpm run migrate:clickhouse backfill-event-properties [--dry-run] [--days N]`
  *
  * Uses the dedicated migration credential. Docs snapshot 02 §5: the ingest user
  * may only insert and the query-gateway user may only read; neither can alter
@@ -49,6 +51,12 @@ import { migrateClickHouse } from './migrate.ts'
  *
  * `ledger` prints `backfill_ledger` (migration 0028); `ledger record` writes one
  * row by hand, for a database whose fills ran before the ledger existed.
+ *
+ * `backfill-event-properties` is the history half of migration 0030: it fills
+ * the custom-event property rollups for the last 92 days (`--days` lowers it),
+ * (site, bucket) pairs with no row only, one UTC day per statement, never the
+ * live bucket. Safe beside a running worker and idempotent. Exit 0 done
+ * (including nothing to fill), 1 any failure.
  */
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -129,6 +137,30 @@ if (args[0] === 'ledger') {
     process.exitCode = 1
   } finally {
     await client.close()
+  }
+} else if (args[0] === 'backfill-event-properties') {
+  const daysRaw = optionValues('--days')[0]
+  const days = daysRaw === undefined ? undefined : Number(daysRaw)
+  if (days !== undefined && !(Number.isInteger(days) && days >= 1 && days <= 92)) {
+    process.stderr.write('--days must be an integer from 1 to 92\n')
+    process.exit(64)
+  }
+  try {
+    const result = await backfillEventProperties({
+      url,
+      username,
+      password,
+      database,
+      logger,
+      dryRun,
+      ...(days === undefined ? {} : { days }),
+    })
+    logger.info('backfill_event_properties_finished', { store: 'clickhouse', ...result })
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+  } catch (err) {
+    logger.error('backfill_event_properties_failed', { store: 'clickhouse', retryable: false, err })
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
+    process.exit(1)
   }
 } else if (args[0] === 'backfill-15m') {
   const settle = optionValues('--settle-seconds')[0]

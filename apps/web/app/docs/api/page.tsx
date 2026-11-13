@@ -70,6 +70,7 @@ export default function ReadApiDocsPage() {
             [<Code key="g">GET /v1/read/analytics/geography</Code>, "Countries and cities."],
             [<Code key="h">GET /v1/read/analytics/devices</Code>, "Device types, browsers, operating systems."],
             [<Code key="i">GET /v1/read/analytics/sessions</Code>, "Bounce rate and visit duration."],
+            [<Code key="p">GET /v1/read/analytics/custom-events/properties</Code>, "One custom event's top values per property key, plus an other row. Person credentials only, never an API key."],
             [<Code key="j">GET /v1/read/revenue/…</Code>, "Revenue aggregates (summary, timeseries, attribution by source or entry page, events before purchase), for the site owner."],
             [<Code key="k">POST /v1/read/realtime/token</Code>, "A short-lived token for the realtime stream (OAuth credentials only)."],
           ]}

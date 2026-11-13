@@ -1008,6 +1008,235 @@ describeIfClickHouse('session-read and funnel gateway operations', () => {
     expect(chCounts).toEqual([2, 2, 1])
   })
 
+  it('funnel step kinds: a wildcard page step and an event step with property conditions', async () => {
+    const site = randomUUID()
+    const steps = [
+      '{"page":"/de/discount/*"}',
+      '{"event":"plan_selected","where":{"plan":"yearly","seats":"3"}}',
+    ]
+    const windowMs = 3_600_000
+    const at = (minute: number): number => Date.parse('2026-07-14T09:00:00.000Z') + minute * 60_000
+    let n = 0
+    const id = (): string => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, '0')}`
+    // v1 matches both (a number property compared as its JSON text); v2 picks
+    // the other plan; v3's path is not under the wildcard; v4 sends the right
+    // event as a pageview path, which an event step must not match.
+    const seed: {
+      anon: string
+      ms: number
+      id: string
+      type: string
+      key: string
+      properties?: Record<string, unknown>
+    }[] = [
+      { anon: 'v1', ms: at(0), id: id(), type: 'page_view', key: '/de/discount/abc/1' },
+      {
+        anon: 'v1',
+        ms: at(5),
+        id: id(),
+        type: 'custom_event',
+        key: 'plan_selected',
+        properties: { plan: 'yearly', seats: 3 },
+      },
+      { anon: 'v2', ms: at(0), id: id(), type: 'page_view', key: '/de/discount/x' },
+      {
+        anon: 'v2',
+        ms: at(5),
+        id: id(),
+        type: 'custom_event',
+        key: 'plan_selected',
+        properties: { plan: 'monthly', seats: 3 },
+      },
+      { anon: 'v3', ms: at(0), id: id(), type: 'page_view', key: '/de/discountx' },
+      {
+        anon: 'v3',
+        ms: at(5),
+        id: id(),
+        type: 'custom_event',
+        key: 'plan_selected',
+        properties: { plan: 'yearly', seats: 3 },
+      },
+      { anon: 'v4', ms: at(0), id: id(), type: 'page_view', key: '/de/discount/' },
+      { anon: 'v4', ms: at(5), id: id(), type: 'page_view', key: 'plan_selected' },
+    ]
+    await insertRawEvents(
+      seed.map((s) => ({
+        site_id: site,
+        event_id: s.id,
+        type: s.type,
+        occurred_at: new Date(s.ms).toISOString().replace('T', ' ').replace('Z', ''),
+        anonymous_id: s.anon,
+        properties: JSON.stringify(s.properties ?? {}),
+        ...(s.type === 'page_view' ? { page_path: s.key } : { name: s.key }),
+      })),
+    )
+
+    const rows = await run('analytics.funnel_visitor', {
+      site_id: site,
+      from: '2026-07-14T00:00:00.000Z',
+      to: '2026-07-15T00:00:00.000Z',
+      steps,
+      window_ms: windowMs,
+    })
+    const counts = [Number(rows[0]!['step_1']), Number(rows[0]!['step_2'])]
+    const reference = computeFunnel(
+      seed.map((s) => ({
+        unitKey: s.anon,
+        occurredMs: s.ms,
+        eventId: s.id,
+        stepKey: s.key,
+        isPageView: s.type === 'page_view',
+        properties: s.properties ?? {},
+      })),
+      { steps, windowMs },
+    ).map((r) => r.count)
+    expect(counts).toEqual(reference)
+    expect(counts).toEqual([3, 1])
+  })
+
+  it('funnel visitor scope joins two signed-in days through identify, and reports buyers and revenue per step', async () => {
+    const site = randomUUID()
+    const at = (iso: string): string => iso.replace('T', ' ').replace('Z', '')
+    let n = 0
+    const id = (): string => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, '0')}`
+    // u1 is one person under two daily anonymous ids, identified on both days;
+    // the first identify sits before the range's first instant but on its
+    // first UTC day, which the identity map still has to see. a3 is anonymous
+    // and only ever reaches step one.
+    await insertRawEvents([
+      {
+        site_id: site,
+        event_id: id(),
+        type: 'identify',
+        occurred_at: at('2026-07-20T08:00:00.000Z'),
+        anonymous_id: 'a1',
+        user_id: 'u1',
+      },
+      {
+        site_id: site,
+        event_id: id(),
+        type: 'page_view',
+        occurred_at: at('2026-07-20T10:00:00.000Z'),
+        anonymous_id: 'a1',
+        session_id: 's1',
+        page_path: '/pricing',
+      },
+      {
+        site_id: site,
+        event_id: id(),
+        type: 'identify',
+        occurred_at: at('2026-07-21T09:00:00.000Z'),
+        anonymous_id: 'a2',
+        user_id: 'u1',
+      },
+      {
+        site_id: site,
+        event_id: id(),
+        type: 'custom_event',
+        occurred_at: at('2026-07-21T09:10:00.000Z'),
+        anonymous_id: 'a2',
+        session_id: 's2',
+        name: 'checkout',
+      },
+      {
+        site_id: site,
+        event_id: id(),
+        type: 'page_view',
+        occurred_at: at('2026-07-20T11:00:00.000Z'),
+        anonymous_id: 'a3',
+        session_id: 's3',
+        page_path: '/pricing',
+      },
+    ])
+
+    const charge = (over: Record<string, unknown>): Record<string, unknown> => ({
+      site_id: site,
+      provider: 'stripe',
+      object_kind: 'charge',
+      version: 1,
+      occurred_at: at('2026-07-21T09:20:00.000Z'),
+      status: 'succeeded',
+      livemode: 1,
+      currency: 'eur',
+      gross_minor: 3_999,
+      fee_minor: 0,
+      fee_currency: 'eur',
+      net_minor: 3_999,
+      reporting_currency: 'eur',
+      reporting_gross_minor: 3_999,
+      reporting_net_minor: 3_999,
+      conversion_source: 'none',
+      conversion_rate: 1,
+      conversion_rate_date: '2026-07-21',
+      ingested_via: 'webhook',
+      ingested_at: at('2026-07-21T09:20:05.000Z'),
+      ...over,
+    })
+    await client.insert({
+      table: 'revenue_events',
+      values: [
+        charge({ object_id: 'ch_u1' }),
+        // a3's charge failed: not a buyer.
+        charge({ object_id: 'ch_a3', status: 'failed', gross_minor: 699 }),
+      ],
+      format: 'JSONEachRow',
+    })
+    await client.insert({
+      table: 'revenue_attributions',
+      values: [
+        { object_id: 'ch_u1', visitor_id: 'u1', user_id: 'u1' },
+        { object_id: 'ch_a3', visitor_id: 'a3' },
+      ].map((row) => ({
+        site_id: site,
+        provider: 'stripe',
+        version: 1,
+        occurred_at: at('2026-07-21T09:20:00.000Z'),
+        computed_at: at('2026-07-21T09:21:00.000Z'),
+        ...row,
+      })),
+      format: 'JSONEachRow',
+    })
+
+    const base = {
+      site_id: site,
+      from: '2026-07-20T09:00:00.000Z',
+      to: '2026-07-22T00:00:00.000Z',
+      steps: ['/pricing', 'checkout'],
+      window_ms: 2 * 86_400_000,
+    }
+    const read = async (
+      operation: string,
+      withRevenue: boolean,
+    ): Promise<{ steps: number[]; buyers: number[]; revenue: number[]; currency: string }> => {
+      const row = (await run(operation, { ...base, with_revenue: withRevenue }))[0]!
+      return {
+        steps: [Number(row['step_1']), Number(row['step_2'])],
+        buyers: [Number(row['buyers_1']), Number(row['buyers_2'])],
+        revenue: [Number(row['revenue_1']), Number(row['revenue_2'])],
+        currency: String(row['currency']),
+      }
+    }
+
+    // Visitor scope: u1's two days are one unit that completes the funnel.
+    expect(await read('analytics.funnel_visitor', true)).toEqual({
+      steps: [2, 1],
+      buyers: [1, 1],
+      revenue: [3_999, 3_999],
+      currency: 'eur',
+    })
+    // Session scope keeps the day boundary: no session holds both steps.
+    const session = await read('analytics.funnel_session', true)
+    expect(session.steps).toEqual([2, 0])
+    expect(session.buyers).toEqual([1, 0])
+    // Without revenue the money is never read.
+    expect(await read('analytics.funnel_visitor', false)).toEqual({
+      steps: [2, 1],
+      buyers: [0, 0],
+      revenue: [0, 0],
+      currency: '',
+    })
+  })
+
   it('reads recent visitors and one visitor’s trail out of the raw events (ADR-0024)', async () => {
     const site = randomUUID()
     const from = '2026-07-12T00:00:00.000Z'

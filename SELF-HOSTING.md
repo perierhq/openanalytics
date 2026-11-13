@@ -911,6 +911,7 @@ they do in the dashboard. The read tools:
 | `list_sites`, `site_install`                                                                       | `site:read`      | Your sites; one site's snippet and tracking key                        |
 | `site_overview`, `site_timeseries`, `top_pages`, `top_sources`, `geography`, `devices`, `sessions` | `analytics:read` | The dashboard's aggregate reports                                      |
 | `custom_events`, `performance`                                                                     | `analytics:read` | Custom events with their labels; web vitals                            |
+| `custom_event_properties`                                                                          | `analytics:read` | One custom event's top property values per key, plus an `other` row    |
 | `funnel_results`                                                                                   | `analytics:read` | A stored funnel by id, or ad-hoc steps: counts and conversion per step |
 | `recent_visitors`, `visitor`                                                                       | `analytics:read` | Visitors of the last 1–24 hours, and one visitor's page trail          |
 | `list_funnels`, `list_event_definitions`, `list_widgets`, `share_settings`                         | `analytics:read` | A site's saved funnels, event definitions, widgets and share settings  |
@@ -923,8 +924,8 @@ The write tools need the matching write scope (`sites:write`, `funnels:write`,
 would need. None of them deletes data; `archive_funnel` hides a funnel and can
 be undone.
 
-`custom_events`, `performance`, `funnel_results`, `recent_visitors` and
-`visitor` read `/v1/read/analytics/*` routes that only a person's credential
+`custom_events`, `custom_event_properties`, `performance`, `funnel_results`,
+`recent_visitors` and `visitor` read `/v1/read/analytics/*` routes that only a person's credential
 reaches: an OAuth token or a dashboard session. A private API key gets `403`
 there. The visitor reads show a visitor's revenue only to an owner whose
 grant includes `revenue:read`, and never list individual payments.

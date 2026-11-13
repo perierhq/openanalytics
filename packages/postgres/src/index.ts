@@ -458,6 +458,7 @@ export {
   createEventDefinition,
   getEventDefinition,
   getEventDefinitionVersion,
+  getEventPropertyAllowlist,
   listEventDefinitionVersions,
   listEventDefinitions,
   listEventDisplayNames,

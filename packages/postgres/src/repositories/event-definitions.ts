@@ -652,6 +652,50 @@ export async function listEventDisplayNames(
   return [...byName.values()]
 }
 
+/**
+ * The property keys a breakdown of one event may show (DataFast gap 6).
+ *
+ * The keys the event's definition declares in `property_schema`, read from the
+ * same version `listEventDisplayNames` reads: the published one, else the
+ * newest, archived definitions included (their rows are still in the range).
+ *
+ * `null` means no allowlist applies: the event has no definition, or its
+ * definition declares no property (a label-only definition for an event sent
+ * from code). A definition that declares keys restricts the breakdown to them,
+ * so a property the owner chose not to describe is not surfaced by a read
+ * either.
+ */
+export async function getEventPropertyAllowlist(
+  db: Database,
+  input: { readonly siteId: string; readonly eventName: string },
+): Promise<string[] | null> {
+  const rows = await db
+    .select({
+      propertySchema: eventDefinitionVersions.propertySchema,
+      version: eventDefinitionVersions.version,
+      publishedVersion: eventDefinitions.publishedVersion,
+    })
+    .from(eventDefinitions)
+    .innerJoin(
+      eventDefinitionVersions,
+      eq(eventDefinitionVersions.definitionId, eventDefinitions.id),
+    )
+    .where(
+      and(
+        eq(eventDefinitions.siteId, input.siteId),
+        eq(eventDefinitions.eventName, input.eventName),
+      ),
+    )
+    .orderBy(desc(eventDefinitionVersions.version))
+
+  const chosen =
+    rows.find((row) => row.publishedVersion !== null && row.publishedVersion === row.version) ??
+    rows[0]
+  if (chosen === undefined) return null
+  const keys = chosen.propertySchema.map((entry) => entry.key)
+  return keys.length === 0 ? null : keys
+}
+
 /** A published rule, joined to the definition that gives it its event name. */
 export interface PublishedRuleRecord {
   readonly definitionId: string

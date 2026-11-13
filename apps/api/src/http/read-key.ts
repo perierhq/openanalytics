@@ -34,7 +34,9 @@ import type { AnalyticsReportRequest, AnalyticsService } from '../analytics/serv
 import {
   OVERVIEW_RESOLUTIONS,
   TIMESERIES_RESOLUTIONS,
+  customEventPropertiesWithAllowlist,
   customEventsWithLabels,
+  parseCustomEventPropertiesQuery,
   parseCompare,
   parseFunnel,
   parseRecentHours,
@@ -83,6 +85,7 @@ import type { RateLimiter } from './rate-limit.ts'
  */
 export const PERSON_ONLY_ANALYTICS_READS: readonly string[] = [
   '/custom-events',
+  '/custom-events/properties',
   '/performance',
   '/funnel',
   '/recent-visitors',
@@ -1014,6 +1017,21 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
     )
   })
 
+  // One custom event's property values (DataFast gap 6). Person-only, like
+  // the custom-events report it breaks down.
+  reads.get('/custom-events/properties', async (c) => {
+    const query = c.req.query()
+    return c.json(
+      await customEventPropertiesWithAllowlist(db, analytics(), {
+        siteId: c.get('readPrincipal').siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        ...parseCustomEventPropertiesQuery(query),
+      }),
+    )
+  })
+
   reads.get('/performance', async (c) => {
     const query = c.req.query()
     return c.json(
@@ -1040,7 +1058,8 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
    * would otherwise depend on a precedence rule nobody asked for.
    */
   reads.get('/funnel', async (c) => {
-    const { siteId } = c.get('readPrincipal')
+    const principal = c.get('readPrincipal')
+    const { siteId } = principal
     const query = c.req.query()
     const range = parseRange(query)
     const funnelId = query['funnel_id']
@@ -1076,6 +1095,8 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         importPointer: c.get('siteImportPointer'),
         ...range,
         ...funnel,
+        // Buyers and revenue per step follow the visitor reads' revenue rule.
+        withRevenue: servesVisitorRevenue(principal),
       }),
     )
   })

@@ -55,6 +55,10 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
     ]),
   ),
   'analytics.revenue_events_before_purchase': { window_ms: 86_400_000 },
+  // One event's property breakdown (DataFast gap 6): the event and the
+  // allowlist the api read from Postgres.
+  'analytics.custom_event_properties_hour': { event_name: 'e', all_keys: true, keys: [] },
+  'analytics.custom_event_properties_day': { event_name: 'e', all_keys: false, keys: ['plan'] },
 }
 
 /**

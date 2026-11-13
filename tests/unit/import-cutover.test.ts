@@ -196,7 +196,7 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     }
   })
 
-  it('has settled on the 61-target snapshot', () => {
+  it('has settled on the 64-target snapshot', () => {
     // 30 ClickHouse + 5 Redis + 19 Postgres + 1 object. The number changed on
     // purpose — 35 before M11, 38 after its CP1, 46 after CP2, 47 once CP4 added
     // `export_runs` (ADR-0032, D9), 48 once M12 CP1 added `revenue_credentials`,
@@ -229,7 +229,11 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // eight `*_1h` view targets, `session_rollups_1h` and `revenue_1h` —
     // taking ClickHouse 44 -> 34 and the total 72 -> 62. Nothing had written
     // them since 0027, and the 15m backfill's gate reads `events_raw` now.
-    expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(34)
+    // ClickHouse migration 0030 (DataFast gap 6) books the two custom-event
+    // property breakdowns, taking ClickHouse 34 -> 36 and the total 62 -> 64.
+    expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(36)
+    expect(DELETION_CLICKHOUSE_TARGETS).toContain('custom_event_properties_15m')
+    expect(DELETION_CLICKHOUSE_TARGETS).toContain('custom_event_properties_1d')
     for (const dropped of [
       'metrics_1h',
       'pages_1h',
@@ -287,7 +291,7 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // the `sites` cascade.
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
     expect(DELETION_POSTGRES_TARGETS).toHaveLength(22)
-    expect(SITE_DELETION_TARGETS).toHaveLength(62)
+    expect(SITE_DELETION_TARGETS).toHaveLength(64)
   })
 })
 
