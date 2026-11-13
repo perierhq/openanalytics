@@ -195,6 +195,15 @@ export function createRevenueAnalyticsRoutes(deps: {
     requireAnalyticsAccess(db),
     requireCapability('revenue:read'),
   )
+  // Perier fork, DataFast gaps 3 and 4: two aggregate reads, same stack.
+  for (const path of ['attribution', 'events-before-purchase']) {
+    app.use(
+      `${base}/${path}`,
+      siteMembership(db),
+      requireAnalyticsAccess(db),
+      requireCapability('revenue:read'),
+    )
+  }
 
   app.get(`${base}/summary`, async (c) => {
     const { siteId } = c.get('membership')
@@ -266,5 +275,113 @@ export function createRevenueAnalyticsRoutes(deps: {
     )
   })
 
+  app.get(`${base}/attribution`, async (c) => {
+    const { siteId } = c.get('membership')
+    const query = c.req.query()
+    return c.json(
+      await service.revenueAttribution({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(query),
+        ...parseRevenueAttribution(query),
+      }),
+    )
+  })
+
+  app.get(`${base}/events-before-purchase`, async (c) => {
+    const { siteId } = c.get('membership')
+    const query = c.req.query()
+    return c.json(
+      await service.revenueEventsBeforePurchase({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(query),
+        ...parseEventsBeforePurchase(query),
+      }),
+    )
+  })
+
   return app
+}
+
+// ---------------------------------------------------------------------------
+// Revenue by source / entry page and events before purchase (Perier fork,
+// DataFast gaps 3 and 4). Exported because `/v1/read/revenue` parses the same
+// parameters, and two parsers is how the two surfaces stop agreeing.
+// ---------------------------------------------------------------------------
+
+const ATTRIBUTION_TOUCHES = ['first', 'last'] as const
+const ATTRIBUTION_DIMENSIONS = [
+  'referrer_domain',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'entry_page',
+] as const
+const EVENTS_WINDOW_MIN_MS = 60_000
+const EVENTS_WINDOW_MAX_MS = 30 * 86_400_000
+const EVENTS_WINDOW_DEFAULT_MS = 7 * 86_400_000
+const EVENTS_LIMIT_MAX = 200
+const EVENTS_LIMIT_DEFAULT = 50
+
+function invalid(path: string, message: string): never {
+  throw new ApiError('VALIDATION_FAILED', `${path} ${message}`, {
+    details: { issues: [{ path, message }] },
+  })
+}
+
+function parseIntegerParam(
+  query: Record<string, string | undefined>,
+  name: string,
+  bounds: { min: number; max: number; fallback: number },
+): number {
+  const raw = query[name]
+  if (raw === undefined) return bounds.fallback
+  const n = Number(raw)
+  if (raw.trim() === '' || !Number.isInteger(n) || n < bounds.min || n > bounds.max) {
+    invalid(name, `must be an integer in [${bounds.min}, ${bounds.max}]`)
+  }
+  return n
+}
+
+export function parseRevenueAttribution(query: Record<string, string | undefined>): {
+  touch: (typeof ATTRIBUTION_TOUCHES)[number]
+  dimension: (typeof ATTRIBUTION_DIMENSIONS)[number]
+  limit: number
+} {
+  const touch = query['touch'] ?? 'first'
+  const dimension = query['dimension'] ?? 'referrer_domain'
+  if (!(ATTRIBUTION_TOUCHES as readonly string[]).includes(touch)) {
+    invalid('touch', `must be one of ${ATTRIBUTION_TOUCHES.join(', ')}`)
+  }
+  if (!(ATTRIBUTION_DIMENSIONS as readonly string[]).includes(dimension)) {
+    invalid('dimension', `must be one of ${ATTRIBUTION_DIMENSIONS.join(', ')}`)
+  }
+  return {
+    touch: touch as (typeof ATTRIBUTION_TOUCHES)[number],
+    dimension: dimension as (typeof ATTRIBUTION_DIMENSIONS)[number],
+    limit: parseIntegerParam(query, 'limit', { min: 1, max: 500, fallback: 100 }),
+  }
+}
+
+export function parseEventsBeforePurchase(query: Record<string, string | undefined>): {
+  windowMs: number
+  limit: number
+} {
+  return {
+    windowMs: parseIntegerParam(query, 'window_ms', {
+      min: EVENTS_WINDOW_MIN_MS,
+      max: EVENTS_WINDOW_MAX_MS,
+      fallback: EVENTS_WINDOW_DEFAULT_MS,
+    }),
+    limit: parseIntegerParam(query, 'limit', {
+      min: 1,
+      max: EVENTS_LIMIT_MAX,
+      fallback: EVENTS_LIMIT_DEFAULT,
+    }),
+  }
 }

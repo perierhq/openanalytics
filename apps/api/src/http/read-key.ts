@@ -51,7 +51,11 @@ import {
 } from './analytics.ts'
 import type { CredentialUseRecorder } from './credential-events.ts'
 import { bearerToken, canonicalSiteId } from './middleware.ts'
-import { readConnection } from './revenue-analytics.ts'
+import {
+  parseEventsBeforePurchase,
+  parseRevenueAttribution,
+  readConnection,
+} from './revenue-analytics.ts'
 import type { RateLimiter } from './rate-limit.ts'
 
 /**
@@ -1227,6 +1231,39 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         connection: await readConnection(db, siteId),
         ...parseRange(query),
         resolution: parseResolution(query, REVENUE_RESOLUTIONS),
+      }),
+    )
+  })
+
+  // Perier fork, DataFast gaps 3 and 4. Aggregates only — a dimension value or
+  // an event name with counts, never a customer, order or visitor id — so they
+  // travel here on the same footing as `summary` and `timeseries` (ADR-0049).
+  revenue.get('/attribution', async (c) => {
+    const { siteId } = c.get('readPrincipal')
+    const query = c.req.query()
+    return c.json(
+      await analytics().revenueAttribution({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(query),
+        ...parseRevenueAttribution(query),
+      }),
+    )
+  })
+
+  revenue.get('/events-before-purchase', async (c) => {
+    const { siteId } = c.get('readPrincipal')
+    const query = c.req.query()
+    return c.json(
+      await analytics().revenueEventsBeforePurchase({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(query),
+        ...parseEventsBeforePurchase(query),
       }),
     )
   })

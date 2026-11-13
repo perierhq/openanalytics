@@ -256,6 +256,19 @@ export interface RevenueJourneyRequest extends RevenueRequest {
   readonly objectId: string
 }
 
+/** Revenue by first/last-touch dimension (Perier fork, DataFast gap 3). */
+export interface RevenueAttributionRequest extends RevenueRequest {
+  readonly touch: Schemas['RevenueAttributionTouch']
+  readonly dimension: Schemas['RevenueAttributionDimension']
+  readonly limit: number
+}
+
+/** Custom events before a purchase (Perier fork, DataFast gap 4). */
+export interface RevenueEventsBeforePurchaseRequest extends RevenueRequest {
+  readonly windowMs: number
+  readonly limit: number
+}
+
 export interface AnalyticsFunnelRequest extends CacheEpochScoped, ImportScoped {
   readonly siteId: string
   readonly from: string
@@ -2170,6 +2183,222 @@ export class AnalyticsService {
       entries,
     }
   }
+
+  // ---- Revenue by source / entry page, events before purchase -----------
+  //
+  // Perier fork, DataFast gaps 3 and 4. Kept together and apart from the four
+  // CP5 reads above so the fork's rebases touch one block.
+
+  /**
+   * Converted revenue, orders and buyers per first- or last-touch dimension
+   * value, plus visitors, conversion rate and revenue per visitor where the
+   * range is short enough to read the session facts.
+   *
+   * Two reads, and the second depends on the first: the visitors read is bound
+   * to the values the revenue read returned, so its work is proportional to the
+   * rows shown rather than to every referrer the site ever had. It is optional
+   * twice over. Above 92 days it is not attempted (the session facts are a
+   * fact-grain scan, capped like every other one), and a failed visitors read
+   * degrades to `visitors_available: false` with `meta.partial` rather than
+   * losing the revenue answer that was asked for.
+   */
+  async revenueAttribution(
+    req: RevenueAttributionRequest,
+  ): Promise<Schemas['RevenueAttributionResponse']> {
+    const range = revenueAttributionRange(req, REVENUE_ATTRIBUTION_MAX_SPAN_DAYS)
+    const [result, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        `analytics.revenue_attribution_${req.touch}_${req.dimension}`,
+        { site_id: req.siteId, from: range.from, to: range.to, limit: req.limit },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+
+    const rows = result.rows.map((row) => ({
+      value: row['value'] === null || row['value'] === undefined ? null : str(row['value']),
+      revenueMinor: num(row['revenue_minor']),
+      orders: num(row['orders']),
+      unconvertedOrders: num(row['unconverted_orders']),
+      buyers: num(row['buyers']),
+    }))
+
+    const spanMs = Date.parse(range.to) - Date.parse(range.from)
+    let visitorsAvailable = spanMs <= MAX_FUNNEL_RANGE_MS
+    let visitorsDegraded = false
+    let visitorsCached = true
+    const visitorsByValue = new Map<string, number>()
+    const values = rows
+      .map((row) => row.value)
+      .filter((value): value is string => value !== null && value.length <= 2048)
+    if (visitorsAvailable && values.length > 0) {
+      try {
+        const visitors = await this.#gateway.query<Record<string, unknown>>(
+          `analytics.revenue_attribution_visitors_${req.dimension}`,
+          { site_id: req.siteId, from: range.from, to: range.to, values },
+          { cacheEpoch: req.cacheEpoch },
+        )
+        visitorsCached = visitors.meta.cached
+        for (const row of visitors.rows) {
+          visitorsByValue.set(str(row['value']), num(row['visitors']))
+        }
+      } catch {
+        visitorsAvailable = false
+        visitorsDegraded = true
+      }
+    }
+
+    return {
+      meta: {
+        ...this.#meta({
+          requested: { from: req.from, to: req.to },
+          effective: range,
+          timezone: req.timezone,
+          // A breakdown is not bucketed; `hour` is the grain the range is
+          // aligned to, for the reason the transactions list reports it.
+          resolution: 'hour',
+          freshness: this.#revenueFreshness(freshness, req.connection),
+          comparisonRange: null,
+          truncated: result.meta.truncated,
+          cached: result.meta.cached && visitorsCached,
+          partial: visitorsDegraded,
+        }),
+        revenue: this.#revenueMeta(req.connection),
+      },
+      touch: req.touch,
+      dimension: req.dimension,
+      currency: req.reportingCurrency,
+      visitors_available: visitorsAvailable,
+      rows: rows.map((row) => {
+        // The unattributed row has no session entry to count, and a value the
+        // visitors read never saw had no session in the range: zero visitors
+        // with buyers is a fact about identities (see the contract), not an
+        // error, and the rates are null rather than infinite.
+        const visitors =
+          !visitorsAvailable || row.value === null ? null : (visitorsByValue.get(row.value) ?? 0)
+        const ratable = visitors !== null && visitors > 0
+        return {
+          value: row.value,
+          revenue_minor: row.revenueMinor,
+          orders: row.orders,
+          unconverted_orders: row.unconvertedOrders,
+          buyers: row.buyers,
+          visitors,
+          conversion_rate: ratable ? row.buyers / visitors : null,
+          revenue_per_visitor_minor: ratable ? row.revenueMinor / visitors : null,
+        }
+      }),
+    }
+  }
+
+  /**
+   * The custom events buyers fired before their first purchase, beside the
+   * share of non-buyers who fired the same event.
+   *
+   * Reads `events_raw`, so the range is capped at 92 days here as well as in
+   * the gateway, and over the cap is a named `RANGE_TOO_LARGE` in milliseconds
+   * rather than a gateway validation error.
+   */
+  async revenueEventsBeforePurchase(
+    req: RevenueEventsBeforePurchaseRequest,
+  ): Promise<Schemas['RevenueEventsBeforePurchaseResponse']> {
+    const range = revenueAttributionRange(req, MAX_FUNNEL_RANGE_MS / 86_400_000)
+    const [events, population, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        'analytics.revenue_events_before_purchase',
+        {
+          site_id: req.siteId,
+          from: range.from,
+          to: range.to,
+          window_ms: req.windowMs,
+          limit: req.limit,
+        },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#gateway.query<Record<string, unknown>>(
+        'analytics.revenue_purchase_population',
+        { site_id: req.siteId, from: range.from, to: range.to },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+
+    const buyersTotal = num(population.rows[0]?.['buyers_total'])
+    const visitorsTotal = num(population.rows[0]?.['visitors_total'])
+    // `uniq` is an estimate and the two totals count different identities, so
+    // the difference can come out at or below zero on a tiny site. No baseline
+    // then, rather than a negative or infinite rate.
+    const nonBuyersTotal = visitorsTotal - buyersTotal
+
+    return {
+      meta: {
+        ...this.#meta({
+          requested: { from: req.from, to: req.to },
+          effective: range,
+          timezone: req.timezone,
+          resolution: 'hour',
+          freshness: this.#revenueFreshness(freshness, req.connection),
+          comparisonRange: null,
+          truncated: events.meta.truncated,
+          cached: events.meta.cached && population.meta.cached,
+        }),
+        revenue: this.#revenueMeta(req.connection),
+      },
+      window_ms: req.windowMs,
+      totals: { buyers: buyersTotal, visitors: visitorsTotal },
+      rows: events.rows.map((row) => {
+        const buyers = num(row['buyers'])
+        const nonBuyers = num(row['non_buyer_visitors'])
+        return {
+          event_name: str(row['event_name']),
+          event_type: str(row['event_type']),
+          buyers,
+          events: num(row['events']),
+          buyer_rate: buyersTotal > 0 ? buyers / buyersTotal : null,
+          non_buyer_visitors: nonBuyers,
+          non_buyer_rate: nonBuyersTotal > 0 ? nonBuyers / nonBuyersTotal : null,
+        }
+      }),
+    }
+  }
+}
+
+/**
+ * Longest range the revenue breakdown serves. The gateway's own cap is the
+ * hour-rollup span (`MAX_SPAN_HOUR_DAYS`, 400 days by default); this is the
+ * same number, refused here by name before the gateway sees it.
+ */
+const REVENUE_ATTRIBUTION_MAX_SPAN_DAYS = 400
+const QUARTER_HOUR_MS = 15 * 60_000
+
+/**
+ * The range a fact-grain revenue breakdown reads: snapped outward to whole
+ * quarter hours (the gateway's alignment, which every timezone in force meets
+ * at its own midnight), then checked against the span cap.
+ *
+ * Snapped rather than refused because these reads have no bucket to misalign:
+ * a caller asking from 10:07 gets 10:00, and `meta.effective_range` says so.
+ */
+function revenueAttributionRange(
+  req: { from: string; to: string },
+  maxSpanDays: number,
+): { from: string; to: string } {
+  const fromMs = Date.parse(req.from)
+  const toMs = Date.parse(req.to)
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs) || toMs <= fromMs) {
+    throw new ApiError('VALIDATION_FAILED', 'range must be half-open with from < to', {
+      details: { issues: [{ path: 'from', message: 'must be before to' }] },
+    })
+  }
+  const from = Math.floor(fromMs / QUARTER_HOUR_MS) * QUARTER_HOUR_MS
+  const to = Math.ceil(toMs / QUARTER_HOUR_MS) * QUARTER_HOUR_MS
+  const spanDays = (to - from) / 86_400_000
+  if (spanDays > maxSpanDays) {
+    throw new ApiError('RANGE_TOO_LARGE', `this revenue read covers at most ${maxSpanDays} days`, {
+      details: { max_span_days: maxSpanDays, requested_span_days: Number(spanDays.toFixed(2)) },
+    })
+  }
+  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() }
 }
 
 /**
