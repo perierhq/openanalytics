@@ -183,6 +183,19 @@ export function createRevenueAnalyticsRoutes(deps: {
     requireAnalyticsAccess(db),
     requireCapability('revenue:read'),
   )
+  // Perier gap 7: subscription MRR and churn, the same stack as /summary.
+  app.use(
+    `${base}/subscriptions/summary`,
+    siteMembership(db),
+    requireAnalyticsAccess(db),
+    requireCapability('revenue:read'),
+  )
+  app.use(
+    `${base}/subscriptions/timeseries`,
+    siteMembership(db),
+    requireAnalyticsAccess(db),
+    requireCapability('revenue:read'),
+  )
   app.use(
     `${base}/transactions`,
     siteMembership(db),
@@ -225,6 +238,32 @@ export function createRevenueAnalyticsRoutes(deps: {
         connection: await readConnection(db, siteId),
         ...range,
         resolution: parseResolution(query, REVENUE_RESOLUTIONS),
+      }),
+    )
+  })
+
+  app.get(`${base}/subscriptions/summary`, async (c) => {
+    const { siteId } = c.get('membership')
+    return c.json(
+      await service.subscriptionSummary({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(c.req.query()),
+      }),
+    )
+  })
+
+  app.get(`${base}/subscriptions/timeseries`, async (c) => {
+    const { siteId } = c.get('membership')
+    return c.json(
+      await service.subscriptionTimeseries({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(c.req.query()),
       }),
     )
   })

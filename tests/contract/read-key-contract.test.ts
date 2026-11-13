@@ -121,7 +121,12 @@ describe('the read-key surface (ADR-0042)', () => {
     // cannot hold `revenue:read` (ADR-0043 D5), so the revenue routes must not
     // list `privateApiKey` as an accepted credential at all — and the contract,
     // not only the server, has to say so.
-    for (const path of ['/v1/read/revenue/summary', '/v1/read/revenue/timeseries']) {
+    for (const path of [
+      '/v1/read/revenue/summary',
+      '/v1/read/revenue/timeseries',
+      '/v1/read/revenue/subscriptions/summary',
+      '/v1/read/revenue/subscriptions/timeseries',
+    ]) {
       const block = pathBlock(path)
       expect(block, `${path} must not accept a key`).not.toContain('privateApiKey')
       expect(block).toContain("oauthAccessToken: ['revenue:read']")

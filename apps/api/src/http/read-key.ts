@@ -1231,6 +1231,34 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
     )
   })
 
+  // Perier gap 7: subscription MRR and churn. Aggregates only, so they travel
+  // with summary and timeseries; no subscription or customer id is returned.
+  revenue.get('/subscriptions/summary', async (c) => {
+    const { siteId } = c.get('readPrincipal')
+    return c.json(
+      await analytics().subscriptionSummary({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(c.req.query()),
+      }),
+    )
+  })
+
+  revenue.get('/subscriptions/timeseries', async (c) => {
+    const { siteId } = c.get('readPrincipal')
+    return c.json(
+      await analytics().subscriptionTimeseries({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(c.req.query()),
+      }),
+    )
+  })
+
   app.route('/read/revenue', revenue)
 
   /**
