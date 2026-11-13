@@ -970,6 +970,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/revenue/attribution": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description Which touch of the attribution to group by: the entry of the buyer's
+                 *     first session in the attribution window, or of their last.
+                 */
+                touch?: components["parameters"]["RevenueAttributionTouch"];
+                /** @description Which field of the touch to group by. */
+                dimension?: components["parameters"]["RevenueAttributionDimension"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Revenue per first- or last-touch source or entry page for the selected site. Session or OAuth, and owner-only.
+         * @description The same numbers, in the same shape, as
+         *     `GET /v1/sites/{site_id}/revenue/attribution`, behind the same two checks
+         *     as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+         *     owner-only capability. Aggregates only, which is why it travels to this
+         *     surface when `transactions` and `journey` do not (ADR-0049). Closed to
+         *     private keys for the reason the summary is.
+         */
+        get: operations["readRevenueAttribution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/read/revenue/events-before-purchase": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description How far before a buyer's first charge to look, in milliseconds. One
+                 *     minute to 30 days; defaults to 7 days.
+                 */
+                window_ms?: components["parameters"]["EventsBeforePurchaseWindow"];
+                /** @description Maximum event rows, 1–200. Defaults to 50. */
+                limit?: components["parameters"]["EventsBeforePurchaseLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Custom events buyers fired before their first purchase, for the selected site. Session or OAuth, and owner-only.
+         * @description The same numbers, in the same shape, as
+         *     `GET /v1/sites/{site_id}/revenue/events-before-purchase`, behind the same two checks
+         *     as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+         *     owner-only capability. Aggregates only, which is why it travels to this
+         *     surface when `transactions` and `journey` do not (ADR-0049). Closed to
+         *     private keys for the reason the summary is.
+         */
+        get: operations["readRevenueEventsBeforePurchase"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/read/realtime/token": {
         parameters: {
             query?: never;
@@ -4867,6 +5001,122 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{site_id}/revenue/attribution": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description Which touch of the attribution to group by: the entry of the buyer's
+                 *     first session in the attribution window, or of their last.
+                 */
+                touch?: components["parameters"]["RevenueAttributionTouch"];
+                /** @description Which field of the touch to group by. */
+                dimension?: components["parameters"]["RevenueAttributionDimension"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Revenue, orders and buyers per first- or last-touch source or entry page. Requires `revenue:read` (owner-only).
+         * @description Converted charge revenue, orders and buyers grouped by one dimension of
+         *     the attribution's first or last touch: referrer domain, UTM source,
+         *     medium or campaign, or entry page. Read from the per-charge attribution
+         *     rows (ADR-0033, D6), so every number here is about charges, not about
+         *     page views. Aggregates only: no customer, order or visitor id.
+         *
+         *     **Unattributed revenue is one row with `value: null`, always first.**
+         *     A charge whose attribution is unmatched, or not computed yet, lands
+         *     there rather than being dropped, so the rows add up to the same orders
+         *     the summary counts. An empty string is a real value: no referrer
+         *     (direct) or no UTM tag on the touch.
+         *
+         *     `revenue_minor` sums the reporting-currency gross of converted charges.
+         *     A charge with no usable exchange rate counts in `orders` and again in
+         *     `unconverted_orders`, never as zero revenue. Failed and canceled
+         *     charges are not orders.
+         *
+         *     **Visitors, conversion rate and revenue per visitor** come from the
+         *     session facts: the unique visitors whose session *entered* with the
+         *     row's value, the same kind of entry an attribution touch records. They
+         *     are only computed for ranges of at most 92 days; above that,
+         *     `visitors_available` is false and the three fields are `null`, never
+         *     zero. The unattributed row has no visitors either. A buyer and a
+         *     visitor are counted on different identities (an identified buyer is
+         *     their identify() hash, a visitor is the daily anonymous id), so treat
+         *     the rate as an estimate, not a reconciliation.
+         */
+        get: operations["getRevenueAttribution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/revenue/events-before-purchase": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description How far before a buyer's first charge to look, in milliseconds. One
+                 *     minute to 30 days; defaults to 7 days.
+                 */
+                window_ms?: components["parameters"]["EventsBeforePurchaseWindow"];
+                /** @description Maximum event rows, 1–200. Defaults to 50. */
+                limit?: components["parameters"]["EventsBeforePurchaseLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Custom events buyers fired before their first purchase, against non-buyers. Requires `revenue:read` (owner-only).
+         * @description For every buyer in the range (an attributed charge, keyed on the
+         *     attribution's identity), the custom events that identity fired in the
+         *     `window_ms` before their **first** charge in the range, one row per
+         *     event name and type. An identity keyed on an identify() hash also owns
+         *     the anonymous ids it was paired with inside the scanned window, so an
+         *     event fired before sign-in counts for the buyer who signed in and paid.
+         *
+         *     Next to it, the baseline: visitors who did **not** buy and fired the
+         *     event inside the range itself. `buyer_rate` is `buyers / totals.buyers`
+         *     and `non_buyer_rate` is `non_buyer_visitors / (totals.visitors -
+         *     totals.buyers)`. The visitor total is the overview's own estimate
+         *     (`uniq`), so the baseline rate is approximate; both rates are `null`
+         *     when their denominator is zero.
+         *
+         *     Reads the raw event table, so it is bounded the way the funnel is: the
+         *     range is at most 92 days (`RANGE_TOO_LARGE` above that), the window at
+         *     most 30 days, custom events only, at most 200 rows. Aggregates only:
+         *     no visitor, customer or order id.
+         */
+        get: operations["getRevenueEventsBeforePurchase"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/revenue/webhooks/{provider}/{webhook_token}": {
         parameters: {
             query?: never;
@@ -8121,6 +8371,112 @@ export interface components {
             unconverted: components["schemas"]["RevenueUnconvertedCurrency"][];
         };
         /**
+         * @default first
+         * @enum {string}
+         */
+        RevenueAttributionTouch: "first" | "last";
+        /**
+         * @default referrer_domain
+         * @enum {string}
+         */
+        RevenueAttributionDimension: "referrer_domain" | "utm_source" | "utm_medium" | "utm_campaign" | "entry_page";
+        RevenueAttributionRow: {
+            /**
+             * @description The touch's value for this dimension. `null` is the unattributed
+             *     row (no matched attribution); the empty string is a real value
+             *     (no referrer, no UTM tag).
+             */
+            value: string | null;
+            /**
+             * Format: int64
+             * @description Converted gross, in the minor unit of the response's `currency`.
+             */
+            revenue_minor: number;
+            /**
+             * Format: int64
+             * @description Eligible charges, converted or not.
+             */
+            orders: number;
+            /**
+             * Format: int64
+             * @description Charges with no usable exchange rate; in `orders`, not in `revenue_minor`.
+             */
+            unconverted_orders: number;
+            /**
+             * Format: int64
+             * @description Distinct attributed identities with a charge in this row.
+             */
+            buyers: number;
+            /**
+             * Format: int64
+             * @description Unique visitors whose session entered with this value. `null` on
+             *     the unattributed row and when `visitors_available` is false.
+             */
+            visitors: number | null;
+            /** @description `buyers / visitors`, or `null` where `visitors` is null or zero. */
+            conversion_rate: number | null;
+            /** @description `revenue_minor / visitors`, unrounded, or `null` where `visitors` is null or zero. */
+            revenue_per_visitor_minor: number | null;
+        };
+        RevenueAttributionResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            touch: components["schemas"]["RevenueAttributionTouch"];
+            dimension: components["schemas"]["RevenueAttributionDimension"];
+            /** @description The site's reporting currency, which every `*_minor` field is in. */
+            currency: string;
+            /**
+             * @description Whether visitors, conversion rate and revenue per visitor were
+             *     computed. False above 92 days, and when the visitors read failed
+             *     (then `meta.partial` is true as well).
+             */
+            visitors_available: boolean;
+            rows: components["schemas"]["RevenueAttributionRow"][];
+        };
+        RevenueEventBeforePurchaseRow: {
+            event_name: string;
+            event_type: string;
+            /**
+             * Format: int64
+             * @description Buyers who fired the event inside the window before their first charge.
+             */
+            buyers: number;
+            /**
+             * Format: int64
+             * @description How many times those buyers fired it inside that window.
+             */
+            events: number;
+            /** @description `buyers / totals.buyers`, or `null` when there were no buyers. */
+            buyer_rate: number | null;
+            /**
+             * Format: int64
+             * @description Visitors who did not buy and fired the event inside the range.
+             */
+            non_buyer_visitors: number;
+            /**
+             * @description `non_buyer_visitors / (totals.visitors - totals.buyers)`, or `null`
+             *     when that difference is not positive. Approximate.
+             */
+            non_buyer_rate: number | null;
+        };
+        RevenueEventsBeforePurchaseResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            /** Format: int64 */
+            window_ms: number;
+            totals: {
+                /**
+                 * Format: int64
+                 * @description Distinct attributed buyers in the range.
+                 */
+                buyers: number;
+                /**
+                 * Format: int64
+                 * @description Visitors in the range, the overview's estimate.
+                 */
+                visitors: number;
+            };
+            rows: components["schemas"]["RevenueEventBeforePurchaseRow"][];
+        };
+        /**
          * @description One bucket, with `RevenueTotals`' measures inlined. Written out rather
          *     than composed with `allOf`, because every schema here is
          *     `additionalProperties: false` and a composed one cannot then carry an
@@ -9612,6 +9968,20 @@ export interface components {
         /** @description Maximum rows to return for a top-N report. */
         TopNLimit: number;
         /**
+         * @description Which touch of the attribution to group by: the entry of the buyer's
+         *     first session in the attribution window, or of their last.
+         */
+        RevenueAttributionTouch: components["schemas"]["RevenueAttributionTouch"];
+        /** @description Which field of the touch to group by. */
+        RevenueAttributionDimension: components["schemas"]["RevenueAttributionDimension"];
+        /**
+         * @description How far before a buyer's first charge to look, in milliseconds. One
+         *     minute to 30 days; defaults to 7 days.
+         */
+        EventsBeforePurchaseWindow: number;
+        /** @description Maximum event rows, 1–200. Defaults to 50. */
+        EventsBeforePurchaseLimit: number;
+        /**
          * @description A **session-scoped** filter set (ADR-0075), as a URL-encoded JSON array
          *     of `{dimension, operator, values}`.
          *
@@ -10894,6 +11264,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RevenueTimeseriesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readRevenueAttribution: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description Which touch of the attribution to group by: the entry of the buyer's
+                 *     first session in the attribution window, or of their last.
+                 */
+                touch?: components["parameters"]["RevenueAttributionTouch"];
+                /** @description Which field of the touch to group by. */
+                dimension?: components["parameters"]["RevenueAttributionDimension"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per dimension value, unattributed first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevenueAttributionResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readRevenueEventsBeforePurchase: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description How far before a buyer's first charge to look, in milliseconds. One
+                 *     minute to 30 days; defaults to 7 days.
+                 */
+                window_ms?: components["parameters"]["EventsBeforePurchaseWindow"];
+                /** @description Maximum event rows, 1–200. Defaults to 50. */
+                limit?: components["parameters"]["EventsBeforePurchaseLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per custom event, most buyers first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevenueEventsBeforePurchaseResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];
@@ -15423,6 +15929,90 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getRevenueAttribution: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description Which touch of the attribution to group by: the entry of the buyer's
+                 *     first session in the attribution window, or of their last.
+                 */
+                touch?: components["parameters"]["RevenueAttributionTouch"];
+                /** @description Which field of the touch to group by. */
+                dimension?: components["parameters"]["RevenueAttributionDimension"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per dimension value, unattributed first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevenueAttributionResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getRevenueEventsBeforePurchase: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description How far before a buyer's first charge to look, in milliseconds. One
+                 *     minute to 30 days; defaults to 7 days.
+                 */
+                window_ms?: components["parameters"]["EventsBeforePurchaseWindow"];
+                /** @description Maximum event rows, 1–200. Defaults to 50. */
+                limit?: components["parameters"]["EventsBeforePurchaseLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One row per custom event, most buyers first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevenueEventsBeforePurchaseResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
             503: components["responses"]["AnalyticsUnavailable"];
         };
     };

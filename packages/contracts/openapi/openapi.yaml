@@ -1387,6 +1387,93 @@ paths:
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
+  /v1/read/revenue/attribution:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/RevenueAttributionTouch'
+      - $ref: '#/components/parameters/RevenueAttributionDimension'
+      - $ref: '#/components/parameters/TopNLimit'
+    get:
+      operationId: readRevenueAttribution
+      tags: [read-key]
+      summary: Revenue per first- or last-touch source or entry page for the selected site. Session or OAuth, and owner-only.
+      description: |
+        The same numbers, in the same shape, as
+        `GET /v1/sites/{site_id}/revenue/attribution`, behind the same two checks
+        as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+        owner-only capability. Aggregates only, which is why it travels to this
+        surface when `transactions` and `journey` do not (ADR-0049). Closed to
+        private keys for the reason the summary is.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['revenue:read']
+      responses:
+        '200':
+          description: One row per dimension value, unattributed first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueAttributionResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+          # RANGE_TOO_LARGE shares this status; see ADR-0043 D7.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/read/revenue/events-before-purchase:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/EventsBeforePurchaseWindow'
+      - $ref: '#/components/parameters/EventsBeforePurchaseLimit'
+    get:
+      operationId: readRevenueEventsBeforePurchase
+      tags: [read-key]
+      summary: Custom events buyers fired before their first purchase, for the selected site. Session or OAuth, and owner-only.
+      description: |
+        The same numbers, in the same shape, as
+        `GET /v1/sites/{site_id}/revenue/events-before-purchase`, behind the same two checks
+        as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+        owner-only capability. Aggregates only, which is why it travels to this
+        surface when `transactions` and `journey` do not (ADR-0049). Closed to
+        private keys for the reason the summary is.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['revenue:read']
+      responses:
+        '200':
+          description: One row per custom event, most buyers first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueEventsBeforePurchaseResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+          # RANGE_TOO_LARGE shares this status; see ADR-0043 D7.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/read/realtime/token:
     parameters:
       - $ref: '#/components/parameters/SiteSelector'
@@ -5448,6 +5535,113 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/sites/{site_id}/revenue/attribution:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/RevenueAttributionTouch'
+      - $ref: '#/components/parameters/RevenueAttributionDimension'
+      - $ref: '#/components/parameters/TopNLimit'
+    get:
+      operationId: getRevenueAttribution
+      tags: [revenue]
+      summary: Revenue, orders and buyers per first- or last-touch source or entry page. Requires `revenue:read` (owner-only).
+      description: |
+        Converted charge revenue, orders and buyers grouped by one dimension of
+        the attribution's first or last touch: referrer domain, UTM source,
+        medium or campaign, or entry page. Read from the per-charge attribution
+        rows (ADR-0033, D6), so every number here is about charges, not about
+        page views. Aggregates only: no customer, order or visitor id.
+
+        **Unattributed revenue is one row with `value: null`, always first.**
+        A charge whose attribution is unmatched, or not computed yet, lands
+        there rather than being dropped, so the rows add up to the same orders
+        the summary counts. An empty string is a real value: no referrer
+        (direct) or no UTM tag on the touch.
+
+        `revenue_minor` sums the reporting-currency gross of converted charges.
+        A charge with no usable exchange rate counts in `orders` and again in
+        `unconverted_orders`, never as zero revenue. Failed and canceled
+        charges are not orders.
+
+        **Visitors, conversion rate and revenue per visitor** come from the
+        session facts: the unique visitors whose session *entered* with the
+        row's value, the same kind of entry an attribution touch records. They
+        are only computed for ranges of at most 92 days; above that,
+        `visitors_available` is false and the three fields are `null`, never
+        zero. The unattributed row has no visitors either. A buyer and a
+        visitor are counted on different identities (an identified buyer is
+        their identify() hash, a visitor is the daily anonymous id), so treat
+        the rate as an estimate, not a reconciliation.
+      responses:
+        '200':
+          description: One row per dimension value, unattributed first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueAttributionResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/sites/{site_id}/revenue/events-before-purchase:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/EventsBeforePurchaseWindow'
+      - $ref: '#/components/parameters/EventsBeforePurchaseLimit'
+    get:
+      operationId: getRevenueEventsBeforePurchase
+      tags: [revenue]
+      summary: Custom events buyers fired before their first purchase, against non-buyers. Requires `revenue:read` (owner-only).
+      description: |
+        For every buyer in the range (an attributed charge, keyed on the
+        attribution's identity), the custom events that identity fired in the
+        `window_ms` before their **first** charge in the range, one row per
+        event name and type. An identity keyed on an identify() hash also owns
+        the anonymous ids it was paired with inside the scanned window, so an
+        event fired before sign-in counts for the buyer who signed in and paid.
+
+        Next to it, the baseline: visitors who did **not** buy and fired the
+        event inside the range itself. `buyer_rate` is `buyers / totals.buyers`
+        and `non_buyer_rate` is `non_buyer_visitors / (totals.visitors -
+        totals.buyers)`. The visitor total is the overview's own estimate
+        (`uniq`), so the baseline rate is approximate; both rates are `null`
+        when their denominator is zero.
+
+        Reads the raw event table, so it is bounded the way the funnel is: the
+        range is at most 92 days (`RANGE_TOO_LARGE` above that), the window at
+        most 30 days, custom events only, at most 200 rows. Aggregates only:
+        no visitor, customer or order id.
+      responses:
+        '200':
+          description: One row per custom event, most buyers first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueEventsBeforePurchaseResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
@@ -10542,6 +10736,145 @@ components:
           items:
             $ref: '#/components/schemas/RevenueUnconvertedCurrency'
 
+    RevenueAttributionTouch:
+      type: string
+      enum: [first, last]
+      default: first
+    RevenueAttributionDimension:
+      type: string
+      enum: [referrer_domain, utm_source, utm_medium, utm_campaign, entry_page]
+      default: referrer_domain
+    RevenueAttributionRow:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          value,
+          revenue_minor,
+          orders,
+          unconverted_orders,
+          buyers,
+          visitors,
+          conversion_rate,
+          revenue_per_visitor_minor,
+        ]
+      properties:
+        value:
+          type: [string, 'null']
+          description: |
+            The touch's value for this dimension. `null` is the unattributed
+            row (no matched attribution); the empty string is a real value
+            (no referrer, no UTM tag).
+        revenue_minor:
+          type: integer
+          format: int64
+          description: Converted gross, in the minor unit of the response's `currency`.
+        orders:
+          type: integer
+          format: int64
+          description: Eligible charges, converted or not.
+        unconverted_orders:
+          type: integer
+          format: int64
+          description: Charges with no usable exchange rate; in `orders`, not in `revenue_minor`.
+        buyers:
+          type: integer
+          format: int64
+          description: Distinct attributed identities with a charge in this row.
+        visitors:
+          type: [integer, 'null']
+          format: int64
+          description: |
+            Unique visitors whose session entered with this value. `null` on
+            the unattributed row and when `visitors_available` is false.
+        conversion_rate:
+          type: [number, 'null']
+          description: '`buyers / visitors`, or `null` where `visitors` is null or zero.'
+        revenue_per_visitor_minor:
+          type: [number, 'null']
+          description: '`revenue_minor / visitors`, unrounded, or `null` where `visitors` is null or zero.'
+    RevenueAttributionResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, touch, dimension, currency, visitors_available, rows]
+      properties:
+        meta:
+          $ref: '#/components/schemas/AnalyticsMeta'
+        touch:
+          $ref: '#/components/schemas/RevenueAttributionTouch'
+        dimension:
+          $ref: '#/components/schemas/RevenueAttributionDimension'
+        currency:
+          type: string
+          description: The site's reporting currency, which every `*_minor` field is in.
+        visitors_available:
+          type: boolean
+          description: |
+            Whether visitors, conversion rate and revenue per visitor were
+            computed. False above 92 days, and when the visitors read failed
+            (then `meta.partial` is true as well).
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/RevenueAttributionRow'
+    RevenueEventBeforePurchaseRow:
+      type: object
+      additionalProperties: false
+      required:
+        [event_name, event_type, buyers, events, buyer_rate, non_buyer_visitors, non_buyer_rate]
+      properties:
+        event_name:
+          type: string
+        event_type:
+          type: string
+        buyers:
+          type: integer
+          format: int64
+          description: Buyers who fired the event inside the window before their first charge.
+        events:
+          type: integer
+          format: int64
+          description: How many times those buyers fired it inside that window.
+        buyer_rate:
+          type: [number, 'null']
+          description: '`buyers / totals.buyers`, or `null` when there were no buyers.'
+        non_buyer_visitors:
+          type: integer
+          format: int64
+          description: Visitors who did not buy and fired the event inside the range.
+        non_buyer_rate:
+          type: [number, 'null']
+          description: |
+            `non_buyer_visitors / (totals.visitors - totals.buyers)`, or `null`
+            when that difference is not positive. Approximate.
+    RevenueEventsBeforePurchaseResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, window_ms, totals, rows]
+      properties:
+        meta:
+          $ref: '#/components/schemas/AnalyticsMeta'
+        window_ms:
+          type: integer
+          format: int64
+        totals:
+          type: object
+          additionalProperties: false
+          required: [buyers, visitors]
+          properties:
+            buyers:
+              type: integer
+              format: int64
+              description: Distinct attributed buyers in the range.
+            visitors:
+              type: integer
+              format: int64
+              description: Visitors in the range, the overview's estimate.
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/RevenueEventBeforePurchaseRow'
+
     RevenueTimeseriesPoint:
       type: object
       additionalProperties: false
@@ -12420,6 +12753,44 @@ components:
         minimum: 1
         maximum: 500
         default: 100
+    RevenueAttributionTouch:
+      name: touch
+      in: query
+      required: false
+      description: |
+        Which touch of the attribution to group by: the entry of the buyer's
+        first session in the attribution window, or of their last.
+      schema:
+        $ref: '#/components/schemas/RevenueAttributionTouch'
+    RevenueAttributionDimension:
+      name: dimension
+      in: query
+      required: false
+      description: Which field of the touch to group by.
+      schema:
+        $ref: '#/components/schemas/RevenueAttributionDimension'
+    EventsBeforePurchaseWindow:
+      name: window_ms
+      in: query
+      required: false
+      description: |
+        How far before a buyer's first charge to look, in milliseconds. One
+        minute to 30 days; defaults to 7 days.
+      schema:
+        type: integer
+        minimum: 60000
+        maximum: 2592000000
+        default: 604800000
+    EventsBeforePurchaseLimit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum event rows, 1–200. Defaults to 50.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
     AnalyticsFilters:
       name: filters
       in: query
