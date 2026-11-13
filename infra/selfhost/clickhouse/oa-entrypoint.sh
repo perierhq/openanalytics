@@ -124,6 +124,16 @@ cat >"$TARGET" <<XML
         <query>GRANT INSERT ON analytics.revenue_15m</query>
         <query>GRANT SELECT ON analytics.revenue_15m</query>
 
+        <!-- Subscription lifecycle (Perier gap 7, migration 0030). The worker
+             projects both from Postgres, so it needs INSERT. SELECT because
+             the projection's tests and an operator's spot check read the
+             current generation back through the same credential. A recreate,
+             not a restart, picks these up. -->
+        <query>GRANT INSERT ON analytics.subscription_lifecycle</query>
+        <query>GRANT SELECT ON analytics.subscription_lifecycle</query>
+        <query>GRANT INSERT ON analytics.subscription_invoices</query>
+        <query>GRANT SELECT ON analytics.subscription_invoices</query>
+
       </grants>
     </oa_ingest>
 

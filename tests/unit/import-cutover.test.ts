@@ -229,7 +229,7 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // eight `*_1h` view targets, `session_rollups_1h` and `revenue_1h` —
     // taking ClickHouse 44 -> 34 and the total 72 -> 62. Nothing had written
     // them since 0027, and the 15m backfill's gate reads `events_raw` now.
-    expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(34)
+    expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(36)
     for (const dropped of [
       'metrics_1h',
       'pages_1h',
@@ -287,7 +287,7 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // the `sites` cascade.
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
     expect(DELETION_POSTGRES_TARGETS).toHaveLength(25)
-    expect(SITE_DELETION_TARGETS).toHaveLength(65)
+    expect(SITE_DELETION_TARGETS).toHaveLength(67)
   })
 })
 

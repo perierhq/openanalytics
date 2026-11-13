@@ -488,7 +488,7 @@ function toClickHouseInstant(iso: string): string {
 
 // --- Rates -------------------------------------------------------------------
 
-interface RateCache {
+export interface RateCache {
   plan(input: {
     currency: string
     reportingCurrency: string
@@ -506,7 +506,7 @@ interface RateCache {
  * enough to matter, short enough that an ECB refresh is picked up on the next
  * batch rather than at process restart.
  */
-function createRateCache(deps: RevenueProjectionDeps): RateCache {
+export function createRateCache(deps: { readonly db: Database }): RateCache {
   const cache = new Map<string, RateAtDate | null>()
 
   const lookup = async (currency: string, onOrBefore: string): Promise<RateAtDate | null> => {

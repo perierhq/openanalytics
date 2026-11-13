@@ -7,6 +7,7 @@ import {
   createRevenueAttributionsStore,
   createRevenueEventsStore,
   createRevenueRollupsStore,
+  createSubscriptionLifecycleStore,
 } from '@openanalytics/clickhouse'
 import {
   createImportAdapterRegistry,
@@ -36,6 +37,7 @@ import { startRealtimeRevocationDrain } from './realtime-revocation-drain.ts'
 import { startCurrencyRates } from './revenue/currency-rates.ts'
 import { startRevenueAttribution } from './revenue/attribute.ts'
 import { startRevenueProjection } from './revenue/project.ts'
+import { startLifecycleProjection } from './revenue/project-lifecycle.ts'
 import { startRevenueReconcile } from './revenue/reconcile.ts'
 import { consumerNameFor, startIngest } from './ingest/index.ts'
 
@@ -457,6 +459,39 @@ if (env.DATABASE_URL) {
         })
       : undefined
   /**
+   * The subscription lifecycle projection (Perier gap 7; Postgres 0047 →
+   * ClickHouse 0030). Gated exactly like the revenue projection, for the same
+   * reasons: it writes through `oa_ingest`, and it hashes the provider customer
+   * id with the identity secret so `customer_hash` matches `revenue_events`.
+   *
+   * Deploy note: `oa_ingest` needs INSERT on `subscription_lifecycle` and
+   * `subscription_invoices` (oa-entrypoint.sh) and a container recreate. Until
+   * then each tick logs `revenue_lifecycle_projection_failed` and marks
+   * nothing; the Postgres rows wait.
+   */
+  const subscriptionLifecycleStore =
+    env.CLICKHOUSE_URL && env.CLICKHOUSE_INGEST_USER && env.CLICKHOUSE_INGEST_PASSWORD
+      ? createSubscriptionLifecycleStore({
+          url: env.CLICKHOUSE_URL,
+          database: env.CLICKHOUSE_DB,
+          username: env.CLICKHOUSE_INGEST_USER,
+          password: env.CLICKHOUSE_INGEST_PASSWORD,
+        })
+      : undefined
+  const lifecycleProjection =
+    subscriptionLifecycleStore && env.ANONYMOUS_IDENTITY_SECRET
+      ? startLifecycleProjection({
+          db,
+          logger,
+          metrics: serviceMetrics.metrics,
+          store: subscriptionLifecycleStore,
+          identityKey: {
+            secret: env.ANONYMOUS_IDENTITY_SECRET,
+            keyVersion: env.ANONYMOUS_IDENTITY_KEY_VERSION,
+          },
+        })
+      : undefined
+  /**
    * The attribution job (ADR-0033, D6; ClickHouse 0017, Postgres 0036). CP4.
    *
    * Gated on exactly what the projection is gated on, and for the identical
@@ -605,6 +640,7 @@ if (env.DATABASE_URL) {
     // what produces new object heads, so stopping it first means the projection
     // drains a set nothing is still adding to.
     await revenueProjection?.stop()
+    await lifecycleProjection?.stop()
     // After the projection, one level further down the same chain: the
     // projection is what produces the facts attribution reads, so stopping it
     // first means attribution drains a set nothing is still adding to.
@@ -623,6 +659,7 @@ if (env.DATABASE_URL) {
     await importedAggregatesMaintenance?.close()
     await exportReader?.close()
     await revenueEventsStore?.close()
+    await subscriptionLifecycleStore?.close()
     await revenueAttributionsStore?.close()
     await revenueRollupsStore?.close()
     await deletionQueueClient?.quit()

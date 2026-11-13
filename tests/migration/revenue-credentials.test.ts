@@ -700,8 +700,8 @@ describeIfPostgres('revenue credentials', () => {
       const targets = await listDeletionTargets(db, {
         deletionRequestId: started.deletionRequestId,
       })
-      // 65, not 66 (62 + the three subscription lifecycle tables of migration 0047): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(65)
+      // 67, not 68 (62 + the three subscription lifecycle tables of Postgres 0047 and the two of ClickHouse 0030): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(67)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       expect(targets.filter((t) => t.store === 'postgres')).toHaveLength(25)
       expect(targets.map((t) => t.target)).toContain('revenue_credentials')
