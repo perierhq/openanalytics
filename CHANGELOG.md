@@ -8,6 +8,46 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
+## Perier fork: Unreleased
+
+**Upgrade notes.** ClickHouse migration 0030 runs on its own with the other
+migrations. Its 92 days of history do not: run
+`node packages/clickhouse/dist/cli.js backfill-event-properties` once in the
+migrate image after upgrading (`--dry-run` first counts the rows). It only
+fills (site, bucket) pairs that have no row yet, so it can run with the worker
+up, and running it twice writes nothing.
+
+### Changed
+
+- **Visitor-scope funnel numbers change.** A funnel counted per visitor now
+  treats someone who signed in (`identify()`) as one visitor across the days
+  they were signed in. Before, the anonymous id rotating at UTC midnight made
+  each of those days a separate visitor. Step counts for multi-day journeys
+  can go down, and conversion across days can go up. Session-scope funnels
+  are unchanged.
+
+### Added
+
+- **Funnel step kinds.** A page step can use `*` (`/discount/*`), and an
+  event step can require property values (`plan=yearly`, up to three). Both
+  are stored as JSON step objects inside the existing step strings, so funnels
+  saved earlier run exactly as before. The funnels editor writes them.
+- **Buyers and revenue per funnel step, for owners.** Each step carries
+  `buyers` (visitors who reached it and have an attributed charge in the
+  range) and `revenue_minor`, plus the response's `currency`, on the
+  dashboard route and on `/v1/read/analytics/funnel`. Anyone else gets no
+  such fields, and the revenue facts are not read for them. On `/v1/read` the
+  credential also needs `revenue:read`. The funnels board shows them under
+  each step.
+- **Custom-event property breakdowns.**
+  `GET /v1/sites/{site_id}/analytics/custom-events/properties` and the
+  person-only `GET /v1/read/analytics/custom-events/properties` return, for
+  one event, the top values per property key with an `other` row, and the MCP
+  tool `custom_event_properties` reads the latter. When the event's
+  definition declares properties, only those keys are returned. `order_id`
+  and `oa_*` keys never are. ClickHouse migration 0030 adds the rollup, and
+  both of its tables are deletion targets.
+
 ## Perier fork: [0.8.1-perier.1] - 2026-11-13
 
 The perierhq fork's build, tagged `v0.8.1-perier.1` and published to
