@@ -915,6 +915,7 @@ they do in the dashboard. The read tools:
 | `recent_visitors`, `visitor`                                                                       | `analytics:read` | Visitors of the last 1–24 hours, and one visitor's page trail          |
 | `list_funnels`, `list_event_definitions`, `list_widgets`, `share_settings`                         | `analytics:read` | A site's saved funnels, event definitions, widgets and share settings  |
 | `revenue_summary`, `revenue_timeseries`                                                            | `revenue:read`   | Revenue totals and buckets. Owners only                                |
+| `subscription_summary`, `subscription_timeseries`                                                  | `revenue:read`   | MRR, churn, trials and new vs renewal charges. Owners only             |
 | `team_members`                                                                                     | `team:read`      | A site's members, with email addresses                                 |
 
 The write tools need the matching write scope (`sites:write`, `funnels:write`,

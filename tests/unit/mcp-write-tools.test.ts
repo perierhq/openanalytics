@@ -142,6 +142,8 @@ const EXPECTED_READ_TOOLS = [
   'visitor',
   'revenue_summary',
   'revenue_timeseries',
+  'subscription_summary',
+  'subscription_timeseries',
   'site_install',
   'team_members',
   // `billing_usage` was here until the open-core split. It is registered by the
@@ -183,9 +185,11 @@ describe('the tool roster is pinned by name, not derived', () => {
     // writes. 10 + 19 = 29 was the arithmetic until the open-core split moved
     // `billing_usage` out to the surface that serves it, so a build with no such
     // surface advertised 28. The person-only analytics reads (`custom_events`,
-    // `performance`, `funnel_results`, `recent_visitors`, `visitor`) make it 33.
-    expect(MCP_TOOLS).toHaveLength(33)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(33)
+    // `performance`, `funnel_results`, `recent_visitors`, `visitor`) make it 33,
+    // and the Perier fork's subscription reads (`subscription_summary`,
+    // `subscription_timeseries`, gap 7) 35.
+    expect(MCP_TOOLS).toHaveLength(35)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(35)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -264,7 +268,7 @@ describe('annotations divide reads from writes', () => {
  * recomputed the filter would agree with any filter, including a widened one.
  */
 describe('the assistant sees the analytics and revenue reads, and nothing else', () => {
-  it('is exactly these ten tools', () => {
+  it('is exactly these twelve tools', () => {
     expect(ASSISTANT_TOOLS.map((t) => t.name)).toEqual([
       'list_sites',
       'site_overview',
@@ -276,6 +280,9 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
       'sessions',
       'revenue_summary',
       'revenue_timeseries',
+      // Perier gap 7: Kacper's decision, the assistant gets the subscription reads.
+      'subscription_summary',
+      'subscription_timeseries',
     ])
   })
 

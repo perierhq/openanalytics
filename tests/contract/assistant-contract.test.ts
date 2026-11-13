@@ -247,7 +247,7 @@ describe('the usage report is the ledger’s own numbers (D5)', () => {
 })
 
 describe('what the assistant may read is the tool table, verbatim (D3, widened by ADR-0049)', () => {
-  it('names the ten tools in the operation, and excludes customer rows and realtime', () => {
+  it('names the twelve tools in the operation, and excludes customer rows and realtime', () => {
     const block = pathBlock('/v1/assistant/questions')
     for (const tool of [
       'list_sites',
@@ -260,6 +260,8 @@ describe('what the assistant may read is the tool table, verbatim (D3, widened b
       'sessions',
       'revenue_summary',
       'revenue_timeseries',
+      'subscription_summary',
+      'subscription_timeseries',
     ]) {
       expect(block, `${tool} must be named`).toContain(tool)
     }

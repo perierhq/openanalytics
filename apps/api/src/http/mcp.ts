@@ -572,6 +572,28 @@ const mcpTools: McpToolDefinition[] = [
     needsSite: true,
     scope: 'revenue:read',
   },
+  // Perier gap 7: subscription lifecycle. Aggregates only, owner-only, like
+  // the two revenue reads above.
+  {
+    name: 'subscription_summary',
+    title: 'Subscription Summary',
+    description:
+      'Subscriptions for one site over a date range: MRR, paying (`active_*`) and trialing subscriptions at the start and end of the range, and what moved in between — new, expansion, contraction and churned MRR, started and ended subscriptions, trials started/converted/expired, cancellations scheduled and undone. `purchase_kinds` splits the range’s charges into new, renewal, plan_change and one_off. MRR is list price normalized to a month, an integer in the minor unit of `totals.currency`; a churn rate is churned_subscriptions / active_start, computed by you. Owner-only and the same `meta.revenue.connection_status` caveat as revenue_summary. No subscription or customer identifiers are returned.',
+    path: '/read/revenue/subscriptions/summary',
+    params: [...RANGE_PARAMS],
+    needsSite: true,
+    scope: 'revenue:read',
+  },
+  {
+    name: 'subscription_timeseries',
+    title: 'Subscription Timeseries',
+    description:
+      'MRR, paying and trialing subscriptions per day in the site’s timezone, every day of the range present, with each day’s movements (new, expansion, contraction, churned MRR; started and ended subscriptions). Levels are end-of-day. Same currency, minor-unit and owner-only rules as subscription_summary.',
+    path: '/read/revenue/subscriptions/timeseries',
+    params: [...RANGE_PARAMS],
+    needsSite: true,
+    scope: 'revenue:read',
+  },
 
   // --- Account reads (ADR-0048 D3). These dispatch to the business subtree's
   // GET routes through the grant arm, not to `/read/*`, so their site id is a

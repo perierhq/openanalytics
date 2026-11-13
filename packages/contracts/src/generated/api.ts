@@ -5139,7 +5139,9 @@ export interface paths {
          *     (ADR-0046, D3): `list_sites`, `site_overview`, `site_timeseries`,
          *     `top_pages`, `top_sources`, `geography`, `devices`, `sessions`, and —
          *     since ADR-0049 — the two owner-only revenue aggregates,
-         *     `revenue_summary` and `revenue_timeseries`. Each tool call is dispatched
+         *     `revenue_summary` and `revenue_timeseries`, plus the owner-only
+         *     subscription aggregates `subscription_summary` and
+         *     `subscription_timeseries` (Perier fork, gap 7). Each tool call is dispatched
          *     as a real request against this API's own `/v1/read/*` route carrying the
          *     caller's session, so it re-runs the live-membership check, the scope
          *     ceiling (`site:read` + `analytics:read` + `revenue:read` and nothing
