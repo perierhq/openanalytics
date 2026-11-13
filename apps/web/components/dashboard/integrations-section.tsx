@@ -106,8 +106,8 @@ const STRIPE_PERMISSIONS: Array<[string, string]> = [
   ["Customers", "Metadata used to match a payment to a visitor"],
   ["Checkout Sessions", "`client_reference_id`, the second matching signal"],
   ["PaymentIntents", "Order identity across charge retries"],
-  ["Invoices", "Subscription revenue context"],
-  ["Subscriptions", "Plan and product context"],
+  ["Invoices", "New vs renewal: each payment's billing reason"],
+  ["Subscriptions", "MRR, trials, cancellations and churn"],
   ["Products", "Display names for product breakdowns"],
   ["Prices", "Display names for product breakdowns"],
   ["Balance transactions", "Provider fees"],
@@ -142,6 +142,9 @@ const STRIPE_WEBHOOK_EVENTS = [
   "customer.subscription.created",
   "customer.subscription.updated",
   "customer.subscription.deleted",
+  "invoice.paid",
+  "invoice.payment_succeeded",
+  "invoice_payment.paid",
 ];
 
 const inputClass =
