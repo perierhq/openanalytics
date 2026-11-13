@@ -223,6 +223,10 @@ export type RevenueJourneyResponse = Schemas["RevenueJourneyResponse"];
 export type RevenueJourneyEntry = Schemas["RevenueJourneyEntry"];
 export type RevenueJourneyDisplay = Schemas["RevenueJourneyDisplay"];
 export type RevenueTouch = Schemas["RevenueTouch"];
+export type RevenueAttributionTouch = Schemas["RevenueAttributionTouch"];
+export type RevenueAttributionDimension = Schemas["RevenueAttributionDimension"];
+export type RevenueAttributionRow = Schemas["RevenueAttributionRow"];
+export type RevenueAttributionResponse = Schemas["RevenueAttributionResponse"];
 /** Revenue charts take hour or day only — not the traffic chart's picker. */
 export type RevenueResolution = "hour" | "day";
 
@@ -513,6 +517,34 @@ export const revenue = {
       rest,
       {
         ...(cursor ? { cursor } : {}),
+        ...(limit ? { limit: String(limit) } : {}),
+      }
+    );
+  },
+
+  /**
+   * Revenue, orders and buyers per first- or last-touch source or entry page.
+   * The `value: null` row is unattributed revenue and comes first. Visitors and
+   * the two rates are `null` above 92 days (`visitors_available: false`).
+   */
+  attribution: (
+    siteId: string,
+    range: AnalyticsRange,
+    options?: RequestOptions & {
+      touch?: RevenueAttributionTouch;
+      dimension?: RevenueAttributionDimension;
+      limit?: number;
+    }
+  ) => {
+    const { touch, dimension, limit, ...rest } = options ?? {};
+    return analyticsRevenueGet<RevenueAttributionResponse>(
+      siteId,
+      "attribution",
+      range,
+      rest,
+      {
+        ...(touch ? { touch } : {}),
+        ...(dimension ? { dimension } : {}),
         ...(limit ? { limit: String(limit) } : {}),
       }
     );
