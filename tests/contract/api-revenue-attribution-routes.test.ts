@@ -37,6 +37,7 @@ const LONG_RANGE = 'from=2026-03-25T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&ti
 const membershipRole = { value: 'owner' as 'owner' | 'admin' | 'viewer' }
 const world = {
   visitorsFail: false,
+  payersTotal: '4',
   calls: [] as { operation: string; params: Record<string, unknown> }[],
 }
 
@@ -76,9 +77,30 @@ const { AnalyticsService } = await import('../../apps/api/src/analytics/service.
 const { ASSISTANT_TOOLS } = await import('../../apps/api/src/http/assistant.ts')
 
 const ATTRIBUTION_ROWS = [
-  { value: null, revenue_minor: '1000', orders: '2', unconverted_orders: '0', buyers: '0' },
-  { value: 'google.com', revenue_minor: '3500', orders: '3', unconverted_orders: '0', buyers: '2' },
-  { value: '', revenue_minor: '0', orders: '1', unconverted_orders: '1', buyers: '1' },
+  {
+    value: null,
+    revenue_minor: '1000',
+    recurring_revenue_minor: '0',
+    orders: '2',
+    unconverted_orders: '0',
+    buyers: '0',
+  },
+  {
+    value: 'google.com',
+    revenue_minor: '3500',
+    recurring_revenue_minor: '500',
+    orders: '3',
+    unconverted_orders: '0',
+    buyers: '2',
+  },
+  {
+    value: '',
+    revenue_minor: '0',
+    recurring_revenue_minor: '0',
+    orders: '1',
+    unconverted_orders: '1',
+    buyers: '1',
+  },
 ]
 
 const EVENT_ROWS = [
@@ -131,7 +153,7 @@ function buildApp() {
       } else if (operation === 'analytics.revenue_events_before_purchase') {
         rows = EVENT_ROWS
       } else if (operation === 'analytics.revenue_purchase_population') {
-        rows = [{ buyers_total: '4', visitors_total: '54' }]
+        rows = [{ buyers_total: '4', payers_total: world.payersTotal, visitors_total: '54' }]
       }
       return Promise.resolve({
         operation,
@@ -181,6 +203,7 @@ interface AttributionBody {
   rows: {
     value: string | null
     revenue_minor: number
+    recurring_revenue_minor: number
     orders: number
     unconverted_orders: number
     buyers: number
@@ -206,6 +229,7 @@ interface EventsBody {
 beforeEach(() => {
   membershipRole.value = 'owner'
   world.visitorsFail = false
+  world.payersTotal = '4'
   world.calls = []
 })
 
@@ -223,6 +247,7 @@ describe('revenue by source (gap 3)', () => {
       {
         value: null,
         revenue_minor: 1000,
+        recurring_revenue_minor: 0,
         orders: 2,
         unconverted_orders: 0,
         buyers: 0,
@@ -233,6 +258,7 @@ describe('revenue by source (gap 3)', () => {
       {
         value: 'google.com',
         revenue_minor: 3500,
+        recurring_revenue_minor: 500,
         orders: 3,
         unconverted_orders: 0,
         buyers: 2,
@@ -245,6 +271,7 @@ describe('revenue by source (gap 3)', () => {
         // rates are null rather than infinite.
         value: '',
         revenue_minor: 0,
+        recurring_revenue_minor: 0,
         orders: 1,
         unconverted_orders: 1,
         buyers: 1,
@@ -348,6 +375,18 @@ describe('events before purchase (gap 4)', () => {
     const call = world.calls.find((c) => c.operation === 'analytics.revenue_events_before_purchase')
     expect(call?.params['window_ms']).toBe(7 * 86_400_000)
     expect(call?.params['limit']).toBe(50)
+  })
+
+  it('leaves renewal-only payers out of the non-buyer baseline', async () => {
+    // 4 buyers (new or one-off) and 2 customers who only renewed: the
+    // baseline is the 48 visitors with no charge at all, not 50.
+    world.payersTotal = '6'
+    const res = await get(sitePath('events-before-purchase'), session)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as EventsBody
+    expect(body.totals).toEqual({ buyers: 4, visitors: 54 })
+    expect(body.rows[0]?.buyer_rate).toBe(0.5)
+    expect(body.rows[0]?.non_buyer_rate).toBe(5 / 48)
   })
 
   it('passes window_ms and limit through, and refuses them out of bounds', async () => {

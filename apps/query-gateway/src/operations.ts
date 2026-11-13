@@ -3038,9 +3038,15 @@ const revenueOperations: readonly QueryOperation[] = [
 // first-class outcome (ADR-0033 D6) and a breakdown that silently dropped it
 // would add up to less than the summary above it.
 //
-// `revenue_minor` sums the reporting-currency gross of CONVERTED charges only.
-// An unconverted charge has zeroed reporting amounts, so it is counted in
-// `orders` and again in `unconverted_orders`, and never folded in as zero.
+// `revenue_minor` sums the reporting-currency gross of CONVERTED charges only,
+// of every purchase kind: renewals and plan changes included, so the column
+// adds up to the summary's charge gross, and `recurring_revenue_minor` is the
+// part of it that renewals and plan changes brought. `orders` and `buyers`
+// count conversions only, a new subscription or a one-off purchase, by gap 7's
+// purchase-kind join: a renewal is not a source converting a visitor again.
+// `unconverted_orders` qualifies `revenue_minor`, so it counts every charge
+// kind with no usable rate, renewals included; such a charge is never folded
+// in as zero.
 //
 // ## Visitors per dimension value (the denominator)
 //
@@ -3058,11 +3064,16 @@ const revenueOperations: readonly QueryOperation[] = [
 //
 // ## Events before purchase (gap 4)
 //
-// For each buyer (an attributed visitor with a charge in the range), the custom
-// events their identity fired in the `window_ms` before their FIRST charge in
-// the range. Reads `events_raw`, so it opts in to `allowRawEvents` and earns it
-// the way the funnel does: site-scoped, range capped at 92 days, window capped
-// at 30 days, custom events only (`name != ''`), one row per event name.
+// For each buyer (an attributed visitor with a new-subscription or one-off
+// charge in the range), the custom events their identity fired in the
+// `window_ms` before their FIRST such charge in the range. Renewals and plan
+// changes are not purchases here (gap 7's purchase-kind join), and a payer
+// whose only charges in the range were those is neither a buyer nor part of
+// the non-buyer baseline.
+//
+// Reads `events_raw`, so it opts in to `allowRawEvents` and earns it the way
+// the funnel does: site-scoped, range capped at 92 days, window capped at 30
+// days, custom events only (`name != ''`), one row per event name.
 //
 // The identity widening is the visitor-revenue rule run in the other direction:
 // an attribution keyed on an identify() hash also owns the anonymous ids that
@@ -3070,7 +3081,7 @@ const revenueOperations: readonly QueryOperation[] = [
 // before sign-in still counts for the buyer who signed in and paid.
 //
 // The baseline counts visitors who are NOT buyers and fired the event inside
-// the range itself. Its denominator (`visitors_total - buyers_total`) comes from
+// the range itself. Its denominator (`visitors_total - payers_total`) comes from
 // the population operation and is approximate: `metrics_15m` stores `uniq`
 // state, and an identified visitor's pre-identify anonymous id is a separate
 // visitor there exactly as it is everywhere else in the dashboard.
@@ -3141,20 +3152,43 @@ function halfOpenSpan(
   }
 }
 
-/** Current facts of the range: the eligible charges, one row per object. */
+/**
+ * Current facts of the range, one row per object, each charge labelled with
+ * its purchase kind (new, renewal, plan_change, one_off) by gap 7's invoice
+ * join (`SUBSCRIPTION_INVOICE_KIND_MAP` via `purchaseKindJoins`, declared with
+ * the subscription block below; function declarations, so usable at load time).
+ *
+ * `is_conversion` is the rule the conversion counts here share: a new
+ * subscription or a one-off purchase is a conversion, a renewal or a plan
+ * change is not (Kacper, 13 Nov: renewals are labelled at read time and
+ * conversion counts exclude them). Money is not filtered by it.
+ */
 const ATTRIBUTION_CHARGE_FACTS = [
   '  SELECT',
-  '    re.object_id AS object_id,',
-  '    argMax(re.object_kind, re.version) AS object_kind,',
-  "    toDateTime64(argMax(re.occurred_at, re.version), 3, 'UTC') AS occurred_at,",
-  '    argMax(re.status, re.version) AS status,',
-  '    argMax(re.reporting_gross_minor, re.version) AS reporting_gross_minor,',
-  '    argMax(re.conversion_source, re.version) AS conversion_source',
-  '  FROM revenue_events AS re',
-  '  WHERE re.site_id = {site_id:UUID}',
-  "    AND re.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
-  "    AND re.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
-  '  GROUP BY re.site_id, re.provider, re.object_id',
+  '    facts.object_id AS object_id,',
+  '    facts.object_kind AS object_kind,',
+  '    facts.occurred_at AS occurred_at,',
+  '    facts.status AS status,',
+  '    facts.reporting_gross_minor AS reporting_gross_minor,',
+  '    facts.conversion_source AS conversion_source,',
+  `    ${purchaseKindExpr('facts.object_kind')} AS purchase_kind,`,
+  "    toUInt8(purchase_kind IN ('new', 'one_off')) AS is_conversion",
+  '  FROM (',
+  '    SELECT',
+  '      re.object_id AS object_id,',
+  '      argMax(re.object_kind, re.version) AS object_kind,',
+  "      toDateTime64(argMax(re.occurred_at, re.version), 3, 'UTC') AS occurred_at,",
+  '      argMax(re.status, re.version) AS status,',
+  '      argMax(re.order_id, re.version) AS order_id,',
+  '      argMax(re.reporting_gross_minor, re.version) AS reporting_gross_minor,',
+  '      argMax(re.conversion_source, re.version) AS conversion_source',
+  '    FROM revenue_events AS re',
+  '    WHERE re.site_id = {site_id:UUID}',
+  "      AND re.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+  "      AND re.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+  '    GROUP BY re.site_id, re.provider, re.object_id',
+  '  ) AS facts',
+  ...purchaseKindJoins('facts.object_id', 'facts.order_id').map((line) => `  ${line}`),
 ].join('\n')
 
 const ATTRIBUTION_CHARGE_ELIGIBLE = [
@@ -3185,10 +3219,15 @@ function defineRevenueAttribution(definition: {
     sql: [
       'SELECT',
       "  if(att.visitor_id = '', NULL, att.dim_value) AS value,",
+      // Revenue keeps every eligible charge, renewals and plan changes
+      // included, so the column adds up to the summary's charge gross;
+      // `recurring_revenue_minor` says how much of it was renewals and plan
+      // changes. Orders and buyers count conversions only (new + one-off).
       "  sumIf(cur.reporting_gross_minor, cur.conversion_source != 'unavailable') AS revenue_minor,",
-      '  count() AS orders,',
+      "  sumIf(cur.reporting_gross_minor, cur.conversion_source != 'unavailable' AND cur.is_conversion = 0) AS recurring_revenue_minor,",
+      '  countIf(cur.is_conversion = 1) AS orders,',
       "  countIf(cur.conversion_source = 'unavailable') AS unconverted_orders,",
-      "  uniqExactIf(att.visitor_id, att.visitor_id != '') AS buyers",
+      "  uniqExactIf(att.visitor_id, att.visitor_id != '' AND cur.is_conversion = 1) AS buyers",
       'FROM (',
       ATTRIBUTION_CHARGE_FACTS,
       ') AS cur',
@@ -3266,11 +3305,18 @@ function defineRevenueAttributionVisitors(
   })
 }
 
-/** Buyers of the range: attributed identity and the first charge's instant. */
+/**
+ * Payers of the range: every attributed identity with an eligible charge, the
+ * instant of its first CONVERSION (new subscription or one-off), and whether it
+ * had one. A payer whose only charges were renewals or plan changes has
+ * `converted = 0`: not a buyer for the events-before-purchase read, and not a
+ * non-buyer either, since they did pay.
+ */
 const PURCHASE_BUYERS = [
   '  SELECT',
   '    att.visitor_id AS buyer,',
-  '    min(cur.occurred_at) AS purchased_at',
+  '    minIf(cur.occurred_at, cur.is_conversion = 1) AS purchased_at,',
+  '    max(cur.is_conversion) AS converted',
   '  FROM (',
   ATTRIBUTION_CHARGE_FACTS.replace(/^/gm, '  '),
   '  ) AS cur',
@@ -3305,14 +3351,18 @@ const purchaseRangeParams = z
  */
 const revenuePurchasePopulationOperation = defineOperation({
   id: 'analytics.revenue_purchase_population',
-  summary: 'Distinct attributed buyers and total visitors in a range.',
+  summary:
+    'Distinct attributed buyers (new or one-off), all payers, and total visitors in a range.',
   requiresSiteScope: true,
   params: purchaseRangeParams,
   sql: [
     'SELECT',
+    '  (SELECT countIf(pb.converted = 1) FROM (',
+    PURCHASE_BUYERS,
+    '  ) AS pb) AS buyers_total,',
     '  (SELECT count() FROM (',
     PURCHASE_BUYERS,
-    '  )) AS buyers_total,',
+    '  )) AS payers_total,',
     '  (SELECT uniqMerge(t.visitors) FROM metrics_15m AS t',
     '   WHERE t.site_id = {site_id:UUID}',
     "     AND t.bucket_start >= toDateTime64({from:String}, 3, 'UTC')",
@@ -3361,7 +3411,7 @@ const revenueEventsBeforePurchaseOperation = defineOperation({
     '    keyed.visitor_key AS visitor_key,',
     "    toUInt8(b.buyer != '') AS is_buyer,",
     "    toUInt8(keyed.occurred_at >= toDateTime64({from:String}, 3, 'UTC')) AS in_range,",
-    "    toUInt8(b.buyer != ''",
+    "    toUInt8(b.buyer != '' AND b.converted = 1",
     '      AND keyed.occurred_at < b.purchased_at',
     '      AND keyed.occurred_at >= subtractMilliseconds(b.purchased_at, {window_ms:Int64})) AS before_purchase',
     '  FROM (',

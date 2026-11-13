@@ -163,8 +163,18 @@ function AttributionTable({
         className={`${GRID} border-b border-border py-2 text-xs text-muted-foreground`}
       >
         <span>Source</span>
-        <span className="text-right">Revenue</span>
-        <span className="text-right">Orders</span>
+        <span
+          className="text-right"
+          title="Every charge, subscription renewals and plan changes included"
+        >
+          Revenue
+        </span>
+        <span
+          className="text-right"
+          title="New subscriptions and one-off purchases. Renewals and plan changes count as revenue, not as orders."
+        >
+          Orders
+        </span>
         <span className="hidden text-right sm:block">Conversion</span>
         <span className="hidden text-right sm:block">Per visitor</span>
       </div>
@@ -176,7 +186,14 @@ function AttributionTable({
               emptyLabel={emptyLabel}
               row={row}
             />
-            <span className="text-right text-sm font-medium tabular-nums">
+            <span
+              className="text-right text-sm font-medium tabular-nums"
+              title={
+                row.recurring_revenue_minor > 0
+                  ? `${money(row.recurring_revenue_minor)} from renewals and plan changes`
+                  : undefined
+              }
+            >
               {money(row.revenue_minor)}
             </span>
             <span className="text-right text-sm tabular-nums text-muted-foreground">

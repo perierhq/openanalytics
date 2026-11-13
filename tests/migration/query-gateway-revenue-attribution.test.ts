@@ -27,6 +27,12 @@ import { findOperation } from '../../apps/query-gateway/src/operations.ts'
  *      identify linkage, stop at the first charge, ignore what is outside the
  *      window, and baseline non-buyers inside the range only.
  *   5. Cross-site isolation.
+ *   6. **Renewals and plan changes are revenue, not conversions** (gap 7's
+ *      purchase-kind join, by charge id and by PaymentIntent): they stay in
+ *      `revenue_minor` and show in `recurring_revenue_minor`, but are not
+ *      orders or buyers; a buyer's purchase instant is their first new or
+ *      one-off charge even when a renewal came earlier; and a customer who
+ *      only renewed is neither a buyer nor in the non-buyer baseline.
  *
  * Skipped without TEST_CLICKHOUSE_URL; CI always provides one.
  */
@@ -186,6 +192,21 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
           occurred_at: '2026-07-06 12:00:00.000',
           gross_minor: 1000,
         }),
+        // Gap 7: A2 renewed an older subscription before buying ch_c, by
+        // PaymentIntent join; R1 only changed plan (by charge id).
+        charge({
+          site_id: site,
+          object_id: 'ch_i',
+          order_id: 'pi_i',
+          occurred_at: '2026-07-04 07:00:00.000',
+          gross_minor: 100,
+        }),
+        charge({
+          site_id: site,
+          object_id: 'ch_h',
+          occurred_at: '2026-07-03 15:00:00.000',
+          gross_minor: 250,
+        }),
         // Outside the range.
         charge({
           site_id: site,
@@ -277,11 +298,89 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
           lt_referrer_domain: ODD_REFERRER,
         }),
         attribution({
+          site_id: site,
+          object_id: 'ch_i',
+          occurred_at: '2026-07-04 07:00:00.000',
+          visitor_id: 'A2',
+          identity_scope: 'anonymous_day',
+          ft_referrer_domain: 'google.com',
+          ft_entry_page: '/',
+          lt_referrer_domain: 'google.com',
+          lt_entry_page: '/',
+        }),
+        attribution({
+          site_id: site,
+          object_id: 'ch_h',
+          occurred_at: '2026-07-03 15:00:00.000',
+          visitor_id: 'R1',
+          identity_scope: 'anonymous_day',
+          ft_referrer_domain: 'google.com',
+          lt_referrer_domain: 'google.com',
+        }),
+        attribution({
           site_id: otherSite,
           object_id: 'ch_x',
           occurred_at: '2026-07-03 12:00:00.000',
           visitor_id: 'U1',
           ft_referrer_domain: 'google.com',
+        }),
+      ],
+    })
+
+    // Gap 7's purchase kinds (ClickHouse 0031). ch_b is U1's renewal, joined
+    // by charge id; ch_i is A2's renewal, joined by PaymentIntent; ch_h is a
+    // plan change. ch_a's invoice says new. The other site's ch_x is labelled
+    // a renewal on ITS site only, which must not leak.
+    const invoice = (over: Record<string, unknown>): Record<string, unknown> => ({
+      provider: 'stripe',
+      generation: 1,
+      subscription_id: 'sub_1',
+      billing_reason: 'subscription_cycle',
+      purchase_kind: 'renewal',
+      order_id: '',
+      charge_id: '',
+      ingested_at: '2026-07-10 00:00:00.000',
+      ...over,
+    })
+    await client.insert({
+      table: 'subscription_invoices',
+      format: 'JSONEachRow',
+      values: [
+        invoice({
+          site_id: site,
+          invoice_id: 'in_a',
+          billing_reason: 'subscription_create',
+          purchase_kind: 'new',
+          charge_id: 'ch_a',
+          occurred_at: '2026-07-03 12:00:00.000',
+        }),
+        invoice({
+          site_id: site,
+          invoice_id: 'in_b',
+          charge_id: 'ch_b',
+          occurred_at: '2026-07-05 12:00:00.000',
+        }),
+        invoice({
+          site_id: site,
+          invoice_id: 'in_i',
+          subscription_id: 'sub_2',
+          order_id: 'pi_i',
+          occurred_at: '2026-07-04 07:00:00.000',
+        }),
+        invoice({
+          site_id: site,
+          invoice_id: 'in_h',
+          subscription_id: 'sub_3',
+          billing_reason: 'subscription_update',
+          purchase_kind: 'plan_change',
+          charge_id: 'ch_h',
+          occurred_at: '2026-07-03 15:00:00.000',
+        }),
+        invoice({
+          site_id: otherSite,
+          invoice_id: 'in_x',
+          charge_id: 'ch_c',
+          occurred_at: '2026-07-04 09:00:00.000',
         }),
       ],
     })
@@ -465,6 +564,19 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
           type: 'page_view',
           occurred_at: '2026-07-02 09:00:00.000',
         }),
+        // R1 only changed plan: a payer, so neither a buyer nor a non-buyer.
+        raw({
+          site_id: site,
+          anonymous_id: 'R1',
+          name: 'paywall_viewed',
+          occurred_at: '2026-07-03 14:00:00.000',
+        }),
+        raw({
+          site_id: site,
+          anonymous_id: 'R1',
+          name: 'plan_compared',
+          occurred_at: '2026-07-03 14:30:00.000',
+        }),
         raw({
           site_id: site,
           anonymous_id: 'V11',
@@ -501,14 +613,18 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
       rows.map((r) => [
         r['value'],
         Number(r['revenue_minor']),
+        Number(r['recurring_revenue_minor']),
         Number(r['orders']),
         Number(r['unconverted_orders']),
         Number(r['buyers']),
       ]),
     ).toEqual([
-      [null, 1000, 2, 0, 0],
-      ['google.com', 3500, 3, 0, 2],
-      [ODD_REFERRER, 0, 1, 1, 1],
+      [null, 1000, 0, 2, 0, 0],
+      // ch_a (new) and ch_c (no invoice: one-off) are the orders, U1 and A2
+      // the buyers. ch_b and ch_i (renewals) and ch_h (plan change) are 850
+      // of the 3850 revenue, and R1, who only changed plan, is not a buyer.
+      ['google.com', 3850, 850, 2, 0, 2],
+      [ODD_REFERRER, 0, 0, 1, 1, 1],
     ])
   })
 
@@ -520,9 +636,9 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
     })
     expect(last.map((r) => [r['value'], Number(r['revenue_minor'])])).toEqual([
       [null, 1000],
-      ['/', 2000],
+      ['/', 2100],
       ['/discount', 1500],
-      ['', 0],
+      ['', 250],
     ])
     const campaign = await run('analytics.revenue_attribution_first_utm_campaign', {
       site_id: site,
@@ -531,7 +647,7 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
     })
     expect(campaign.map((r) => [r['value'], Number(r['revenue_minor'])])).toEqual([
       [null, 1000],
-      ['', 2500],
+      ['', 2850],
       ['summer', 1000],
     ])
   })
@@ -574,7 +690,9 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
         Number(r['non_buyer_visitors']),
       ]),
     ).toEqual([
-      // U1 through the AN1 linkage, and A2 (twice).
+      // U1 through the AN1 linkage, and A2 (twice): A2's 07:00 renewal is not
+      // their purchase, ch_c at 09:00 is. R1 (plan change only) is in neither
+      // column, so plan_compared has no row at all.
       ['paywall_viewed', 2, 3, 1],
       ['price_alert_created', 1, 1, 0],
       // U1's ben_chat came after the purchase; V9 is the baseline.
@@ -601,9 +719,11 @@ describeIfClickHouse('revenue attribution and events-before-purchase operations'
       to: TO,
     })
     expect(rows).toHaveLength(1)
+    // U1, A2 and A3 bought; R1 only changed plan, so is a payer, not a buyer.
     expect(Number(rows[0]?.['buyers_total'])).toBe(3)
-    // AN1, U1, A2, V9 have events in the range.
-    expect(Number(rows[0]?.['visitors_total'])).toBe(4)
+    expect(Number(rows[0]?.['payers_total'])).toBe(4)
+    // AN1, U1, A2, V9 and R1 have events in the range.
+    expect(Number(rows[0]?.['visitors_total'])).toBe(5)
   })
 
   it('refuses a scan wider than 92 days and a window over 30 days', () => {

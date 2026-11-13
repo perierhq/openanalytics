@@ -2450,6 +2450,7 @@ export class AnalyticsService {
     const rows = result.rows.map((row) => ({
       value: row['value'] === null || row['value'] === undefined ? null : str(row['value']),
       revenueMinor: num(row['revenue_minor']),
+      recurringRevenueMinor: num(row['recurring_revenue_minor']),
       orders: num(row['orders']),
       unconvertedOrders: num(row['unconverted_orders']),
       buyers: num(row['buyers']),
@@ -2512,6 +2513,7 @@ export class AnalyticsService {
         return {
           value: row.value,
           revenue_minor: row.revenueMinor,
+          recurring_revenue_minor: row.recurringRevenueMinor,
           orders: row.orders,
           unconverted_orders: row.unconvertedOrders,
           buyers: row.buyers,
@@ -2556,11 +2558,15 @@ export class AnalyticsService {
     ])
 
     const buyersTotal = num(population.rows[0]?.['buyers_total'])
+    // Every payer, renewal-only ones included: they are not buyers here (a
+    // renewal is not a purchase decision) but they did pay, so they are not
+    // part of the non-buyer baseline either.
+    const payersTotal = num(population.rows[0]?.['payers_total'] ?? buyersTotal)
     const visitorsTotal = num(population.rows[0]?.['visitors_total'])
     // `uniq` is an estimate and the two totals count different identities, so
     // the difference can come out at or below zero on a tiny site. No baseline
     // then, rather than a negative or infinite rate.
-    const nonBuyersTotal = visitorsTotal - buyersTotal
+    const nonBuyersTotal = visitorsTotal - payersTotal
 
     return {
       meta: {

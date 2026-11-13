@@ -600,7 +600,7 @@ const mcpTools: McpToolDefinition[] = [
     name: 'revenue_by_source',
     title: 'Revenue by Source',
     description:
-      'Revenue grouped by where buyers came from: per value of the first or last touch’s referrer domain, UTM source, medium or campaign, or entry page, the converted revenue (`revenue_minor`, integer minor units of `currency`), orders, unconverted orders and distinct buyers. The row with `value: null` is unattributed revenue and always comes first; an empty string means no referrer or no UTM tag. For ranges up to 92 days each row also has visitors (sessions that entered with that value), conversion_rate (buyers / visitors) and revenue_per_visitor_minor; above 92 days `visitors_available` is false and those are null, never zero. Same owner-only rule and `meta.revenue.connection_status` caveat as revenue_summary.',
+      'Revenue grouped by where buyers came from: per value of the first or last touch’s referrer domain, UTM source, medium or campaign, or entry page, the converted revenue (`revenue_minor`, integer minor units of `currency`, every charge including subscription renewals and plan changes; `recurring_revenue_minor` is the renewal and plan-change part), orders and distinct buyers (conversions only: new subscriptions and one-off purchases, never renewals or plan changes), and unconverted orders (charges of any kind with no exchange rate, missing from revenue_minor). The row with `value: null` is unattributed revenue and always comes first; an empty string means no referrer or no UTM tag. For ranges up to 92 days each row also has visitors (sessions that entered with that value), conversion_rate (buyers / visitors) and revenue_per_visitor_minor; above 92 days `visitors_available` is false and those are null, never zero. Same owner-only rule and `meta.revenue.connection_status` caveat as revenue_summary.',
     path: '/read/revenue/attribution',
     params: [
       ...RANGE_PARAMS,
@@ -628,7 +628,7 @@ const mcpTools: McpToolDefinition[] = [
     name: 'events_before_purchase',
     title: 'Events Before Purchase',
     description:
-      'Which custom events buyers fired before paying. Per event name: buyers who fired it in the window_ms before their first charge in the range, how often, and buyer_rate (share of all buyers); beside it non_buyer_visitors and non_buyer_rate, the share of visitors who did not buy and fired it in the range. Compare the two rates to see which in-product moments go with buying; it is correlation, not cause. non_buyer_rate is approximate (its denominator is the overview’s visitor estimate). The range is at most 92 days and the window at most 30 days. Owner-only, like revenue_summary.',
+      'Which custom events buyers fired before paying. A purchase is a new subscription or a one-off charge; renewals and plan changes are not purchases, and a customer who only renewed is neither a buyer nor a non-buyer. Per event name: buyers who fired it in the window_ms before their first purchase in the range, how often, and buyer_rate (share of all buyers); beside it non_buyer_visitors and non_buyer_rate, the share of visitors who did not buy and fired it in the range. Compare the two rates to see which in-product moments go with buying; it is correlation, not cause. non_buyer_rate is approximate (its denominator is the overview’s visitor estimate). The range is at most 92 days and the window at most 30 days. Owner-only, like revenue_summary.',
     path: '/read/revenue/events-before-purchase',
     params: [
       ...RANGE_PARAMS,

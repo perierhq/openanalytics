@@ -5383,14 +5383,22 @@ export interface paths {
          *
          *     **Unattributed revenue is one row with `value: null`, always first.**
          *     A charge whose attribution is unmatched, or not computed yet, lands
-         *     there rather than being dropped, so the rows add up to the same orders
-         *     the summary counts. An empty string is a real value: no referrer
-         *     (direct) or no UTM tag on the touch.
+         *     there rather than being dropped, so the rows add up to the same
+         *     revenue the summary counts. An empty string is a real value: no
+         *     referrer (direct) or no UTM tag on the touch.
          *
-         *     `revenue_minor` sums the reporting-currency gross of converted charges.
-         *     A charge with no usable exchange rate counts in `orders` and again in
-         *     `unconverted_orders`, never as zero revenue. Failed and canceled
-         *     charges are not orders.
+         *     **Renewals count as revenue, not as orders.** Each charge gets a
+         *     purchase kind from the subscription invoice join (the one
+         *     `/revenue/subscriptions/summary` uses): `new`, `renewal`,
+         *     `plan_change` or `one_off`. `revenue_minor` sums the reporting-currency
+         *     gross of every converted charge, renewals and plan changes included,
+         *     and `recurring_revenue_minor` is the renewal and plan-change part of
+         *     it. `orders`, `buyers` and so `conversion_rate` count conversions only:
+         *     a charge that started a subscription or was a one-off purchase. A
+         *     charge whose invoice is not known yet reads as a one-off until it is.
+         *     A charge with no usable exchange rate counts in `unconverted_orders`
+         *     (any kind) and never as zero revenue. Failed and canceled charges are
+         *     neither revenue nor orders.
          *
          *     **Visitors, conversion rate and revenue per visitor** come from the
          *     session facts: the unique visitors whose session *entered* with the
@@ -5436,17 +5444,22 @@ export interface paths {
         };
         /**
          * Custom events buyers fired before their first purchase, against non-buyers. Requires `revenue:read` (owner-only).
-         * @description For every buyer in the range (an attributed charge, keyed on the
+         * @description For every buyer in the range (an attributed purchase, keyed on the
          *     attribution's identity), the custom events that identity fired in the
-         *     `window_ms` before their **first** charge in the range, one row per
-         *     event name and type. An identity keyed on an identify() hash also owns
+         *     `window_ms` before their **first** purchase in the range, one row per
+         *     event name and type. A purchase is a charge that started a
+         *     subscription or was a one-off; renewals and plan changes are not
+         *     purchases here (purchase kinds from the subscription invoice join), and
+         *     a customer whose only charges in the range were renewals is neither a
+         *     buyer nor a non-buyer. An identity keyed on an identify() hash also owns
          *     the anonymous ids it was paired with inside the scanned window, so an
          *     event fired before sign-in counts for the buyer who signed in and paid.
          *
-         *     Next to it, the baseline: visitors who did **not** buy and fired the
-         *     event inside the range itself. `buyer_rate` is `buyers / totals.buyers`
-         *     and `non_buyer_rate` is `non_buyer_visitors / (totals.visitors -
-         *     totals.buyers)`. The visitor total is the overview's own estimate
+         *     Next to it, the baseline: visitors with no charge in the range who
+         *     fired the event inside the range itself. `buyer_rate` is
+         *     `buyers / totals.buyers` and `non_buyer_rate` is
+         *     `non_buyer_visitors / (totals.visitors - payers)`, payers being the
+         *     buyers plus the renewal-only customers. The visitor total is the overview's own estimate
          *     (`uniq`), so the baseline rate is approximate; both rates are `null`
          *     when their denominator is zero.
          *
@@ -8798,22 +8811,40 @@ export interface components {
             value: string | null;
             /**
              * Format: int64
-             * @description Converted gross, in the minor unit of the response's `currency`.
+             * @description Converted gross of every eligible charge in this row, in the minor
+             *     unit of the response's `currency`: new subscriptions, one-off
+             *     purchases, renewals and plan changes alike, so the rows add up to
+             *     the summary's charge gross. `recurring_revenue_minor` is the part
+             *     renewals and plan changes brought.
              */
             revenue_minor: number;
             /**
              * Format: int64
-             * @description Eligible charges, converted or not.
+             * @description The part of `revenue_minor` from subscription renewals and plan
+             *     changes (the purchase kind from the invoice join of
+             *     `/revenue/subscriptions/summary`). `revenue_minor -
+             *     recurring_revenue_minor` is first-purchase revenue.
+             */
+            recurring_revenue_minor: number;
+            /**
+             * Format: int64
+             * @description Conversions: charges that started a subscription or were a one-off
+             *     purchase, converted to the reporting currency or not. Renewals and
+             *     plan changes are not counted. A charge whose invoice has not been
+             *     seen yet reads as a one-off.
              */
             orders: number;
             /**
              * Format: int64
-             * @description Charges with no usable exchange rate; in `orders`, not in `revenue_minor`.
+             * @description Charges of any purchase kind, renewals included, with no usable
+             *     exchange rate: missing from `revenue_minor`, never folded in as zero.
              */
             unconverted_orders: number;
             /**
              * Format: int64
-             * @description Distinct attributed identities with a charge in this row.
+             * @description Distinct attributed identities with a conversion (new subscription
+             *     or one-off purchase) in this row. A customer who only renewed is
+             *     not a buyer here.
              */
             buyers: number;
             /**
@@ -8824,7 +8855,11 @@ export interface components {
             visitors: number | null;
             /** @description `buyers / visitors`, or `null` where `visitors` is null or zero. */
             conversion_rate: number | null;
-            /** @description `revenue_minor / visitors`, unrounded, or `null` where `visitors` is null or zero. */
+            /**
+             * @description `revenue_minor / visitors`, unrounded, or `null` where `visitors`
+             *     is null or zero. Renewals are in `revenue_minor`, so this is
+             *     revenue per visitor, not first-purchase revenue per visitor.
+             */
             revenue_per_visitor_minor: number | null;
         };
         RevenueAttributionResponse: {
@@ -8846,7 +8881,9 @@ export interface components {
             event_type: string;
             /**
              * Format: int64
-             * @description Buyers who fired the event inside the window before their first charge.
+             * @description Buyers who fired the event inside the window before their first
+             *     purchase in the range. A purchase is a charge that started a
+             *     subscription or was a one-off; renewals and plan changes are not.
              */
             buyers: number;
             /**
@@ -8858,12 +8895,14 @@ export interface components {
             buyer_rate: number | null;
             /**
              * Format: int64
-             * @description Visitors who did not buy and fired the event inside the range.
+             * @description Visitors with no charge of any kind in the range (renewing
+             *     customers are excluded too) who fired the event inside the range.
              */
             non_buyer_visitors: number;
             /**
-             * @description `non_buyer_visitors / (totals.visitors - totals.buyers)`, or `null`
-             *     when that difference is not positive. Approximate.
+             * @description `non_buyer_visitors / (totals.visitors - payers)`, where payers are
+             *     `totals.buyers` plus customers who only renewed, or `null` when that
+             *     difference is not positive. Approximate.
              */
             non_buyer_rate: number | null;
         };
@@ -8874,7 +8913,10 @@ export interface components {
             totals: {
                 /**
                  * Format: int64
-                 * @description Distinct attributed buyers in the range.
+                 * @description Distinct attributed buyers in the range: identities with a new
+                 *     subscription or one-off charge. A customer whose only charges in
+                 *     the range were renewals or plan changes is not counted, and is
+                 *     not a non-buyer either.
                  */
                 buyers: number;
                 /**

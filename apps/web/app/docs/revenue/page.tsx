@@ -102,8 +102,8 @@ export default function RevenueDocsPage() {
             "Gross and net share one chart; the gap between the lines is the cost of doing business.",
             "Payments the join could not attribute still count in every total; they simply have no journey. There is no IP matching and no time-proximity guessing, by policy.",
             "Currencies that could not be converted are listed beside the totals rather than silently dropped.",
-            "Revenue by source or entry page groups paid orders by the first or last touch's referrer, UTM source, medium, campaign or landing page. For ranges up to 92 days each row also shows visitors, conversion rate and revenue per visitor.",
-            "Over MCP, revenue_by_source answers the same breakdown and events_before_purchase lists the custom events buyers fired before paying, next to how often visitors who did not buy fired them.",
+            "Revenue by source or entry page groups paid orders by the first or last touch's referrer, UTM source, medium, campaign or landing page. Subscription renewals and plan changes count toward a row's revenue but not its orders or buyers, so the conversion rate is about first purchases. For ranges up to 92 days each row also shows visitors, conversion rate and revenue per visitor.",
+            "Over MCP, revenue_by_source answers the same breakdown and events_before_purchase lists the custom events buyers fired before their first purchase (a new subscription or a one-off, not a renewal), next to how often visitors who did not buy fired them.",
           ]}
         />
       </DocSection>
