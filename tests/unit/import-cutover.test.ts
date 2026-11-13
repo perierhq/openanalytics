@@ -286,8 +286,8 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // not ours — which is why the purge names them instead of leaving them to
     // the `sites` cascade.
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
-    expect(DELETION_POSTGRES_TARGETS).toHaveLength(22)
-    expect(SITE_DELETION_TARGETS).toHaveLength(62)
+    expect(DELETION_POSTGRES_TARGETS).toHaveLength(25)
+    expect(SITE_DELETION_TARGETS).toHaveLength(65)
   })
 })
 

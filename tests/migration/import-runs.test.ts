@@ -490,7 +490,7 @@ describeIfPostgres('import runs', () => {
   })
 
   describe('the deletion snapshot (ADR-0032, D9)', () => {
-    it('writes 62 targets with an empty key list for a site that never imported', async () => {
+    it('writes 65 targets with an empty key list for a site that never imported', async () => {
       const siteId = await makeSite()
       const started = await startSiteDeletion(db, { siteId, requestedByUserId: ownerId })
       const targets = await listDeletionTargets(db, {
@@ -500,13 +500,13 @@ describeIfPostgres('import runs', () => {
       // 47 was M11's end state; M12 took it to 57 across CP1-CP5 (ADR-0033, D8
       // and its CP3 amendment). The object target deliberately did not multiply
       // and revenue adds none — provider bodies are never persisted.
-      // 62, not 63: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(62)
+      // 65, not 66 (62 + the three subscription lifecycle tables of migration 0047): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(65)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       const byStore = (store: string) => targets.filter((t) => t.store === store).length
       expect(byStore('clickhouse')).toBe(34)
       expect(byStore('redis')).toBe(5)
-      expect(byStore('postgres')).toBe(22)
+      expect(byStore('postgres')).toBe(25)
       expect(byStore('object')).toBe(1)
 
       // The row exists even with nothing to purge. Omitting it would make the

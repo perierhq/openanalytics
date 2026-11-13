@@ -344,6 +344,15 @@ export const DELETION_POSTGRES_TARGETS = [
   // telemetry about the customer's own infrastructure, and a deletion that left
   // them would leave a record of where a deleted site was administered from.
   'credential_sources',
+  // The subscription lifecycle (Perier gap 7; migration 0047): subscription
+  // heads, their event-only changes and the invoice hints. Site-scoped, each
+  // referencing only `sites`, so no ordering constraint among them or against
+  // their neighbours. Named rather than left to the `sites` cascade, for this
+  // list's standing rule: the target row records how many rows *this name*
+  // removed.
+  'revenue_subscriptions',
+  'revenue_subscription_changes',
+  'revenue_invoices',
 ] as const
 export type DeletionPostgresTarget = (typeof DELETION_POSTGRES_TARGETS)[number]
 

@@ -1,5 +1,6 @@
 import {
   decideRevenueObject,
+  type RevenueLifecycleSyncResource,
   type RevenueIngestSource,
   type RevenueLedgerStatus,
   type RevenueObjectDecision,
@@ -997,7 +998,7 @@ export interface RevenueSyncStateRow {
   readonly id: string
   readonly credentialId: string
   readonly siteId: string
-  readonly resource: RevenueSyncResource
+  readonly resource: RevenueSyncResource | RevenueLifecycleSyncResource
   readonly cursor: string | null
   readonly windowStart: Date | null
   readonly windowEnd: Date | null
@@ -1007,7 +1008,10 @@ export interface RevenueSyncStateRow {
 
 export async function readRevenueSyncState(
   db: Executor,
-  input: { readonly credentialId: string; readonly resource: RevenueSyncResource },
+  input: {
+    readonly credentialId: string
+    readonly resource: RevenueSyncResource | RevenueLifecycleSyncResource
+  },
 ): Promise<RevenueSyncStateRow | null> {
   const [row] = await db
     .select()
@@ -1024,7 +1028,7 @@ export async function readRevenueSyncState(
 export interface SaveRevenueSyncStateInput {
   readonly credentialId: string
   readonly siteId: string
-  readonly resource: RevenueSyncResource
+  readonly resource: RevenueSyncResource | RevenueLifecycleSyncResource
   /** The provider's own cursor. Null both to *open* a window and to close one. */
   readonly cursor: string | null
   readonly windowStart: Date

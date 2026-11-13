@@ -588,13 +588,13 @@ describe('the deletion registry, at 62 after migration 0029 dropped the hour tab
    */
   it('names the widget table as a Postgres target', () => {
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
-    // 62, not 63: `billing_transfer_offers` is registered by the hosted surface
+    // 65, not 66 (62 + the three subscription lifecycle tables of migration 0047): `billing_transfer_offers` is registered by the hosted surface
     // (`CLOUD_DELETION_EXTENSION`), so what this pins is the set a build with no
     // such surface erases. 62 became 72 when ADR-0079 booked the ten `*_15m`
     // rollups (ClickHouse migrations 0025/0026), and 72 became 62 again when
     // migration 0029 dropped the ten hour tables.
-    expect(SITE_DELETION_TARGETS).toHaveLength(62)
-    expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(22)
+    expect(SITE_DELETION_TARGETS).toHaveLength(65)
+    expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(25)
     expect(SITE_DELETION_TARGETS).toContainEqual({ store: 'postgres', target: 'widgets' })
   })
 })

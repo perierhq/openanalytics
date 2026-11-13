@@ -959,14 +959,14 @@ describeIfPostgres('revenue ingest', () => {
   })
 
   describe('site deletion (ADR-0033, D8)', () => {
-    it('snapshots 62 targets including the three ingest tables', async () => {
+    it('snapshots 65 targets including the three ingest tables', async () => {
       const siteId = await makeSite()
       const started = await startSiteDeletion(db, { siteId, requestedByUserId: ownerId })
       const targets = await listDeletionTargets(db, {
         deletionRequestId: started.deletionRequestId,
       })
-      // 62, not 63: `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(62)
+      // 65, not 66 (62 + the three subscription lifecycle tables of migration 0047): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(65)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       const names = targets.filter((t) => t.store === 'postgres').map((t) => t.target)
       expect(names).toContain('revenue_provider_events')

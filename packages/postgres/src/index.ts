@@ -284,6 +284,24 @@ export {
 } from './repositories/revenue-objects.ts'
 
 export {
+  applyRevenueSubscriptionObservation,
+  listSitesWithUnprojectedLifecycle,
+  listUnprojectedRevenueInvoices,
+  listUnprojectedRevenueSubscriptions,
+  markRevenueInvoicesProjected,
+  markRevenueSubscriptionsProjected,
+  readRevenueInvoice,
+  readRevenueSubscription,
+  readRevenueSubscriptionChanges,
+  recordRevenueInvoiceHints,
+  recordRevenueSubscriptionChanges,
+  type AppliedRevenueSubscription,
+  type ApplyRevenueSubscriptionInput,
+  type RevenueInvoiceRow,
+  type RevenueSubscriptionHeadRow,
+} from './repositories/revenue-subscriptions.ts'
+
+export {
   readRevenueMatchHint,
   readRevenueMatchHintsByOrder,
   recordRevenueMatchHints,
