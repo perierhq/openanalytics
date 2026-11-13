@@ -4,6 +4,12 @@ import type {
   RevenueObservation,
   RevenueSyncResource,
 } from './revenue-ingest.ts'
+import type {
+  RevenueInvoiceHint,
+  RevenueLifecycleSyncResource,
+  RevenueSubscriptionChange,
+  RevenueSubscriptionObservation,
+} from './subscription-lifecycle.ts'
 
 /**
  * The revenue adapter port (ADR-0033, D1).
@@ -134,6 +140,17 @@ export interface RevenueEventNormalization {
    * question is answered by both lists rather than by the first.
    */
   readonly hints?: readonly RevenueMatchHint[]
+  /**
+   * Subscription lifecycle outputs (Perier gap 7; `subscription-lifecycle.ts`).
+   *
+   * Like `hints`, none of these carries money and none passes through the money
+   * head: a subscription snapshot has its own head and its own three-way
+   * decision, a change and an invoice hint are keyed upserts. An event that
+   * produces only these is `processed`, not `ignored`.
+   */
+  readonly subscriptions?: readonly RevenueSubscriptionObservation[]
+  readonly subscriptionChanges?: readonly RevenueSubscriptionChange[]
+  readonly invoiceHints?: readonly RevenueInvoiceHint[]
   /** Present exactly when `observations` **and** `hints` are both empty. */
   readonly ignored?: RevenueIgnoreReason
 }
@@ -280,6 +297,57 @@ export interface RevenueAdapter {
     objectKind: RevenueObjectKind,
     objectId: string,
   ): Promise<RevenueFetchOutcome>
+}
+
+/** One page of a lifecycle list (subscriptions or invoices). */
+export interface RevenueLifecycleListPage {
+  readonly subscriptions: readonly RevenueSubscriptionObservation[]
+  readonly invoiceHints: readonly RevenueInvoiceHint[]
+  readonly nextCursor: string | null
+  readonly hasMore: boolean
+}
+
+export type RevenueLifecycleListOutcome =
+  { readonly ok: true; readonly page: RevenueLifecycleListPage } | RevenueSyncFailure
+
+export type RevenueSubscriptionFetchOutcome =
+  | { readonly ok: true; readonly observation: RevenueSubscriptionObservation | null }
+  | RevenueSyncFailure
+
+/**
+ * The optional lifecycle half of an adapter (Perier gap 7).
+ *
+ * Optional because a provider without subscriptions — or one whose lifecycle
+ * this build does not read yet — must keep working unchanged: the sync walk
+ * and the webhook route both check for these before using them.
+ */
+export interface RevenueLifecycleAdapter {
+  /**
+   * One page of subscriptions or invoices. `windowStart` is honoured for
+   * invoices and for a reconcile sweep's subscriptions; a backfill passes the
+   * epoch for subscriptions, because a subscription created three years ago and
+   * still paying is part of today's MRR.
+   */
+  listLifecycle(
+    secretKey: string,
+    resource: RevenueLifecycleSyncResource,
+    options: RevenueListOptions,
+  ): Promise<RevenueLifecycleListOutcome>
+  /** The tie-break fetch for a subscription head. `observation: null` = gone. */
+  fetchSubscription(
+    secretKey: string,
+    subscriptionId: string,
+  ): Promise<RevenueSubscriptionFetchOutcome>
+}
+
+export function hasLifecycleSupport(
+  adapter: RevenueAdapter,
+): adapter is RevenueAdapter & RevenueLifecycleAdapter {
+  const candidate = adapter as Partial<RevenueLifecycleAdapter>
+  return (
+    typeof candidate.listLifecycle === 'function' &&
+    typeof candidate.fetchSubscription === 'function'
+  )
 }
 
 /**

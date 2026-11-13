@@ -625,7 +625,12 @@ export {
 
 export {
   createRevenueAdapterRegistry,
+  hasLifecycleSupport,
   type RevenueAdapter,
+  type RevenueLifecycleAdapter,
+  type RevenueLifecycleListOutcome,
+  type RevenueLifecycleListPage,
+  type RevenueSubscriptionFetchOutcome,
   type RevenueAdapterRegistry,
   type RevenueCredentialVerification,
   type RevenueEventContext,
@@ -663,6 +668,35 @@ export {
   type RevenueObservation,
   type RevenueSyncResource,
 } from './revenue-ingest.ts'
+
+export {
+  PURCHASE_KINDS,
+  REVENUE_LIFECYCLE_SYNC_RESOURCES,
+  SUBSCRIPTION_CHANGE_KINDS,
+  SUBSCRIPTION_INTERVALS,
+  SUBSCRIPTION_LIFECYCLE_KINDS,
+  isNewConversion,
+  isPayingStatus,
+  isRevenueLifecycleSyncResource,
+  isSubscriptionInterval,
+  monthlyAmountMinor,
+  planSubscriptionLifecycle,
+  purchaseKindFor,
+  revenueLifecycleBackfillEventId,
+  subscriptionInterval,
+  subscriptionMrrMinor,
+  type PurchaseKind,
+  type RevenueInvoiceHint,
+  type RevenueLifecycleSyncResource,
+  type RevenueSubscriptionChange,
+  type RevenueSubscriptionItem,
+  type RevenueSubscriptionObservation,
+  type RevenueSubscriptionSnapshot,
+  type SubscriptionChangeKind,
+  type SubscriptionInterval,
+  type SubscriptionLifecycleFact,
+  type SubscriptionLifecycleKind,
+} from './subscription-lifecycle.ts'
 
 export {
   ECB_BASE_CURRENCY,
