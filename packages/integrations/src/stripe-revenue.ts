@@ -1,7 +1,17 @@
 import {
   REVENUE_SYNC_RESOURCE_KINDS,
+  isSubscriptionInterval,
   revenueObservationHash,
+  subscriptionMrrMinor,
   type RevenueAdapter,
+  type RevenueInvoiceHint,
+  type RevenueLifecycleAdapter,
+  type RevenueLifecycleListOutcome,
+  type RevenueLifecycleSyncResource,
+  type RevenueSubscriptionChange,
+  type RevenueSubscriptionFetchOutcome,
+  type RevenueSubscriptionItem,
+  type RevenueSubscriptionObservation,
   type RevenueCredentialVerification,
   type RevenueFetchOutcome,
   type RevenueIgnoreReason,
@@ -12,6 +22,7 @@ import {
   type RevenueNormalizedObject,
   type RevenueObjectKind,
   type RevenueObservation,
+  type RevenueSyncFailure,
   type RevenueSyncResource,
   type RevenueWebhookVerification,
 } from '@openanalytics/domain'
@@ -140,10 +151,50 @@ const CONSUMED_EVENTS: Readonly<Record<string, RevenueObjectKind | null>> = {
    * and the api cannot hash it. See `resolveRevenueExternalUserId`.
    */
   'checkout.session.completed': null,
+  /**
+   * Subscription lifecycle (Perier gap 7). Still `null` — none of them carries
+   * money — but no longer context-only: each produces a subscription snapshot
+   * (and, for `updated`, the changes `previous_attributes` reveals). See
+   * `normalizeLifecycleEvent`.
+   */
   'customer.subscription.created': null,
   'customer.subscription.updated': null,
   'customer.subscription.deleted': null,
+  /**
+   * Invoice hints (Perier gap 7): the only place Stripe says whether a payment
+   * is a subscription's first or a renewal (`billing_reason`). `invoice.paid`
+   * and `invoice.payment_succeeded` carry the invoice; `invoice_payment.paid`
+   * (2025-05-28.basil and later) carries the link from the invoice to its
+   * PaymentIntent, which basil removed from the invoice itself.
+   */
+  'invoice.paid': null,
+  'invoice.payment_succeeded': null,
+  'invoice_payment.paid': null,
 }
+
+/**
+ * The API version the lifecycle reads (`listLifecycle`, `fetchSubscription`)
+ * pin with a `Stripe-Version` header.
+ *
+ * The money reads deliberately take whatever the account's default version
+ * returns, because the fields they read have not moved in years. The lifecycle
+ * fields have: basil (2025-03-31) moved an invoice's subscription under
+ * `parent.subscription_details` and replaced its `payment_intent`/`charge` with
+ * the includable `payments` list. Pinning makes the listed shape one shape, and
+ * lets the invoice list expand `data.payments` — a field an older account
+ * version would answer with a 400 for. Webhook payloads arrive in the
+ * endpoint's version, which a request header cannot pin, so the webhook
+ * normalizers read both shapes.
+ */
+export const STRIPE_LIFECYCLE_API_VERSION = '2025-03-31.basil'
+
+const SUBSCRIPTION_EVENTS: ReadonlySet<string> = new Set([
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+])
+const INVOICE_EVENTS: ReadonlySet<string> = new Set(['invoice.paid', 'invoice.payment_succeeded'])
+const INVOICE_PAYMENT_EVENT = 'invoice_payment.paid'
 
 // --- Shape readers -----------------------------------------------------------
 
@@ -476,6 +527,290 @@ function normalizeCheckoutHint(
   }
 }
 
+// --- Lifecycle normalizers (Perier gap 7) ------------------------------------
+
+const toIso = (value: unknown): string | null => unixToDate(value)?.toISOString() ?? null
+
+/**
+ * One subscription item → a licensed recurring item, or null.
+ *
+ * Reads `price` (every current API version) and falls back to the legacy
+ * `plan`, whose interval fields sit on the plan itself rather than under
+ * `recurring`. Metered items and prices with no integer `unit_amount` (tiered,
+ * or a decimal amount) are skipped: their monthly amount is not knowable before
+ * the invoice, and a guessed one would be MRR that never existed.
+ */
+function normalizeSubscriptionItem(item: Record<string, unknown>): RevenueSubscriptionItem | null {
+  const price = asRecord(item['price']) ?? asRecord(item['plan'])
+  if (!price) return null
+  const recurring = asRecord(price['recurring']) ?? price
+  if (asString(recurring['usage_type']) === 'metered') return null
+  const interval = asString(recurring['interval'])
+  const intervalCount = asInteger(recurring['interval_count']) ?? 1
+  const unitAmount = asInteger(price['unit_amount']) ?? asInteger(price['amount'])
+  const priceId = asString(price['id'])
+  if (priceId === null || unitAmount === null || !isSubscriptionInterval(interval)) return null
+  return {
+    price_id: priceId,
+    product_id: referenceId(price['product']),
+    unit_amount_minor: unitAmount,
+    quantity: asInteger(item['quantity']) ?? 1,
+    interval,
+    interval_count: intervalCount,
+  }
+}
+
+/** A subscription's (or a `previous_attributes`') item list, sorted by price. */
+function subscriptionItems(itemsField: unknown): RevenueSubscriptionItem[] | null {
+  const list = asRecord(itemsField)
+  const data = list?.['data']
+  if (!Array.isArray(data)) return null
+  const items: RevenueSubscriptionItem[] = []
+  for (const row of data) {
+    const item = asRecord(row)
+    const normalized = item === null ? null : normalizeSubscriptionItem(item)
+    if (normalized) items.push(normalized)
+  }
+  return items.sort((a, b) =>
+    a.price_id < b.price_id ? -1 : a.price_id > b.price_id ? 1 : a.quantity - b.quantity,
+  )
+}
+
+/**
+ * A Stripe subscription → its normalized snapshot.
+ *
+ * Null without an id, a `created` or a currency (the subscription's own, else
+ * its first price's): none of those can be defaulted honestly. No customer
+ * email or name is read — the customer is its opaque `cus_…` id.
+ */
+function normalizeSubscription(
+  object: Record<string, unknown>,
+  snapshotAt: Date,
+): RevenueSubscriptionObservation | null {
+  const subscriptionId = asString(object['id'])
+  const created = toIso(object['created'])
+  if (subscriptionId === null || created === null) return null
+
+  const itemsList = asRecord(object['items'])?.['data']
+  const firstItem = Array.isArray(itemsList) ? asRecord(itemsList[0]) : null
+  const firstPrice = asRecord(firstItem?.['price']) ?? asRecord(firstItem?.['plan'])
+  const currency = (
+    asString(object['currency']) ??
+    asString(firstPrice?.['currency']) ??
+    ''
+  ).toLowerCase()
+  if (currency === '') return null
+
+  return {
+    subscriptionId,
+    snapshotAt,
+    normalized: {
+      status: (asString(object['status']) ?? 'active').toLowerCase(),
+      livemode: object['livemode'] === true,
+      customer_id: referenceId(object['customer']),
+      currency,
+      items: subscriptionItems(object['items']) ?? [],
+      created_at: created,
+      started_at: toIso(object['start_date']) ?? created,
+      trial_start: toIso(object['trial_start']),
+      trial_end: toIso(object['trial_end']),
+      cancel_at_period_end: object['cancel_at_period_end'] === true,
+      cancel_at: toIso(object['cancel_at']),
+      canceled_at: toIso(object['canceled_at']),
+      ended_at: toIso(object['ended_at']),
+    },
+  }
+}
+
+/**
+ * The changes `customer.subscription.updated`'s `previous_attributes` reveals.
+ *
+ * `previous_attributes` holds the OLD value of every field the update changed,
+ * and only those. So:
+ *
+ * - `items` (or the legacy `plan`) present → the plan moved. A `plan_changed`
+ *   is emitted only when the monthly-normalized MRR actually differs: a
+ *   quantity-neutral price swap at the same amount is not expansion.
+ * - `cancel_at_period_end` or `cancel_at` present → the scheduled-cancellation
+ *   state may have flipped. Compared as "was scheduled" vs "is scheduled", so
+ *   Stripe setting both fields in one update is one change, not two.
+ */
+function subscriptionChangesFrom(input: {
+  readonly eventId: string
+  readonly eventAt: Date
+  readonly previous: Record<string, unknown>
+  readonly current: RevenueSubscriptionObservation
+}): RevenueSubscriptionChange[] {
+  const { previous, current } = input
+  const snapshot = current.normalized
+  const changes: RevenueSubscriptionChange[] = []
+  const base = {
+    subscriptionId: current.subscriptionId,
+    providerEventId: input.eventId,
+    occurredAt: input.eventAt,
+  }
+
+  let previousItems: RevenueSubscriptionItem[] | null = null
+  if ('items' in previous) previousItems = subscriptionItems(previous['items'])
+  else if ('plan' in previous) {
+    const plan = asRecord(previous['plan'])
+    const item = plan === null ? null : normalizeSubscriptionItem({ plan, quantity: 1 })
+    previousItems = item === null ? null : [item]
+  }
+  if (previousItems !== null) {
+    const fromMrr = subscriptionMrrMinor(previousItems)
+    const toMrr = subscriptionMrrMinor(snapshot.items)
+    if (fromMrr !== toMrr) {
+      changes.push({ ...base, kind: 'plan_changed', fromMrrMinor: fromMrr, toMrrMinor: toMrr })
+    }
+  }
+
+  const touchesCancel = 'cancel_at_period_end' in previous || 'cancel_at' in previous
+  if (touchesCancel) {
+    const isScheduled = snapshot.cancel_at_period_end || snapshot.cancel_at !== null
+    const wasScheduled =
+      ('cancel_at_period_end' in previous
+        ? previous['cancel_at_period_end'] === true
+        : snapshot.cancel_at_period_end) ||
+      ('cancel_at' in previous ? previous['cancel_at'] !== null : snapshot.cancel_at !== null)
+    if (!wasScheduled && isScheduled) {
+      changes.push({ ...base, kind: 'cancel_scheduled', fromMrrMinor: 0, toMrrMinor: 0 })
+    } else if (wasScheduled && !isScheduled && snapshot.ended_at === null) {
+      changes.push({ ...base, kind: 'cancel_undone', fromMrrMinor: 0, toMrrMinor: 0 })
+    }
+  }
+  return changes
+}
+
+/** The first paid entry of a basil invoice's expanded `payments` list. */
+function paidInvoicePayment(object: Record<string, unknown>): Record<string, unknown> | null {
+  const data = asRecord(object['payments'])?.['data']
+  if (!Array.isArray(data)) return null
+  for (const row of data) {
+    const payment = asRecord(row)
+    if (payment && asString(payment['status']) === 'paid') return payment
+  }
+  return null
+}
+
+/** PaymentIntent and charge off an InvoicePayment, in either published shape:
+ * `payment: { type, payment_intent | charge }` (basil) or top-level fields. */
+function invoicePaymentRefs(payment: Record<string, unknown>): {
+  orderId: string
+  chargeId: string
+} {
+  const inner = asRecord(payment['payment'])
+  return {
+    orderId: referenceId(inner?.['payment_intent']) || referenceId(payment['payment_intent']),
+    chargeId: referenceId(inner?.['charge']) || referenceId(payment['charge']),
+  }
+}
+
+/**
+ * A paid invoice → the hint linking its payment to its subscription.
+ *
+ * Reads both shapes: pre-basil (`subscription`, `payment_intent`, `charge` on
+ * the invoice) and basil (`parent.subscription_details.subscription`, and the
+ * PaymentIntent on an expanded `payments` entry). A basil webhook carries no
+ * `payments` (it is includable, and a webhook is not a request), so its hint has
+ * no PaymentIntent until `invoice_payment.paid` fills it forward. No amount is
+ * read: the money is on the charge.
+ */
+function normalizeInvoiceHint(
+  object: Record<string, unknown>,
+  fallbackAt: Date,
+): RevenueInvoiceHint | null {
+  const invoiceId = asString(object['id'])
+  if (invoiceId === null || invoiceId === '') return null
+  const subscriptionDetails = asRecord(asRecord(object['parent'])?.['subscription_details'])
+  const payment = paidInvoicePayment(object)
+  const refs = payment === null ? { orderId: '', chargeId: '' } : invoicePaymentRefs(payment)
+  return {
+    invoiceId,
+    subscriptionId:
+      referenceId(object['subscription']) || referenceId(subscriptionDetails?.['subscription']),
+    billingReason: asString(object['billing_reason']) ?? '',
+    orderId: referenceId(object['payment_intent']) || refs.orderId,
+    chargeId: referenceId(object['charge']) || refs.chargeId,
+    customerId: referenceId(object['customer']),
+    occurredAt: unixToDate(asRecord(object['status_transitions'])?.['paid_at']) ?? fallbackAt,
+  }
+}
+
+/**
+ * `invoice_payment.paid` → a partial hint: the invoice and its PaymentIntent.
+ * When the event's `invoice` is expanded, the invoice's own fields come with it.
+ */
+function normalizeInvoicePaymentHint(
+  object: Record<string, unknown>,
+  eventAt: Date,
+): RevenueInvoiceHint | null {
+  const expanded = asRecord(object['invoice'])
+  const fromInvoice = expanded === null ? null : normalizeInvoiceHint(expanded, eventAt)
+  const invoiceId = fromInvoice?.invoiceId ?? asString(object['invoice'])
+  if (invoiceId === null || invoiceId === '') return null
+  const refs = invoicePaymentRefs(object)
+  return {
+    invoiceId,
+    subscriptionId: fromInvoice?.subscriptionId ?? '',
+    billingReason: fromInvoice?.billingReason ?? '',
+    orderId: refs.orderId || (fromInvoice?.orderId ?? ''),
+    chargeId: refs.chargeId || (fromInvoice?.chargeId ?? ''),
+    customerId: fromInvoice?.customerId ?? '',
+    occurredAt: unixToDate(asRecord(object['status_transitions'])?.['paid_at']) ?? eventAt,
+  }
+}
+
+/**
+ * The lifecycle branch of `normalizeEvent`: subscription snapshots, their
+ * changes, and invoice hints. Like the checkout hint, nothing here touches a
+ * money head, so the event has no observations; it is `processed` when it
+ * produced anything and `unsupported_object_shape` when its object was
+ * unreadable.
+ */
+function normalizeLifecycleEvent(
+  event: Record<string, unknown>,
+  base: { eventId: string; eventType: string; eventAt: Date },
+): RevenueNormalizeOutcome {
+  const data = asRecord(event['data'])
+  const object = asRecord(data?.['object'])
+  if (!object) return ignored(base, 'unsupported_object_shape')
+
+  if (SUBSCRIPTION_EVENTS.has(base.eventType)) {
+    // The event's `created`, not the subscription's: the webhook ordering
+    // input, exactly as for a money head.
+    const observation = normalizeSubscription(object, base.eventAt)
+    if (!observation) return ignored(base, 'unsupported_object_shape')
+    const previous = asRecord(data?.['previous_attributes'])
+    const changes =
+      base.eventType === 'customer.subscription.updated' && previous !== null
+        ? subscriptionChangesFrom({
+            eventId: base.eventId,
+            eventAt: base.eventAt,
+            previous,
+            current: observation,
+          })
+        : []
+    return {
+      ok: true,
+      event: {
+        ...base,
+        observations: [],
+        subscriptions: [observation],
+        ...(changes.length === 0 ? {} : { subscriptionChanges: changes }),
+      },
+    }
+  }
+
+  const hint = INVOICE_EVENTS.has(base.eventType)
+    ? normalizeInvoiceHint(object, base.eventAt)
+    : base.eventType === INVOICE_PAYMENT_EVENT
+      ? normalizeInvoicePaymentHint(object, base.eventAt)
+      : null
+  if (!hint) return ignored(base, 'unsupported_object_shape')
+  return { ok: true, event: { ...base, observations: [], invoiceHints: [hint] } }
+}
+
 // --- HTTP helpers ------------------------------------------------------------
 
 /**
@@ -538,13 +873,16 @@ async function stripeGet(
   fetchImpl: typeof fetch,
   secretKey: string,
   path: string,
-  options: { readonly cursorSensitive?: boolean } = {},
+  options: { readonly cursorSensitive?: boolean; readonly stripeVersion?: string } = {},
 ): Promise<StripeGetSuccess | StripeGetFailure> {
   let response: Response
   try {
     response = await fetchImpl(`${STRIPE_API_BASE}${path}`, {
       method: 'GET',
-      headers: { authorization: `Bearer ${secretKey}` },
+      headers: {
+        authorization: `Bearer ${secretKey}`,
+        ...(options.stripeVersion === undefined ? {} : { 'stripe-version': options.stripeVersion }),
+      },
       signal: AbortSignal.timeout(SYNC_TIMEOUT_MS),
     })
   } catch {
@@ -631,7 +969,9 @@ const FEE_BEARING: Readonly<Record<RevenueObjectKind, boolean>> = {
 
 // --- The adapter -------------------------------------------------------------
 
-export function createStripeRevenueAdapter(fetchImpl: typeof fetch = fetch): RevenueAdapter {
+export function createStripeRevenueAdapter(
+  fetchImpl: typeof fetch = fetch,
+): RevenueAdapter & RevenueLifecycleAdapter {
   return {
     providerId: STRIPE_REVENUE_PROVIDER_ID,
 
@@ -734,8 +1074,9 @@ export function createStripeRevenueAdapter(fetchImpl: typeof fetch = fetch): Rev
           if (hint) {
             return { ok: true, event: { ...base, observations: [], hints: [hint] } }
           }
+          return ignored(base, 'no_observations')
         }
-        return ignored(base, 'no_observations')
+        return normalizeLifecycleEvent(event, base)
       }
 
       const object = asRecord(asRecord(event['data'])?.['object'])
@@ -885,6 +1226,101 @@ export function createStripeRevenueAdapter(fetchImpl: typeof fetch = fetch): Rev
       }
       return { ok: true, observation }
     },
+
+    /**
+     * One page of subscriptions or paid invoices (Perier gap 7), pinned to
+     * `STRIPE_LIFECYCLE_API_VERSION`.
+     *
+     * - Subscriptions are listed with `status=all`: Stripe's default leaves out
+     *   canceled subscriptions, and a churned subscription is exactly what
+     *   churn is computed from.
+     * - Invoices are listed `status=paid` with `data.payments` expanded, so one
+     *   request per page yields the full hint — billing reason, subscription and
+     *   PaymentIntent — with no request per invoice.
+     *
+     * Newest first and `starting_after`-paged, exactly like `listObjects`.
+     */
+    async listLifecycle(
+      secretKey: string,
+      resource: RevenueLifecycleSyncResource,
+      options: RevenueListOptions,
+    ): Promise<RevenueLifecycleListOutcome> {
+      const query = new URLSearchParams({
+        limit: String(Math.min(Math.max(options.pageSize, 1), STRIPE_LIST_PAGE_SIZE)),
+        'created[gte]': String(unixSeconds(options.windowStart)),
+        'created[lte]': String(unixSeconds(options.windowEnd)),
+      })
+      if (resource === 'subscriptions') {
+        query.set('status', 'all')
+      } else {
+        query.set('status', 'paid')
+        query.append('expand[]', 'data.payments')
+      }
+      const hasCursor = options.cursor !== null && options.cursor !== ''
+      if (hasCursor) query.set('starting_after', options.cursor as string)
+
+      const path = resource === 'subscriptions' ? '/v1/subscriptions' : '/v1/invoices'
+      const result = await stripeGet(fetchImpl, secretKey, `${path}?${query.toString()}`, {
+        cursorSensitive: hasCursor,
+        stripeVersion: STRIPE_LIFECYCLE_API_VERSION,
+      })
+      if (!result.ok) return failure(result)
+
+      const data = result.body['data']
+      if (!Array.isArray(data)) {
+        return { ok: false, reason: 'unavailable', detail: 'stripe list response has no data' }
+      }
+
+      const subscriptions: RevenueSubscriptionObservation[] = []
+      const invoiceHints: RevenueInvoiceHint[] = []
+      let lastId: string | null = null
+      for (const row of data) {
+        const object = asRecord(row)
+        if (!object) continue
+        lastId = asString(object['id']) ?? lastId
+        if (resource === 'subscriptions') {
+          // A listed head's snapshot time is the subscription's own `created`
+          // — the money heads' backfill rule, so a list row never outranks a
+          // newer webhook (and an equal-time differing row is a tie the sync
+          // resolves by re-fetching).
+          const created = unixToDate(object['created'])
+          const observation = created === null ? null : normalizeSubscription(object, created)
+          if (observation) subscriptions.push(observation)
+        } else {
+          const created = unixToDate(object['created'])
+          const hint = created === null ? null : normalizeInvoiceHint(object, created)
+          if (hint) invoiceHints.push(hint)
+        }
+      }
+
+      const hasMore = result.body['has_more'] === true
+      return {
+        ok: true,
+        page: { subscriptions, invoiceHints, nextCursor: hasMore ? lastId : null, hasMore },
+      }
+    },
+
+    async fetchSubscription(
+      secretKey: string,
+      subscriptionId: string,
+    ): Promise<RevenueSubscriptionFetchOutcome> {
+      const result = await stripeGet(
+        fetchImpl,
+        secretKey,
+        `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+        { stripeVersion: STRIPE_LIFECYCLE_API_VERSION },
+      )
+      if (!result.ok) {
+        if (result.missing === true) return { ok: true, observation: null }
+        return failure(result)
+      }
+      const created = unixToDate(result.body['created'])
+      const observation = created === null ? null : normalizeSubscription(result.body, created)
+      if (!observation) {
+        return { ok: false, reason: 'unavailable', detail: 'stripe subscription could not be read' }
+      }
+      return { ok: true, observation }
+    },
   }
 }
 
@@ -896,7 +1332,7 @@ function ignored(
 }
 
 /** A typed GET failure, narrowed to the adapter's public failure shape. */
-function failure(result: StripeGetFailure): RevenueListOutcome & RevenueFetchOutcome {
+function failure(result: StripeGetFailure): RevenueSyncFailure {
   return {
     ok: false,
     reason: result.reason,

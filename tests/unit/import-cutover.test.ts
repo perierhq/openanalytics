@@ -230,10 +230,13 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // taking ClickHouse 44 -> 34 and the total 72 -> 62. Nothing had written
     // them since 0027, and the 15m backfill's gate reads `events_raw` now.
     // ClickHouse migration 0030 (DataFast gap 6) books the two custom-event
-    // property breakdowns, taking ClickHouse 34 -> 36 and the total 62 -> 64.
-    expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(36)
+    // property breakdowns, and 0031 (gap 7) the subscription lifecycle and
+    // invoice tables, taking ClickHouse 34 -> 38.
+    expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(38)
     expect(DELETION_CLICKHOUSE_TARGETS).toContain('custom_event_properties_15m')
     expect(DELETION_CLICKHOUSE_TARGETS).toContain('custom_event_properties_1d')
+    expect(DELETION_CLICKHOUSE_TARGETS).toContain('subscription_lifecycle')
+    expect(DELETION_CLICKHOUSE_TARGETS).toContain('subscription_invoices')
     for (const dropped of [
       'metrics_1h',
       'pages_1h',
@@ -290,8 +293,8 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // not ours — which is why the purge names them instead of leaving them to
     // the `sites` cascade.
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
-    expect(DELETION_POSTGRES_TARGETS).toHaveLength(22)
-    expect(SITE_DELETION_TARGETS).toHaveLength(64)
+    expect(DELETION_POSTGRES_TARGETS).toHaveLength(25)
+    expect(SITE_DELETION_TARGETS).toHaveLength(69)
   })
 })
 

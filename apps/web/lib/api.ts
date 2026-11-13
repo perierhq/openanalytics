@@ -215,6 +215,12 @@ export type RevenueSummaryResponse = Schemas["RevenueSummaryResponse"];
 export type RevenueTimeseriesPoint = Schemas["RevenueTimeseriesPoint"];
 export type RevenueTimeseriesResponse = Schemas["RevenueTimeseriesResponse"];
 export type RevenueTransaction = Schemas["RevenueTransaction"];
+/** Subscription lifecycle (Perier fork, gap 7). Owner-only, like the money. */
+export type SubscriptionTotals = Schemas["SubscriptionTotals"];
+export type SubscriptionSummaryResponse = Schemas["SubscriptionSummaryResponse"];
+export type SubscriptionTimeseriesPoint = Schemas["SubscriptionTimeseriesPoint"];
+export type SubscriptionTimeseriesResponse =
+  Schemas["SubscriptionTimeseriesResponse"];
 export type RevenueTransactionsResponse = Schemas["RevenueTransactionsResponse"];
 export type RevenueMatchedVia = Schemas["RevenueMatchedVia"];
 export type RevenueMatchConfidence = Schemas["RevenueMatchConfidence"];
@@ -495,6 +501,36 @@ export const revenue = {
       resolution ? { resolution } : undefined
     );
   },
+
+  /**
+   * MRR, active and trialing subscriptions at both ends of the range, what
+   * moved in between, and the range's charges split new / renewal /
+   * plan_change / one_off (Perier fork, gap 7). Owner-only.
+   */
+  subscriptionSummary: (
+    siteId: string,
+    range: AnalyticsRange,
+    options?: RequestOptions
+  ) =>
+    analyticsRevenueGet<SubscriptionSummaryResponse>(
+      siteId,
+      "subscriptions/summary",
+      range,
+      options
+    ),
+
+  /** MRR per site-local day, every day present; levels are end-of-day. */
+  subscriptionTimeseries: (
+    siteId: string,
+    range: AnalyticsRange,
+    options?: RequestOptions
+  ) =>
+    analyticsRevenueGet<SubscriptionTimeseriesResponse>(
+      siteId,
+      "subscriptions/timeseries",
+      range,
+      options
+    ),
 
   /**
    * The app's first cursor-paginated list. The cursor is **opaque**: pass it

@@ -127,6 +127,14 @@ export const DELETION_CLICKHOUSE_TARGETS = [
   // it sounds, because nothing recomputes a bucket whose facts are gone: the
   // last stored generation would simply stand forever.
   'revenue_1d',
+  // The subscription lifecycle facts and invoice purchase kinds (Perier gap 7,
+  // ClickHouse migration 0031). Keyed by `site_id`, so the existing
+  // delete-by-site statement covers them unchanged. Targets in their own right
+  // for the rollups' reason: they are derived rows nothing recomputes once the
+  // Postgres heads are gone, and they hold a site's MRR history and a
+  // pseudonymous customer hash per subscription.
+  'subscription_lifecycle',
+  'subscription_invoices',
   // What a custom-events row may say beyond a count (ADR-0038, D5/D8;
   // ClickHouse migration 0021).
   //
@@ -355,6 +363,15 @@ export const DELETION_POSTGRES_TARGETS = [
   // telemetry about the customer's own infrastructure, and a deletion that left
   // them would leave a record of where a deleted site was administered from.
   'credential_sources',
+  // The subscription lifecycle (Perier gap 7; migration 0047): subscription
+  // heads, their event-only changes and the invoice hints. Site-scoped, each
+  // referencing only `sites`, so no ordering constraint among them or against
+  // their neighbours. Named rather than left to the `sites` cascade, for this
+  // list's standing rule: the target row records how many rows *this name*
+  // removed.
+  'revenue_subscriptions',
+  'revenue_subscription_changes',
+  'revenue_invoices',
 ] as const
 export type DeletionPostgresTarget = (typeof DELETION_POSTGRES_TARGETS)[number]
 
@@ -467,7 +484,13 @@ export interface DeletionTargetName {
  * - ClickHouse migration 0030 (Perier fork, DataFast gap 6) added the
  *   custom-event property breakdowns, `custom_event_properties_15m` and
  *   `custom_event_properties_1d` — so 34 became **36** and the site total 62
- *   became **64** (63 became **65** on hosted).
+ *   became **64** (63 became **65** on hosted);
+ * - the Perier fork's subscription lifecycle (DataFast gap 7) added
+ *   `revenue_subscriptions`, `revenue_subscription_changes` and
+ *   `revenue_invoices` (Postgres migration 0047) and `subscription_lifecycle`
+ *   and `subscription_invoices` (ClickHouse migration 0031), so the site total
+ *   64 became **69** (Postgres 22 → 25, ClickHouse 36 → 38; 65 became **70**
+ *   on hosted).
  *
  * `currency_rates` (migration 0034) is deliberately **not** here and never will
  * be. It is global reference data — one row per `(rate_date, currency)`, with no

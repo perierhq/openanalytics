@@ -280,3 +280,52 @@ describe('reporting currency', () => {
     expect(SUPPORTED_REPORTING_CURRENCIES.length).toBeGreaterThan(30)
   })
 })
+
+describe('subscription lifecycle (Perier gap 7)', () => {
+  const SUB_PATHS = [
+    '/v1/sites/{site_id}/revenue/subscriptions/summary',
+    '/v1/sites/{site_id}/revenue/subscriptions/timeseries',
+    '/v1/read/revenue/subscriptions/summary',
+    '/v1/read/revenue/subscriptions/timeseries',
+  ] as const
+
+  it('documents revenue:read and the error statuses on every subscription path', async () => {
+    const text = await spec()
+    for (const path of SUB_PATHS) {
+      const block = pathBlock(text, path)
+      for (const status of ['401', '403', '404', '503']) {
+        expect(block, `${path} must document ${status}`).toContain(`'${status}':`)
+      }
+      expect(block).toContain('revenue:read')
+    }
+  })
+
+  it('keeps private keys off the /v1/read subscription paths', async () => {
+    const text = await spec()
+    for (const path of SUB_PATHS.slice(2)) {
+      const block = pathBlock(text, path)
+      expect(block).not.toContain('privateApiKey')
+      expect(block).toContain("oauthAccessToken: ['revenue:read']")
+    }
+  })
+
+  it('types MRR as int64 minor units and pre-divides nothing', async () => {
+    const text = await spec()
+    const block = schemaBlock(text, 'SubscriptionTotals')
+    for (const field of ['mrr_start_minor', 'mrr_end_minor', 'churned_mrr_minor', 'active_end']) {
+      expect(block, field).toContain(`${field}:`)
+    }
+    expect(block).not.toContain('rate:')
+    expect(block).not.toContain('type: number')
+  })
+
+  it('makes purchase_kind on a transaction nullable and closes its vocabulary', async () => {
+    const text = await spec()
+    const kind = schemaBlock(text, 'SubscriptionPurchaseKind')
+    expect(kind).toContain('enum: [new, renewal, plan_change, one_off]')
+    const tx = schemaBlock(text, 'RevenueTransaction')
+    const field = tx.slice(tx.indexOf('        purchase_kind:'))
+    expect(field).toContain("$ref: '#/components/schemas/SubscriptionPurchaseKind'")
+    expect(field).toContain("type: 'null'")
+  })
+})

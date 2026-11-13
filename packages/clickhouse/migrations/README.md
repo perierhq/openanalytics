@@ -399,3 +399,20 @@ so it costs nothing until an operator runs it.
 
 Rollback: drop the two views, then the two tables, and take the two names out
 of `DELETION_CLICKHOUSE_TARGETS` in the same release.
+
+### 0031 — subscription lifecycle (Perier fork, DataFast gap 7)
+
+| Version | Subject                                                                                               |
+| ------- | ----------------------------------------------------------------------------------------------------- |
+| 0031    | `subscription_lifecycle` + `subscription_invoices` — worker-written, `ReplacingMergeTree(generation)` |
+
+Projected from Postgres 0047 by the worker's lifecycle projection, beside the
+revenue projection and with the same per-row marker and insert-token rules.
+Neither table holds money: a renewal's amount stays in `revenue_events`, and a
+charge's purchase kind (new, renewal, plan change, one-off) is joined from
+`subscription_invoices` at read time. Every read of `subscription_lifecycle`
+takes, per subscription, only its highest generation, because a re-planned
+lifecycle can have fewer facts than the one it replaces. Both tables need an
+`oa_ingest` INSERT and SELECT grant (`infra/selfhost/clickhouse/oa-entrypoint.sh`),
+which takes effect on a container recreate. Both are site deletion targets
+(36 → 38 ClickHouse targets).

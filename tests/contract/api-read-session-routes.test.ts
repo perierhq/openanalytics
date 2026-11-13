@@ -361,6 +361,18 @@ describe('the session may read revenue aggregates (ADR-0049 D2, D3)', () => {
     expect(body.series).toHaveLength(1)
   })
 
+  it('serves the subscription reads to an owner, and refuses them to an admin', async () => {
+    for (const path of ['subscriptions/summary', 'subscriptions/timeseries']) {
+      membershipRole.value = 'owner'
+      const ok = await revenue(path, asToken(SITE))
+      expect(ok.status, path).toBe(200)
+      membershipRole.value = 'admin'
+      const refused = await revenue(path, asSession(SITE))
+      expect(refused.status, path).toBe(403)
+      expect((await failure(refused)).message).toBe('Revenue is available to a site owner only')
+    }
+  })
+
   for (const role of ['admin', 'viewer'] as const) {
     it(`refuses a ${role} session at the capability, not at the scope`, async () => {
       // The distinction is the whole of D3's ceiling/floor argument, and the two

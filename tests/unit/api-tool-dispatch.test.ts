@@ -201,6 +201,15 @@ describe('the revenue tool rows (ADR-0049 D2)', () => {
     }
   })
 
+  it('names the subscription aggregates under the same scope (Perier gap 7)', () => {
+    expect(tool('subscription_summary').path).toBe('/read/revenue/subscriptions/summary')
+    expect(tool('subscription_timeseries').path).toBe('/read/revenue/subscriptions/timeseries')
+    for (const name of ['subscription_summary', 'subscription_timeseries']) {
+      expect(tool(name).scope).toBe('revenue:read')
+      expect(tool(name).needsSite).toBe(true)
+    }
+  })
+
   it('has no row for a per-customer read, on any surface', () => {
     for (const entry of MCP_TOOLS) {
       expect(entry.path, entry.name).not.toContain('transactions')

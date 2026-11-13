@@ -1,17 +1,25 @@
 import {
+  REVENUE_LIFECYCLE_SYNC_RESOURCES,
   REVENUE_SYNC_RESOURCES,
+  hasLifecycleSupport,
   revenueBackfillEventId,
   revenueCredentialAad,
+  revenueLifecycleBackfillEventId,
   revenueObservationHash,
+  revenueSubscriptionHash,
   type RevenueAdapter,
+  type RevenueLifecycleAdapter,
+  type RevenueLifecycleSyncResource,
   type RevenueSyncResource,
 } from '@openanalytics/domain'
 import type { CredentialVault } from '@openanalytics/integrations'
 import type { Logger, Metrics } from '@openanalytics/observability'
 import {
   applyRevenueObservation,
+  applyRevenueSubscriptionObservation,
   markRevenueProviderEvent,
   readRevenueSyncState,
+  recordRevenueInvoiceHints,
   recordRevenueProviderEvent,
   saveRevenueSyncState,
   type Database,
@@ -112,6 +120,10 @@ export interface RevenueSyncCounts {
   tiesResolved: number
   /** Cursors the provider refused and this walk dropped. */
   cursorsReset: number
+  /** Subscription heads listed by the lifecycle walk (Perier gap 7). */
+  subscriptions: number
+  /** Invoice hints listed by the lifecycle walk. */
+  invoiceHints: number
 }
 
 export type RevenueSyncOutcome =
@@ -163,6 +175,8 @@ const emptyCounts = (): RevenueSyncCounts => ({
   skipped: 0,
   tiesResolved: 0,
   cursorsReset: 0,
+  subscriptions: 0,
+  invoiceHints: 0,
 })
 
 /**
@@ -437,7 +451,197 @@ export async function syncAllRevenueResources(
     }
   }
 
+  // The subscription lifecycle, after money and within the same page budget
+  // (Perier gap 7). Only for an adapter that has a lifecycle half.
+  if (hasLifecycleSupport(input.adapter)) {
+    const lifecycleInput = { ...input, adapter: input.adapter }
+    for (const resource of REVENUE_LIFECYCLE_SYNC_RESOURCES) {
+      if (budget.remaining <= 0) {
+        // Untouched, so not complete: the next call resumes here, and a
+        // finished resource costs no budget then.
+        allCompleted = false
+        break
+      }
+      const outcome = await syncRevenueLifecycleResource(deps, resource, lifecycleInput, budget)
+      add(totals, outcome.counts)
+      if (!outcome.ok) {
+        if (outcome.reason === 'lease_lost') return { ...outcome, counts: totals }
+        // A lifecycle failure never fails the money sync. Logged and counted
+        // here, and the walk moves on: the next pass tries again.
+        deps.metrics.increment(WORKER_METRICS.revenueLifecycleSyncFailed, {
+          resource,
+          reason: outcome.reason,
+          mode: input.mode,
+        })
+        deps.logger.warn('revenue_lifecycle_sync_failed', {
+          site_id: input.target.siteId,
+          credential_id: input.target.credentialId,
+          resource,
+          mode: input.mode,
+          reason: outcome.reason,
+          retryable: outcome.reason !== 'unauthorized',
+        })
+        continue
+      }
+      if (!outcome.completed) allCompleted = false
+    }
+  }
+
   return { ok: true, counts: totals, completed: allCompleted }
+}
+
+/**
+ * One lifecycle resource (`subscriptions` or `invoices`), paged exactly like a
+ * money resource: same budget, same persisted cursor, same `invalid_cursor`
+ * recovery, cursor saved after the page's rows are written.
+ *
+ * **The subscriptions window starts at the epoch on a backfill.** MRR is the
+ * sum over every subscription still paying, and one created three years ago is
+ * part of today's MRR; a backfill that read only the money window would start
+ * every MRR line at a fraction of the truth. A reconcile sweep keeps its own
+ * trailing window — the webhook is the fast path for state changes, and the
+ * sweep's job is a missed creation, not a full re-read every quarter hour.
+ * Invoices always use the money window: they label charges, and a charge
+ * outside the window is not being read either.
+ *
+ * Subscriptions are ledgered like money heads (`backfill:subscriptions:<id>`),
+ * so "why is this head at this version" has the same answer for both. Invoice
+ * hints are not — they are one fill-forward statement per page, and a hint, like
+ * a checkout hint, has no version decision to explain.
+ */
+export async function syncRevenueLifecycleResource(
+  deps: RevenueSyncDeps,
+  resource: RevenueLifecycleSyncResource,
+  input: RevenueSyncInput & { readonly adapter: RevenueAdapter & RevenueLifecycleAdapter },
+  budget: RevenuePageBudget,
+): Promise<RevenueSyncOutcome> {
+  const clock = input.now ?? (() => new Date())
+  const counts = emptyCounts()
+  const { target } = input
+  const windowStart =
+    resource === 'subscriptions' && input.mode === 'backfill' ? new Date(0) : input.windowStart
+  const window = { windowStart, windowEnd: input.windowEnd }
+
+  const stored = await readRevenueSyncState(deps.db, {
+    credentialId: target.credentialId,
+    resource,
+  })
+  const sameWindow =
+    stored !== null &&
+    stored.windowStart?.getTime() === windowStart.getTime() &&
+    stored.windowEnd?.getTime() === input.windowEnd.getTime()
+  if (sameWindow && stored.completedAt !== null) return { ok: true, counts, completed: true }
+
+  let cursor = sameWindow ? stored.cursor : null
+  const save = async (completedAt: Date | null) =>
+    await saveRevenueSyncState(deps.db, {
+      credentialId: target.credentialId,
+      siteId: target.siteId,
+      resource,
+      cursor,
+      ...window,
+      completedAt,
+      now: clock(),
+    })
+
+  while (budget.remaining > 0) {
+    budget.remaining -= 1
+    const listed = await input.adapter.listLifecycle(target.apiKey, resource, {
+      cursor,
+      ...window,
+      pageSize: input.pageSize,
+    })
+    if (!listed.ok) {
+      if (listed.reason === 'invalid_cursor' && cursor !== null) {
+        counts.cursorsReset += 1
+        cursor = null
+        await save(null)
+        continue
+      }
+      return {
+        ok: false,
+        reason: listed.reason === 'invalid_cursor' ? 'unavailable' : listed.reason,
+        detail: listed.detail,
+        ...(listed.retryAfterMs === undefined ? {} : { retryAfterMs: listed.retryAfterMs }),
+        counts,
+      }
+    }
+
+    counts.pages += 1
+    deps.metrics.increment(WORKER_METRICS.revenueSyncPages, { resource, mode: input.mode })
+
+    if (listed.page.invoiceHints.length > 0) {
+      await recordRevenueInvoiceHints(deps.db, {
+        siteId: target.siteId,
+        provider: target.provider,
+        hints: listed.page.invoiceHints,
+        now: clock(),
+      })
+      counts.invoiceHints += listed.page.invoiceHints.length
+    }
+
+    for (const observation of listed.page.subscriptions) {
+      counts.subscriptions += 1
+      const payloadHash = revenueSubscriptionHash(observation.normalized)
+      const now = clock()
+      const recorded = await recordRevenueProviderEvent(deps.db, {
+        siteId: target.siteId,
+        credentialId: target.credentialId,
+        provider: target.provider,
+        providerEventId: revenueLifecycleBackfillEventId({
+          resource,
+          objectId: observation.subscriptionId,
+        }),
+        payloadHash,
+        source: 'backfill',
+        now,
+      })
+      let decided = await applyRevenueSubscriptionObservation(deps.db, {
+        siteId: target.siteId,
+        provider: target.provider,
+        observation,
+        payloadHash,
+        now,
+      })
+      if (decided.decision.action === 'refetch_from_provider') {
+        // The listed row IS the provider's current answer, fetched moments ago
+        // — the same in-place resolution the money walk uses.
+        counts.tiesResolved += 1
+        decided = await applyRevenueSubscriptionObservation(deps.db, {
+          siteId: target.siteId,
+          provider: target.provider,
+          observation,
+          payloadHash,
+          force: true,
+          now,
+        })
+      }
+      const applied = decided.decision.action === 'apply'
+      if (applied) counts.applied += 1
+      else counts.skipped += 1
+      if (applied || recorded.firstSeen) {
+        await markRevenueProviderEvent(deps.db, {
+          id: recorded.id,
+          status: applied ? 'processed' : 'ignored',
+          result: { resource, mode: input.mode, decision: decided.decision.action },
+          now,
+        })
+      }
+    }
+
+    cursor = listed.page.nextCursor
+    const completed = !listed.page.hasMore
+    await save(completed ? clock() : null)
+    if (completed) return { ok: true, counts, completed: true }
+
+    if (input.heartbeat) {
+      const held = await input.heartbeat()
+      if (!held) {
+        return { ok: false, reason: 'lease_lost', detail: 'revenue sync lease lost', counts }
+      }
+    }
+  }
+  return { ok: true, counts, completed: false }
 }
 
 function add(into: RevenueSyncCounts, from: RevenueSyncCounts): void {
@@ -447,6 +651,8 @@ function add(into: RevenueSyncCounts, from: RevenueSyncCounts): void {
   into.skipped += from.skipped
   into.tiesResolved += from.tiesResolved
   into.cursorsReset += from.cursorsReset
+  into.subscriptions += from.subscriptions
+  into.invoiceHints += from.invoiceHints
 }
 
 /**

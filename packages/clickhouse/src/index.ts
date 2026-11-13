@@ -150,6 +150,17 @@ export {
 } from './revenue-events.ts'
 
 export {
+  SUBSCRIPTION_INVOICES_TABLE,
+  SUBSCRIPTION_LIFECYCLE_TABLE,
+  createSubscriptionLifecycleStore,
+  subscriptionLifecycleToken,
+  type SubscriptionInvoiceRow,
+  type SubscriptionLifecycleRow,
+  type SubscriptionLifecycleStore,
+  type SubscriptionLifecycleStoreOptions,
+} from './subscription-lifecycle.ts'
+
+export {
   DEFAULT_REVENUE_ATTRIBUTIONS_TIMEOUT_MS,
   REVENUE_ATTRIBUTIONS_TABLE,
   createRevenueAttributionsStore,

@@ -36,6 +36,9 @@ import {
   revenueAttributionState,
   revenueCredentials,
   revenueMatchHints,
+  revenueInvoices,
+  revenueSubscriptionChanges,
+  revenueSubscriptions,
   revenueObjects,
   revenueProviderEvents,
   revenueSyncState,
@@ -791,6 +794,26 @@ export async function purgeSitePostgres(
         .delete(revenueMatchHints)
         .where(eq(revenueMatchHints.siteId, input.siteId))
         .returning({ id: revenueMatchHints.id }),
+    )
+    // The subscription lifecycle (Perier gap 7; migration 0047). Each table
+    // references only `sites`, so the order among the three is free.
+    await removeFrom('revenue_subscription_changes', () =>
+      tx
+        .delete(revenueSubscriptionChanges)
+        .where(eq(revenueSubscriptionChanges.siteId, input.siteId))
+        .returning({ id: revenueSubscriptionChanges.id }),
+    )
+    await removeFrom('revenue_subscriptions', () =>
+      tx
+        .delete(revenueSubscriptions)
+        .where(eq(revenueSubscriptions.siteId, input.siteId))
+        .returning({ id: revenueSubscriptions.id }),
+    )
+    await removeFrom('revenue_invoices', () =>
+      tx
+        .delete(revenueInvoices)
+        .where(eq(revenueInvoices.siteId, input.siteId))
+        .returning({ id: revenueInvoices.id }),
     )
     // The attribution job's control row (ADR-0033, D6/D8; migration 0036).
     //

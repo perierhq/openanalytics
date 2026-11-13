@@ -145,6 +145,8 @@ const EXPECTED_READ_TOOLS = [
   'revenue_timeseries',
   'revenue_by_source',
   'events_before_purchase',
+  'subscription_summary',
+  'subscription_timeseries',
   'site_install',
   'team_members',
   // `billing_usage` was here until the open-core split. It is registered by the
@@ -187,10 +189,12 @@ describe('the tool roster is pinned by name, not derived', () => {
     // `billing_usage` out to the surface that serves it, so a build with no such
     // surface advertised 28. The person-only analytics reads (`custom_events`,
     // `performance`, `funnel_results`, `recent_visitors`, `visitor`) make it 33,
-    // and the Perier fork's revenue aggregates (`revenue_by_source`,
-    // `events_before_purchase`) and `custom_event_properties` (DataFast gap 6) 36.
-    expect(MCP_TOOLS).toHaveLength(36)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(36)
+    // the Perier fork's revenue aggregates (`revenue_by_source`,
+    // `events_before_purchase`) and `custom_event_properties` (DataFast gap 6)
+    // 36, and its subscription reads (`subscription_summary`,
+    // `subscription_timeseries`, gap 7) 38.
+    expect(MCP_TOOLS).toHaveLength(38)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(38)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -288,6 +292,9 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
         'funnel_results',
         'revenue_by_source',
         'events_before_purchase',
+        // Perier gap 7: Kacper's decision, the assistant gets the subscription reads.
+        'subscription_summary',
+        'subscription_timeseries',
       ].sort(),
     )
   })

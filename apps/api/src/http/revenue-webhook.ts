@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import {
+  hasLifecycleSupport,
   revenueCredentialAad,
   revenueObservationHash,
+  revenueSubscriptionHash,
   type RevenueAdapter,
   type RevenueAdapterRegistry,
   type RevenueEventNormalization,
@@ -10,11 +12,14 @@ import {
 import type { CredentialVault } from '@openanalytics/integrations'
 import {
   applyRevenueObservation,
+  applyRevenueSubscriptionObservation,
   markRevenueProviderEvent,
   noteDisabledRevenueDelivery,
   readRevenueCredentialByWebhookToken,
+  recordRevenueInvoiceHints,
   recordRevenueMatchHints,
   recordRevenueProviderEvent,
+  recordRevenueSubscriptionChanges,
   updateRevenueCredentialState,
   type Database,
   type RevenueCredentialRow,
@@ -310,18 +315,40 @@ export async function processRevenueWebhook(
     })
   }
 
+  // The subscription lifecycle (Perier gap 7): invoice hints, subscription
+  // changes and subscription heads. Beside money, like the checkout hint above —
+  // none of these can change an amount. A head tie that cannot be re-fetched
+  // leaves the ledger row `received` for a redelivery, exactly as a money tie.
+  const lifecycle = await applyLifecycle(deps, { credential, adapter, event, now })
+  if (!lifecycle.ok) {
+    deps.logger?.warn('revenue_webhook_refetch_failed', {
+      site_id: credential.siteId,
+      provider: credential.provider,
+      event_type: event.eventType,
+      reason: lifecycle.reason,
+      retryable: true,
+    })
+    return { status: 'error', reason: lifecycle.reason }
+  }
+
   if (event.observations.length === 0) {
     // A checkout event now *does* something, so it settles `processed` rather
     // than `ignored`: the two ledger states are read by an operator asking "why
     // is this site's revenue thin", and calling a stored matching signal
     // "ignored" would answer that question wrongly. An event that carried
-    // neither observations nor hints is still `ignored`, with its own reason.
-    const didSomething = hints.length > 0
+    // neither observations, hints nor lifecycle rows is still `ignored`, with
+    // its own reason.
+    const didSomething = hints.length > 0 || lifecycle.counts.rows > 0
     await markRevenueProviderEvent(deps.db, {
       id: recorded.id,
       status: didSomething ? 'processed' : 'ignored',
       result: didSomething
-        ? { event_type: event.eventType, observations: 0, hints: hints.length }
+        ? {
+            event_type: event.eventType,
+            observations: 0,
+            hints: hints.length,
+            ...lifecycleResult(lifecycle.counts),
+          }
         : { reason: event.ignored ?? 'no_observations', event_type: event.eventType },
       now,
     })
@@ -352,6 +379,7 @@ export async function processRevenueWebhook(
       event_type: event.eventType,
       observations: event.observations.length,
       hints: hints.length,
+      ...lifecycleResult(lifecycle.counts),
       applied: applied.counts.applied,
       skipped: applied.counts.skipped,
       refetched: applied.counts.refetched,
@@ -369,6 +397,115 @@ export async function processRevenueWebhook(
     refetched: applied.counts.refetched,
   })
   return { status: 'ok', ledger: 'processed' }
+}
+
+interface LifecycleCounts {
+  /** Lifecycle inputs the event carried: heads + changes + invoice hints. */
+  rows: number
+  subscriptionsApplied: number
+  subscriptionsSkipped: number
+  subscriptionsRefetched: number
+  changesInserted: number
+  invoiceHints: number
+}
+
+type LifecycleResult =
+  | { readonly ok: true; readonly counts: LifecycleCounts }
+  | { readonly ok: false; readonly reason: string }
+
+function lifecycleResult(counts: LifecycleCounts): Record<string, number> {
+  if (counts.rows === 0) return {}
+  return {
+    subscriptions_applied: counts.subscriptionsApplied,
+    subscriptions_skipped: counts.subscriptionsSkipped,
+    subscriptions_refetched: counts.subscriptionsRefetched,
+    subscription_changes: counts.changesInserted,
+    invoice_hints: counts.invoiceHints,
+  }
+}
+
+/**
+ * Write an event's lifecycle outputs (Perier gap 7).
+ *
+ * Changes before heads: a change for a head that already exists re-queues it,
+ * and one for a head this same event is about to create needs nothing, because
+ * the head's first version is projected with every change already stored.
+ *
+ * A head tie is re-fetched through the adapter's lifecycle half; an adapter
+ * without one cannot produce subscription snapshots in the first place, so the
+ * tie is only counted as skipped.
+ */
+async function applyLifecycle(
+  deps: RevenueWebhookDeps,
+  input: {
+    credential: RevenueCredentialRow
+    adapter: RevenueAdapter
+    event: RevenueEventNormalization
+    now: Date
+  },
+): Promise<LifecycleResult> {
+  const { credential, adapter, event, now } = input
+  const subscriptions = event.subscriptions ?? []
+  const changes = event.subscriptionChanges ?? []
+  const invoiceHints = event.invoiceHints ?? []
+  const counts: LifecycleCounts = {
+    rows: subscriptions.length + changes.length + invoiceHints.length,
+    subscriptionsApplied: 0,
+    subscriptionsSkipped: 0,
+    subscriptionsRefetched: 0,
+    changesInserted: 0,
+    invoiceHints: invoiceHints.length,
+  }
+  if (counts.rows === 0) return { ok: true, counts }
+  const scope = { siteId: credential.siteId, provider: credential.provider, now }
+
+  if (invoiceHints.length > 0) {
+    await recordRevenueInvoiceHints(deps.db, { ...scope, hints: invoiceHints })
+  }
+  if (changes.length > 0) {
+    counts.changesInserted = (
+      await recordRevenueSubscriptionChanges(deps.db, { ...scope, changes })
+    ).inserted
+  }
+
+  let apiKey: string | null | undefined
+  for (const observation of subscriptions) {
+    const decided = await applyRevenueSubscriptionObservation(deps.db, {
+      ...scope,
+      observation,
+      payloadHash: revenueSubscriptionHash(observation.normalized),
+    })
+    if (decided.decision.action === 'apply') {
+      counts.subscriptionsApplied += 1
+      continue
+    }
+    if (decided.decision.action === 'skip' || !hasLifecycleSupport(adapter)) {
+      counts.subscriptionsSkipped += 1
+      continue
+    }
+
+    if (apiKey === undefined) apiKey = decryptSecret(deps, credential, credential.encryptedApiKey)
+    if (apiKey === null) return { ok: false, reason: 'credential_undecryptable' }
+    const fetched = await adapter.fetchSubscription(apiKey, observation.subscriptionId)
+    if (!fetched.ok) return { ok: false, reason: `provider_${fetched.reason}` }
+    counts.subscriptionsRefetched += 1
+    if (fetched.observation === null) {
+      counts.subscriptionsSkipped += 1
+      continue
+    }
+    // The fetched state is authoritative NOW, so it is applied at the event's
+    // instant: a listed row's own `created` would lose to the stored head.
+    const current = { ...fetched.observation, snapshotAt: observation.snapshotAt }
+    const forced = await applyRevenueSubscriptionObservation(deps.db, {
+      ...scope,
+      observation: current,
+      payloadHash: revenueSubscriptionHash(current.normalized),
+      force: true,
+    })
+    if (forced.decision.action === 'apply') counts.subscriptionsApplied += 1
+    else counts.subscriptionsSkipped += 1
+  }
+  return { ok: true, counts }
 }
 
 interface ApplyCounts {

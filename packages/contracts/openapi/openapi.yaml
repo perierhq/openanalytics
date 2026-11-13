@@ -117,7 +117,8 @@ tags:
       table, filtered to the analytics and revenue reads: `list_sites`, the seven
       aggregate analytics reads, and — since ADR-0049 D3 — `revenue_summary` and
       `revenue_timeseries`, which are owner-only and carry no per-customer
-      dimension. **Realtime is still deliberately absent** (ADR-0046 D3), and so
+      dimension, joined by the subscription aggregates `subscription_summary`
+      and `subscription_timeseries` (Perier fork, gap 7) on the same terms. **Realtime is still deliberately absent** (ADR-0046 D3), and so
       is every management read and every write on that table: a session carries
       `site:read`, `analytics:read` and `revenue:read` and nothing else, so
       `team_members`, `billing_usage` and the event-definition tools are not
@@ -1460,6 +1461,88 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RevenueEventsBeforePurchaseResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+          # RANGE_TOO_LARGE shares this status; see ADR-0043 D7.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/read/revenue/subscriptions/summary:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: readSubscriptionSummary
+      tags: [read-key]
+      summary: Subscription MRR, churn and purchase kinds for the selected site. Session or OAuth, and owner-only.
+      description: |
+        The same numbers, in the same shape, as
+        `GET /v1/sites/{site_id}/revenue/subscriptions/summary`, behind the same
+        two checks as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+        owner-only `revenue:read` capability. Aggregates only; no subscription,
+        customer or invoice id is returned.
+      # The same credentials as `/v1/read/revenue/summary`, for the same reason:
+      # MRR is money, owner-only, and a private read key has no role to check.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['revenue:read']
+      responses:
+        '200':
+          description: Subscription totals at both ends of the range and the purchase-kind split.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionSummaryResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+          # RANGE_TOO_LARGE shares this status; see ADR-0043 D7.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/read/revenue/subscriptions/timeseries:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: readSubscriptionTimeseries
+      tags: [read-key]
+      summary: Subscription MRR per local day for the selected site. Session or OAuth, and owner-only.
+      description: |
+        The same shape as
+        `GET /v1/sites/{site_id}/revenue/subscriptions/timeseries`, behind the
+        same two checks as `/v1/read/revenue/summary`.
+      # The same credentials as `/v1/read/revenue/summary`, for the same reason:
+      # MRR is money, owner-only, and a private read key has no role to check.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['revenue:read']
+      responses:
+        '200':
+          description: MRR, active and trialing subscriptions per site-local day.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionTimeseriesResponse'
         '400':
           $ref: '#/components/responses/AnalyticsBadRange'
           # RANGE_TOO_LARGE shares this status; see ADR-0043 D7.
@@ -5529,6 +5612,97 @@ paths:
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
+  /v1/sites/{site_id}/revenue/subscriptions/summary:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: getSubscriptionSummary
+      tags: [revenue]
+      summary: Subscription MRR, churn and new vs renewal charges. Requires `revenue:read` (owner-only).
+      description: |
+        Monthly recurring revenue, active and trialing subscriptions at the start
+        and the end of the range, and what moved in between: new, expansion,
+        contraction and churned MRR, started and ended subscriptions, trials and
+        scheduled cancellations. Plus the range's charges split by **purchase
+        kind** (`new`, `renewal`, `plan_change`, `one_off`), read from the
+        provider's invoice billing reason.
+
+        **MRR is list price, normalized to a month.** A yearly price is divided
+        by twelve, once per subscription, rounded half-up to the minor unit.
+        Discounts and metered items are not in it. It is in the site's
+        `reporting_currency`, converted at each lifecycle fact's own date; a
+        subscription whose currency had no usable rate is counted in
+        `totals.unconverted_subscriptions` and contributes zero MRR.
+
+        **Nothing is pre-divided.** A churn rate is
+        `churned_subscriptions / active_start` at read time.
+
+        **A purchase kind is a label, never an amount.** Renewals are still
+        charges and still count in every revenue total; the split only says which
+        charges were renewals. A charge whose invoice has not arrived yet reads as
+        `one_off` until it does.
+
+        The range is capped like the revenue summary. `purchase_kinds` reads
+        transaction facts, so past 400 days it is empty and `meta.partial` is true.
+      responses:
+        '200':
+          description: Subscription totals at both ends of the range and the purchase-kind split.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionSummaryResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/sites/{site_id}/revenue/subscriptions/timeseries:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: getSubscriptionTimeseries
+      tags: [revenue]
+      summary: Subscription MRR per site-local day. Requires `revenue:read` (owner-only).
+      description: |
+        One point per local day of the range in `timezone`, every day present,
+        days without a movement included. `mrr_minor`, `active` and `trialing`
+        are the levels at the **end** of the day; the movement fields are what
+        happened during it. The first day's level is the summary's
+        `mrr_start_minor` plus that day's movements, so the last point's
+        `mrr_minor` equals the summary's `mrr_end_minor` for the same range.
+
+        Day grain only: MRR moves a few times a day at most, and an hourly line
+        would be a staircase of the same numbers.
+      responses:
+        '200':
+          description: MRR, active and trialing subscriptions per site-local day.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionTimeseriesResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/sites/{site_id}/revenue/transactions:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -5867,7 +6041,9 @@ paths:
         (ADR-0046, D3): `list_sites`, `site_overview`, `site_timeseries`,
         `top_pages`, `top_sources`, `geography`, `devices`, `sessions`, and —
         since ADR-0049 — the two owner-only revenue aggregates,
-        `revenue_summary` and `revenue_timeseries`. Each tool call is dispatched
+        `revenue_summary` and `revenue_timeseries`, plus the owner-only
+        subscription aggregates `subscription_summary` and
+        `subscription_timeseries` (Perier fork, gap 7). Each tool call is dispatched
         as a real request against this API's own `/v1/read/*` route carrying the
         caller's session, so it re-runs the live-membership check, the scope
         ceiling (`site:read` + `analytics:read` + `revenue:read` and nothing
@@ -11157,6 +11333,254 @@ components:
           items:
             $ref: '#/components/schemas/RevenueTimeseriesPoint'
 
+    SubscriptionTotals:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          currency,
+          mrr_start_minor,
+          mrr_end_minor,
+          active_start,
+          active_end,
+          trialing_start,
+          trialing_end,
+          new_mrr_minor,
+          expansion_mrr_minor,
+          contraction_mrr_minor,
+          churned_mrr_minor,
+          new_subscriptions,
+          churned_subscriptions,
+          trials_started,
+          trials_converted,
+          trials_expired,
+          cancels_scheduled,
+          cancels_undone,
+          unconverted_subscriptions,
+        ]
+      description: |
+        Subscription levels at both ends of a range and the movements inside
+        it (Perier fork, gap 7). Money is MRR in the site's `reporting_currency`
+        as integer minor units, list price normalized to a month. Movements are
+        additive, so `mrr_end = mrr_start + new + expansion - contraction - churned`
+        holds whenever no subscription's currency was unconverted.
+      properties:
+        currency:
+          $ref: '#/components/schemas/ReportingCurrency'
+        mrr_start_minor:
+          type: integer
+          format: int64
+          description: MRR at the start of the range.
+        mrr_end_minor:
+          type: integer
+          format: int64
+          description: MRR at the end of the range.
+        active_start:
+          type: integer
+          format: int64
+          description: Paying subscriptions at the start of the range (trials excluded).
+        active_end:
+          type: integer
+          format: int64
+          description: Paying subscriptions at the end of the range (trials excluded).
+        trialing_start:
+          type: integer
+          format: int64
+        trialing_end:
+          type: integer
+          format: int64
+        new_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR added by subscriptions that started.
+        expansion_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR added by plan changes, as a positive amount.
+        contraction_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR removed by plan changes, as a positive amount.
+        churned_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR removed by subscriptions that ended, as a positive amount.
+        new_subscriptions:
+          type: integer
+          format: int64
+          description: Subscriptions that started (a trial counts when it converts, not when it starts).
+        churned_subscriptions:
+          type: integer
+          format: int64
+          description: Subscriptions that ended.
+        trials_started:
+          type: integer
+          format: int64
+        trials_converted:
+          type: integer
+          format: int64
+        trials_expired:
+          type: integer
+          format: int64
+          description: Trials that ended without converting.
+        cancels_scheduled:
+          type: integer
+          format: int64
+          description: Cancellations set to take effect at the period end.
+        cancels_undone:
+          type: integer
+          format: int64
+          description: Scheduled cancellations that were withdrawn.
+        unconverted_subscriptions:
+          type: integer
+          format: int64
+          description: Subscriptions with a lifecycle fact whose currency had no usable rate. Their MRR is not in the totals.
+
+    SubscriptionPurchaseKind:
+      type: string
+      enum: [new, renewal, plan_change, one_off]
+      description: |
+        What a charge paid for, from the invoice's billing reason. `new` is a
+        subscription's first invoice, `renewal` a later cycle, `plan_change` a
+        proration or update invoice, and `one_off` a charge with no subscription
+        invoice (a one-time purchase, or a charge whose invoice has not arrived).
+
+    SubscriptionPurchaseKindRow:
+      type: object
+      additionalProperties: false
+      required: [purchase_kind, charges, charge_gross_minor, unconverted_count]
+      properties:
+        purchase_kind:
+          $ref: '#/components/schemas/SubscriptionPurchaseKind'
+        charges:
+          type: integer
+          format: int64
+        charge_gross_minor:
+          type: integer
+          format: int64
+          description: Gross of those charges in the site's `reporting_currency`. Refunds are not netted here.
+        unconverted_count:
+          type: integer
+          format: int64
+          description: Charges of this kind whose currency had no usable rate, so not in `charge_gross_minor`.
+
+    SubscriptionSummaryResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, totals, purchase_kinds]
+      properties:
+        meta:
+          $ref: '#/components/schemas/AnalyticsMeta'
+        totals:
+          $ref: '#/components/schemas/SubscriptionTotals'
+        purchase_kinds:
+          type: array
+          description: |
+            One row per purchase kind that had a charge in the range, in enum
+            order. Empty with `meta.partial` true when the split could not be read.
+          items:
+            $ref: '#/components/schemas/SubscriptionPurchaseKindRow'
+
+    SubscriptionTimeseriesPoint:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          bucket,
+          currency,
+          mrr_minor,
+          active,
+          trialing,
+          net_mrr_minor,
+          new_mrr_minor,
+          expansion_mrr_minor,
+          contraction_mrr_minor,
+          churned_mrr_minor,
+          new_subscriptions,
+          churned_subscriptions,
+          trials_started,
+          trials_converted,
+          trials_expired,
+          cancels_scheduled,
+          cancels_undone,
+        ]
+      description: One site-local day. Levels are end-of-day; movements are the day's.
+      properties:
+        bucket:
+          $ref: '#/components/schemas/UtcInstant'
+        currency:
+          $ref: '#/components/schemas/ReportingCurrency'
+        mrr_minor:
+          type: integer
+          format: int64
+          description: MRR at the end of the day.
+        active:
+          type: integer
+          format: int64
+          description: Paying subscriptions at the end of the day.
+        trialing:
+          type: integer
+          format: int64
+          description: Trialing subscriptions at the end of the day.
+        net_mrr_minor:
+          type: integer
+          format: int64
+          description: The day's net MRR movement.
+        new_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR added by subscriptions that started.
+        expansion_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR added by plan changes, as a positive amount.
+        contraction_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR removed by plan changes, as a positive amount.
+        churned_mrr_minor:
+          type: integer
+          format: int64
+          description: MRR removed by subscriptions that ended, as a positive amount.
+        new_subscriptions:
+          type: integer
+          format: int64
+          description: Subscriptions that started (a trial counts when it converts, not when it starts).
+        churned_subscriptions:
+          type: integer
+          format: int64
+          description: Subscriptions that ended.
+        trials_started:
+          type: integer
+          format: int64
+        trials_converted:
+          type: integer
+          format: int64
+        trials_expired:
+          type: integer
+          format: int64
+          description: Trials that ended without converting.
+        cancels_scheduled:
+          type: integer
+          format: int64
+          description: Cancellations set to take effect at the period end.
+        cancels_undone:
+          type: integer
+          format: int64
+          description: Scheduled cancellations that were withdrawn.
+
+    SubscriptionTimeseriesResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, series]
+      properties:
+        meta:
+          $ref: '#/components/schemas/AnalyticsMeta'
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubscriptionTimeseriesPoint'
+
     RevenueTransaction:
       type: object
       additionalProperties: false
@@ -11179,6 +11603,7 @@ components:
           product_name,
           matched_via,
           confidence,
+          purchase_kind,
         ]
       properties:
         object_id:
@@ -11267,6 +11692,14 @@ components:
           $ref: '#/components/schemas/RevenueMatchedVia'
         confidence:
           $ref: '#/components/schemas/RevenueMatchConfidence'
+        purchase_kind:
+          description: |
+            For a charge, what it paid for (Perier fork, gap 7): `new`,
+            `renewal`, `plan_change` or `one_off`, from the provider's invoice.
+            Null on a refund or a dispute, which have no purchase of their own.
+          oneOf:
+            - $ref: '#/components/schemas/SubscriptionPurchaseKind'
+            - type: 'null'
 
     RevenueMatchedVia:
       type: string

@@ -19,7 +19,10 @@ import type {
   RevenueLedgerStatus,
   RevenueNormalizedObject,
   RevenueObjectKind,
+  RevenueLifecycleSyncResource,
+  RevenueSubscriptionSnapshot,
   RevenueSyncResource,
+  SubscriptionChangeKind,
 } from '@openanalytics/domain'
 import { createdAt, idColumn, instant, primaryId, updatedAt } from './_shared.ts'
 import { sites } from './sites.ts'
@@ -324,7 +327,9 @@ export const revenueSyncState = pgTable(
     siteId: idColumn('site_id')
       .notNull()
       .references(() => sites.id, { onDelete: 'cascade' }),
-    resource: text('resource').$type<RevenueSyncResource>().notNull(),
+    resource: text('resource')
+      .$type<RevenueSyncResource | RevenueLifecycleSyncResource>()
+      .notNull(),
     /** The provider's own opaque cursor, stored verbatim and never parsed. */
     cursor: text('cursor'),
     windowStart: instant('window_start'),
@@ -337,7 +342,7 @@ export const revenueSyncState = pgTable(
     index('revenue_sync_state_site_idx').on(t.siteId),
     check(
       'revenue_sync_state_resource_check',
-      sql`${t.resource} IN ('charges', 'refunds', 'disputes')`,
+      sql`${t.resource} IN ('charges', 'refunds', 'disputes', 'subscriptions', 'invoices')`,
     ),
   ],
 )
@@ -439,5 +444,112 @@ export const revenueAttributionState = pgTable(
     check('revenue_attribution_state_rollup_generation_check', sql`${t.rollupGenerationSeq} >= 0`),
     index('revenue_attribution_state_lease_idx').on(t.leaseExpiresAt),
     index('revenue_attribution_state_computed_idx').on(t.computedThrough),
+  ],
+)
+
+/**
+ * Subscription heads, their event-only changes and invoice hints (mirror of
+ * migration 0047; Perier gap 7). The SQL file carries the reasoning.
+ */
+export const revenueSubscriptions = pgTable(
+  'revenue_subscriptions',
+  {
+    id: primaryId(),
+    siteId: idColumn('site_id')
+      .notNull()
+      .references(() => sites.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    subscriptionId: text('subscription_id').notNull(),
+    snapshotAt: instant('snapshot_at').notNull(),
+    payloadHash: text('payload_hash').notNull(),
+    version: bigint('version', { mode: 'number' }).notNull().default(1),
+    normalized: jsonb('normalized').$type<RevenueSubscriptionSnapshot>().notNull(),
+    firstSeenAt: instant('first_seen_at').notNull().defaultNow(),
+    updatedAt: updatedAt(),
+    projectedVersion: bigint('projected_version', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [
+    unique('revenue_subscriptions_site_subscription_key').on(
+      t.siteId,
+      t.provider,
+      t.subscriptionId,
+    ),
+    index('revenue_subscriptions_unprojected_idx')
+      .on(t.siteId, t.updatedAt)
+      .where(sql`projected_version < version`),
+    check('revenue_subscriptions_version_check', sql`${t.version} >= 1`),
+    check(
+      'revenue_subscriptions_projected_version_check',
+      sql`${t.projectedVersion} >= 0 AND ${t.projectedVersion} <= ${t.version}`,
+    ),
+  ],
+)
+
+export const revenueSubscriptionChanges = pgTable(
+  'revenue_subscription_changes',
+  {
+    id: primaryId(),
+    siteId: idColumn('site_id')
+      .notNull()
+      .references(() => sites.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    subscriptionId: text('subscription_id').notNull(),
+    providerEventId: text('provider_event_id').notNull(),
+    kind: text('kind').$type<SubscriptionChangeKind>().notNull(),
+    occurredAt: instant('occurred_at').notNull(),
+    fromMrrMinor: bigint('from_mrr_minor', { mode: 'number' }).notNull().default(0),
+    toMrrMinor: bigint('to_mrr_minor', { mode: 'number' }).notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique('revenue_subscription_changes_event_key').on(
+      t.siteId,
+      t.provider,
+      t.providerEventId,
+      t.kind,
+    ),
+    index('revenue_subscription_changes_subscription_idx').on(
+      t.siteId,
+      t.provider,
+      t.subscriptionId,
+      t.occurredAt,
+    ),
+    check(
+      'revenue_subscription_changes_kind_check',
+      sql`${t.kind} IN ('plan_changed', 'cancel_scheduled', 'cancel_undone')`,
+    ),
+  ],
+)
+
+export const revenueInvoices = pgTable(
+  'revenue_invoices',
+  {
+    id: primaryId(),
+    siteId: idColumn('site_id')
+      .notNull()
+      .references(() => sites.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    invoiceId: text('invoice_id').notNull(),
+    subscriptionId: text('subscription_id').notNull().default(''),
+    billingReason: text('billing_reason').notNull().default(''),
+    orderId: text('order_id').notNull().default(''),
+    chargeId: text('charge_id').notNull().default(''),
+    customerId: text('customer_id').notNull().default(''),
+    occurredAt: instant('occurred_at').notNull(),
+    version: bigint('version', { mode: 'number' }).notNull().default(1),
+    projectedVersion: bigint('projected_version', { mode: 'number' }).notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('revenue_invoices_site_invoice_key').on(t.siteId, t.provider, t.invoiceId),
+    index('revenue_invoices_unprojected_idx')
+      .on(t.siteId, t.updatedAt)
+      .where(sql`projected_version < version`),
+    check('revenue_invoices_version_check', sql`${t.version} >= 1`),
+    check(
+      'revenue_invoices_projected_version_check',
+      sql`${t.projectedVersion} >= 0 AND ${t.projectedVersion} <= ${t.version}`,
+    ),
   ],
 )

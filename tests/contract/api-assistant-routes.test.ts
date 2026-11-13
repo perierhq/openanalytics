@@ -602,6 +602,8 @@ describe('the tool loop is the read route (D3, D4, D9, D10)', () => {
       'sessions',
       'site_overview',
       'site_timeseries',
+      'subscription_summary',
+      'subscription_timeseries',
       'top_pages',
       'top_sources',
     ])

@@ -50,6 +50,10 @@ const world = {
   summaryRow: null as Record<string, unknown> | null,
   attributionRows: [] as Record<string, unknown>[],
   orderObjectRows: [] as Record<string, unknown>[],
+  subscriptionTotalsRow: null as Record<string, unknown> | null,
+  subscriptionDayRows: [] as Record<string, unknown>[],
+  purchaseKindRows: [] as Record<string, unknown>[],
+  purchaseKindsFail: false,
 }
 
 vi.mock('@openanalytics/postgres', async (importOriginal) => {
@@ -151,6 +155,13 @@ function buildApp(userId: string | null) {
         rows = world.attributionRows
       } else if (operation === 'analytics.revenue_order_objects') {
         rows = world.orderObjectRows
+      } else if (operation === 'analytics.subscription_lifecycle_totals') {
+        rows = world.subscriptionTotalsRow === null ? [] : [world.subscriptionTotalsRow]
+      } else if (operation === 'analytics.subscription_timeseries_day') {
+        rows = world.subscriptionDayRows
+      } else if (operation === 'analytics.revenue_purchase_kinds') {
+        if (world.purchaseKindsFail) return Promise.reject(new Error('gateway said no'))
+        rows = world.purchaseKindRows
       } else {
         rows = []
       }
@@ -212,6 +223,7 @@ function transactionRow(objectId: string, occurredAt: string): Record<string, un
     matched_via: 'conversion_event',
     confidence: 'exact',
     identity_scope: 'identified',
+    purchase_kind: 'renewal',
   }
 }
 
@@ -225,6 +237,10 @@ beforeEach(() => {
   world.attributionRows = []
   world.orderObjectRows = []
   world.unconvertedFails = false
+  world.subscriptionTotalsRow = null
+  world.subscriptionDayRows = []
+  world.purchaseKindRows = []
+  world.purchaseKindsFail = false
   freshnessRows.value = [{ watermark: '2026-07-20 09:00:00.000', buckets: '5' }]
   world.attributionState = {
     siteId: SITE,
@@ -247,6 +263,8 @@ describe('authorization (revenue:read is owner-only)', () => {
     `/v1/sites/${SITE}/revenue/timeseries?${RANGE}`,
     `/v1/sites/${SITE}/revenue/transactions?${RANGE}`,
     `/v1/sites/${SITE}/revenue/transactions/ch_1/journey?${RANGE}`,
+    `/v1/sites/${SITE}/revenue/subscriptions/summary?${RANGE}`,
+    `/v1/sites/${SITE}/revenue/subscriptions/timeseries?${RANGE}`,
   ]
 
   it('lets an owner through', async () => {
@@ -891,5 +909,105 @@ describe('timeseries', () => {
     expect(response.status).toBe(400)
     const body = (await response.json()) as { error: { code: string } }
     expect(body.error.code).toBe('VALIDATION_FAILED')
+  })
+})
+
+describe('subscriptions (Perier gap 7)', () => {
+  const WEEK = 'from=2026-07-13T00:00:00.000Z&to=2026-07-20T00:00:00.000Z&timezone=UTC'
+
+  it('answers the totals and the purchase-kind split in the reporting currency', async () => {
+    world.subscriptionTotalsRow = {
+      mrr_start_minor: '1000',
+      mrr_end_minor: '1366',
+      active_start: '2',
+      active_end: '2',
+      new_mrr_minor: '699',
+      churned_mrr_minor: '333',
+      new_subscriptions: '1',
+      churned_subscriptions: '1',
+    }
+    world.purchaseKindRows = [
+      {
+        purchase_kind: 'renewal',
+        charges: '3',
+        reporting_gross_minor: '2097',
+        unconverted_count: '0',
+      },
+      { purchase_kind: 'new', charges: '1', reporting_gross_minor: '699', unconverted_count: '0' },
+    ]
+    const response = await get(`/v1/sites/${SITE}/revenue/subscriptions/summary?${WEEK}`)
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      meta: { partial: boolean; revenue: { connection_status: string } }
+      totals: Record<string, unknown>
+      purchase_kinds: { purchase_kind: string; charge_gross_minor: number }[]
+    }
+    expect(body.totals).toMatchObject({
+      currency: 'USD',
+      mrr_start_minor: 1000,
+      mrr_end_minor: 1366,
+      churned_subscriptions: 1,
+    })
+    expect(body.purchase_kinds.map((row) => row.purchase_kind)).toEqual(['new', 'renewal'])
+    expect(body.meta.partial).toBe(false)
+    expect(body.meta.revenue.connection_status).toBe('connected')
+    // Both reads get the summary's own range, not a wider one.
+    expect(gatewayParams['analytics.subscription_lifecycle_totals']).toMatchObject({
+      from: '2026-07-13T00:00:00.000Z',
+      to: '2026-07-20T00:00:00.000Z',
+    })
+  })
+
+  it('marks the summary partial, not empty, when the purchase-kind read fails', async () => {
+    world.purchaseKindsFail = true
+    const response = await get(`/v1/sites/${SITE}/revenue/subscriptions/summary?${WEEK}`)
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { meta: { partial: boolean }; purchase_kinds: [] }
+    expect(body.meta.partial).toBe(true)
+    expect(body.purchase_kinds).toEqual([])
+  })
+
+  it('runs MRR forward per local day from the start level and fills every day', async () => {
+    world.subscriptionTotalsRow = {
+      mrr_start_minor: '1000',
+      active_start: '2',
+      trialing_start: '1',
+    }
+    world.subscriptionDayRows = [
+      {
+        bucket: '2026-07-15 00:00:00.000',
+        net_mrr_minor: '699',
+        active_delta: '1',
+        trial_delta: '-1',
+      },
+    ]
+    const response = await get(`/v1/sites/${SITE}/revenue/subscriptions/timeseries?${WEEK}`)
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      meta: { resolution: string }
+      series: { bucket: string; mrr_minor: number; active: number; trialing: number }[]
+    }
+    expect(body.meta.resolution).toBe('day')
+    expect(body.series).toHaveLength(7)
+    expect(body.series[0]).toMatchObject({ bucket: '2026-07-13T00:00:00.000Z', mrr_minor: 1000 })
+    expect(body.series.map((p) => p.mrr_minor)).toEqual([1000, 1000, 1699, 1699, 1699, 1699, 1699])
+    expect(body.series[6]).toMatchObject({ active: 3, trialing: 0 })
+    expect(gatewayParams['analytics.subscription_timeseries_day']).toMatchObject({
+      timezone: 'UTC',
+    })
+  })
+
+  it('labels a transaction with its purchase kind, and a refund with null', async () => {
+    world.transactionRows = [
+      transactionRow('ch_2', '2026-07-20 10:00:00.000'),
+      {
+        ...transactionRow('re_1', '2026-07-20 09:00:00.000'),
+        object_kind: 'refund',
+        purchase_kind: '',
+      },
+    ]
+    const response = await get(`/v1/sites/${SITE}/revenue/transactions?${RANGE}`)
+    const body = (await response.json()) as { items: { purchase_kind: string | null }[] }
+    expect(body.items.map((item) => item.purchase_kind)).toEqual(['renewal', null])
   })
 })

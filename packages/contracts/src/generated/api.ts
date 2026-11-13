@@ -1104,6 +1104,120 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/revenue/subscriptions/summary": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Subscription MRR, churn and purchase kinds for the selected site. Session or OAuth, and owner-only.
+         * @description The same numbers, in the same shape, as
+         *     `GET /v1/sites/{site_id}/revenue/subscriptions/summary`, behind the same
+         *     two checks as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+         *     owner-only `revenue:read` capability. Aggregates only; no subscription,
+         *     customer or invoice id is returned.
+         */
+        get: operations["readSubscriptionSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/read/revenue/subscriptions/timeseries": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Subscription MRR per local day for the selected site. Session or OAuth, and owner-only.
+         * @description The same shape as
+         *     `GET /v1/sites/{site_id}/revenue/subscriptions/timeseries`, behind the
+         *     same two checks as `/v1/read/revenue/summary`.
+         */
+        get: operations["readSubscriptionTimeseries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/read/realtime/token": {
         parameters: {
             query?: never;
@@ -5027,6 +5141,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{site_id}/revenue/subscriptions/summary": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Subscription MRR, churn and new vs renewal charges. Requires `revenue:read` (owner-only).
+         * @description Monthly recurring revenue, active and trialing subscriptions at the start
+         *     and the end of the range, and what moved in between: new, expansion,
+         *     contraction and churned MRR, started and ended subscriptions, trials and
+         *     scheduled cancellations. Plus the range's charges split by **purchase
+         *     kind** (`new`, `renewal`, `plan_change`, `one_off`), read from the
+         *     provider's invoice billing reason.
+         *
+         *     **MRR is list price, normalized to a month.** A yearly price is divided
+         *     by twelve, once per subscription, rounded half-up to the minor unit.
+         *     Discounts and metered items are not in it. It is in the site's
+         *     `reporting_currency`, converted at each lifecycle fact's own date; a
+         *     subscription whose currency had no usable rate is counted in
+         *     `totals.unconverted_subscriptions` and contributes zero MRR.
+         *
+         *     **Nothing is pre-divided.** A churn rate is
+         *     `churned_subscriptions / active_start` at read time.
+         *
+         *     **A purchase kind is a label, never an amount.** Renewals are still
+         *     charges and still count in every revenue total; the split only says which
+         *     charges were renewals. A charge whose invoice has not arrived yet reads as
+         *     `one_off` until it does.
+         *
+         *     The range is capped like the revenue summary. `purchase_kinds` reads
+         *     transaction facts, so past 400 days it is empty and `meta.partial` is true.
+         */
+        get: operations["getSubscriptionSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/revenue/subscriptions/timeseries": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Subscription MRR per site-local day. Requires `revenue:read` (owner-only).
+         * @description One point per local day of the range in `timezone`, every day present,
+         *     days without a movement included. `mrr_minor`, `active` and `trialing`
+         *     are the levels at the **end** of the day; the movement fields are what
+         *     happened during it. The first day's level is the summary's
+         *     `mrr_start_minor` plus that day's movements, so the last point's
+         *     `mrr_minor` equals the summary's `mrr_end_minor` for the same range.
+         *
+         *     Day grain only: MRR moves a few times a day at most, and an hourly line
+         *     would be a staircase of the same numbers.
+         */
+        get: operations["getSubscriptionTimeseries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/revenue/transactions": {
         parameters: {
             query: {
@@ -5330,7 +5533,9 @@ export interface paths {
          *     (ADR-0046, D3): `list_sites`, `site_overview`, `site_timeseries`,
          *     `top_pages`, `top_sources`, `geography`, `devices`, `sessions`, and —
          *     since ADR-0049 — the two owner-only revenue aggregates,
-         *     `revenue_summary` and `revenue_timeseries`. Each tool call is dispatched
+         *     `revenue_summary` and `revenue_timeseries`, plus the owner-only
+         *     subscription aggregates `subscription_summary` and
+         *     `subscription_timeseries` (Perier fork, gap 7). Each tool call is dispatched
          *     as a real request against this API's own `/v1/read/*` route carrying the
          *     caller's session, so it re-runs the live-membership check, the scope
          *     ceiling (`site:read` + `analytics:read` + `revenue:read` and nothing
@@ -8714,6 +8919,204 @@ export interface components {
             meta: components["schemas"]["AnalyticsMeta"];
             series: components["schemas"]["RevenueTimeseriesPoint"][];
         };
+        /**
+         * @description Subscription levels at both ends of a range and the movements inside
+         *     it (Perier fork, gap 7). Money is MRR in the site's `reporting_currency`
+         *     as integer minor units, list price normalized to a month. Movements are
+         *     additive, so `mrr_end = mrr_start + new + expansion - contraction - churned`
+         *     holds whenever no subscription's currency was unconverted.
+         */
+        SubscriptionTotals: {
+            currency: components["schemas"]["ReportingCurrency"];
+            /**
+             * Format: int64
+             * @description MRR at the start of the range.
+             */
+            mrr_start_minor: number;
+            /**
+             * Format: int64
+             * @description MRR at the end of the range.
+             */
+            mrr_end_minor: number;
+            /**
+             * Format: int64
+             * @description Paying subscriptions at the start of the range (trials excluded).
+             */
+            active_start: number;
+            /**
+             * Format: int64
+             * @description Paying subscriptions at the end of the range (trials excluded).
+             */
+            active_end: number;
+            /** Format: int64 */
+            trialing_start: number;
+            /** Format: int64 */
+            trialing_end: number;
+            /**
+             * Format: int64
+             * @description MRR added by subscriptions that started.
+             */
+            new_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR added by plan changes, as a positive amount.
+             */
+            expansion_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR removed by plan changes, as a positive amount.
+             */
+            contraction_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR removed by subscriptions that ended, as a positive amount.
+             */
+            churned_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description Subscriptions that started (a trial counts when it converts, not when it starts).
+             */
+            new_subscriptions: number;
+            /**
+             * Format: int64
+             * @description Subscriptions that ended.
+             */
+            churned_subscriptions: number;
+            /** Format: int64 */
+            trials_started: number;
+            /** Format: int64 */
+            trials_converted: number;
+            /**
+             * Format: int64
+             * @description Trials that ended without converting.
+             */
+            trials_expired: number;
+            /**
+             * Format: int64
+             * @description Cancellations set to take effect at the period end.
+             */
+            cancels_scheduled: number;
+            /**
+             * Format: int64
+             * @description Scheduled cancellations that were withdrawn.
+             */
+            cancels_undone: number;
+            /**
+             * Format: int64
+             * @description Subscriptions with a lifecycle fact whose currency had no usable rate. Their MRR is not in the totals.
+             */
+            unconverted_subscriptions: number;
+        };
+        /**
+         * @description What a charge paid for, from the invoice's billing reason. `new` is a
+         *     subscription's first invoice, `renewal` a later cycle, `plan_change` a
+         *     proration or update invoice, and `one_off` a charge with no subscription
+         *     invoice (a one-time purchase, or a charge whose invoice has not arrived).
+         * @enum {string}
+         */
+        SubscriptionPurchaseKind: "new" | "renewal" | "plan_change" | "one_off";
+        SubscriptionPurchaseKindRow: {
+            purchase_kind: components["schemas"]["SubscriptionPurchaseKind"];
+            /** Format: int64 */
+            charges: number;
+            /**
+             * Format: int64
+             * @description Gross of those charges in the site's `reporting_currency`. Refunds are not netted here.
+             */
+            charge_gross_minor: number;
+            /**
+             * Format: int64
+             * @description Charges of this kind whose currency had no usable rate, so not in `charge_gross_minor`.
+             */
+            unconverted_count: number;
+        };
+        SubscriptionSummaryResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            totals: components["schemas"]["SubscriptionTotals"];
+            /**
+             * @description One row per purchase kind that had a charge in the range, in enum
+             *     order. Empty with `meta.partial` true when the split could not be read.
+             */
+            purchase_kinds: components["schemas"]["SubscriptionPurchaseKindRow"][];
+        };
+        /** @description One site-local day. Levels are end-of-day; movements are the day's. */
+        SubscriptionTimeseriesPoint: {
+            bucket: components["schemas"]["UtcInstant"];
+            currency: components["schemas"]["ReportingCurrency"];
+            /**
+             * Format: int64
+             * @description MRR at the end of the day.
+             */
+            mrr_minor: number;
+            /**
+             * Format: int64
+             * @description Paying subscriptions at the end of the day.
+             */
+            active: number;
+            /**
+             * Format: int64
+             * @description Trialing subscriptions at the end of the day.
+             */
+            trialing: number;
+            /**
+             * Format: int64
+             * @description The day's net MRR movement.
+             */
+            net_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR added by subscriptions that started.
+             */
+            new_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR added by plan changes, as a positive amount.
+             */
+            expansion_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR removed by plan changes, as a positive amount.
+             */
+            contraction_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description MRR removed by subscriptions that ended, as a positive amount.
+             */
+            churned_mrr_minor: number;
+            /**
+             * Format: int64
+             * @description Subscriptions that started (a trial counts when it converts, not when it starts).
+             */
+            new_subscriptions: number;
+            /**
+             * Format: int64
+             * @description Subscriptions that ended.
+             */
+            churned_subscriptions: number;
+            /** Format: int64 */
+            trials_started: number;
+            /** Format: int64 */
+            trials_converted: number;
+            /**
+             * Format: int64
+             * @description Trials that ended without converting.
+             */
+            trials_expired: number;
+            /**
+             * Format: int64
+             * @description Cancellations set to take effect at the period end.
+             */
+            cancels_scheduled: number;
+            /**
+             * Format: int64
+             * @description Scheduled cancellations that were withdrawn.
+             */
+            cancels_undone: number;
+        };
+        SubscriptionTimeseriesResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            series: components["schemas"]["SubscriptionTimeseriesPoint"][];
+        };
         RevenueTransaction: {
             /** @description The provider's own object id. Also the journey path segment. */
             object_id: string;
@@ -8775,6 +9178,12 @@ export interface components {
             product_name: string | null;
             matched_via: components["schemas"]["RevenueMatchedVia"];
             confidence: components["schemas"]["RevenueMatchConfidence"];
+            /**
+             * @description For a charge, what it paid for (Perier fork, gap 7): `new`,
+             *     `renewal`, `plan_change` or `one_off`, from the provider's invoice.
+             *     Null on a refund or a dispute, which have no purchase of their own.
+             */
+            purchase_kind: components["schemas"]["SubscriptionPurchaseKind"] | null;
         };
         /**
          * @description Which exact signal matched this transaction to a visitor (ADR-0033, D6),
@@ -11615,6 +12024,126 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RevenueEventsBeforePurchaseResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readSubscriptionSummary: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Subscription totals at both ends of the range and the purchase-kind split. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionSummaryResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readSubscriptionTimeseries: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MRR, active and trialing subscriptions per site-local day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionTimeseriesResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];
@@ -16161,6 +16690,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RevenueTimeseriesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getSubscriptionSummary: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Subscription totals at both ends of the range and the purchase-kind split. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionSummaryResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getSubscriptionTimeseries: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MRR, active and trialing subscriptions per site-local day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionTimeseriesResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];

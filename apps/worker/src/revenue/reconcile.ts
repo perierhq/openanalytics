@@ -341,6 +341,8 @@ async function reconcileOne(
     skipped: outcome.counts.skipped,
     ties_resolved: outcome.counts.tiesResolved,
     cursors_reset: outcome.counts.cursorsReset,
+    subscriptions: outcome.counts.subscriptions,
+    invoice_hints: outcome.counts.invoiceHints,
   }
 
   if (!outcome.ok) {

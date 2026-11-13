@@ -147,6 +147,144 @@ export function stripeEvent(
   }
 }
 
+// --- Stripe subscription lifecycle (Perier gap 7) ---------------------------
+
+/**
+ * BetterBahn's real price shapes: Pro monthly (€6.99), Pro yearly (€39.99) and
+ * the one-off Trip Pass (€3.99, Checkout in payment mode). Field names follow
+ * Stripe's Price object; `recurring` is null on a one-time price.
+ */
+export function stripePrice(
+  kind: 'monthly' | 'yearly' | 'trip_pass',
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const recurring =
+    kind === 'trip_pass'
+      ? null
+      : {
+          interval: kind === 'monthly' ? 'month' : 'year',
+          interval_count: 1,
+          usage_type: 'licensed',
+        }
+  return {
+    id: `price_${kind}`,
+    object: 'price',
+    currency: 'eur',
+    product: kind === 'trip_pass' ? 'prod_trip_pass' : 'prod_pro',
+    type: kind === 'trip_pass' ? 'one_time' : 'recurring',
+    unit_amount: kind === 'monthly' ? 699 : kind === 'yearly' ? 3999 : 399,
+    recurring,
+    ...overrides,
+  }
+}
+
+const SUB_CREATED = Math.floor(new Date('2026-03-01T09:00:00.000Z').getTime() / 1000)
+
+/** A Stripe subscription, in the shape a `customer.subscription.*` event carries. */
+export function stripeSubscription(
+  overrides: Record<string, unknown> = {},
+  price: Record<string, unknown> = stripePrice('monthly'),
+): Record<string, unknown> {
+  return {
+    id: 'sub_test_1',
+    object: 'subscription',
+    status: 'active',
+    livemode: false,
+    customer: 'cus_test_1',
+    currency: 'eur',
+    created: SUB_CREATED,
+    start_date: SUB_CREATED,
+    trial_start: null,
+    trial_end: null,
+    cancel_at_period_end: false,
+    cancel_at: null,
+    canceled_at: null,
+    ended_at: null,
+    items: {
+      object: 'list',
+      data: [{ id: 'si_test_1', object: 'subscription_item', price, quantity: 1 }],
+      has_more: false,
+    },
+    ...overrides,
+  }
+}
+
+/**
+ * A paid invoice. `shape: 'basil'` is 2025-03-31.basil and later (subscription
+ * under `parent.subscription_details`, the PaymentIntent on an expanded
+ * `payments` entry); `'legacy'` is the pre-basil shape with `subscription`,
+ * `payment_intent` and `charge` on the invoice itself.
+ */
+export function stripeInvoice(
+  overrides: Record<string, unknown> = {},
+  options: {
+    shape?: 'basil' | 'legacy'
+    subscription?: string | null
+    expandPayments?: boolean
+  } = {},
+): Record<string, unknown> {
+  const shape = options.shape ?? 'basil'
+  const subscription = options.subscription === undefined ? 'sub_test_1' : options.subscription
+  const base: Record<string, unknown> = {
+    id: 'in_test_1',
+    object: 'invoice',
+    billing_reason: 'subscription_create',
+    customer: 'cus_test_1',
+    currency: 'eur',
+    created: SUB_CREATED,
+    livemode: false,
+    status: 'paid',
+    status_transitions: { paid_at: SUB_CREATED + 5 },
+  }
+  if (shape === 'legacy') {
+    return {
+      ...base,
+      subscription,
+      payment_intent: 'pi_sub_1',
+      charge: 'ch_sub_1',
+      ...overrides,
+    }
+  }
+  return {
+    ...base,
+    parent:
+      subscription === null
+        ? null
+        : { type: 'subscription_details', subscription_details: { subscription } },
+    ...(options.expandPayments === true
+      ? {
+          payments: {
+            object: 'list',
+            data: [stripeInvoicePayment()],
+            has_more: false,
+          },
+        }
+      : {}),
+    ...overrides,
+  }
+}
+
+/** An InvoicePayment (`invoice_payment.paid`'s object), basil shape. */
+export function stripeInvoicePayment(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: 'inpay_test_1',
+    object: 'invoice_payment',
+    amount_paid: 699,
+    amount_requested: 699,
+    created: SUB_CREATED,
+    currency: 'eur',
+    invoice: 'in_test_1',
+    is_default: true,
+    livemode: false,
+    payment: { type: 'payment_intent', payment_intent: 'pi_sub_1' },
+    status: 'paid',
+    status_transitions: { canceled_at: null, paid_at: SUB_CREATED + 5 },
+    ...overrides,
+  }
+}
+
 // --- Polar -------------------------------------------------------------------
 
 /**

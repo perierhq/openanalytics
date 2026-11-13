@@ -222,6 +222,20 @@ export const WORKER_METRICS = {
    */
   revenueSyncFailed: 'worker_revenue_sync_failed',
   /**
+   * Subscription lifecycle list walks (Perier gap 7) that ended in a failure,
+   * labelled `resource` (`subscriptions`/`invoices`), `reason` and `mode`.
+   *
+   * Separate from `revenueSyncFailed` because a lifecycle failure does NOT
+   * degrade the credential: a restricted key created before subscriptions were
+   * read may lack the Subscriptions or Invoices permission, and that must not
+   * take the money sync down with it. A sustained `unauthorized` here is a
+   * customer whose key needs those two read permissions added.
+   */
+  revenueLifecycleSyncFailed: 'worker_revenue_lifecycle_sync_failed',
+  /** Subscription heads and invoice hints written by the projection to
+   * ClickHouse, labelled `table` (`subscription_lifecycle`/`subscription_invoices`). */
+  revenueLifecycleProjectedRows: 'worker_revenue_lifecycle_projected_rows',
+  /**
    * **Milliseconds** since the oldest due credential was last synced (the name
    * says `_ms` and the value is milliseconds).
    *

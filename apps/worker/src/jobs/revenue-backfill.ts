@@ -207,6 +207,8 @@ const executeRevenueBackfill: JobExecutor = async (context) => {
     skipped: outcome.counts.skipped,
     ties_resolved: outcome.counts.tiesResolved,
     cursors_reset: outcome.counts.cursorsReset,
+    subscriptions: outcome.counts.subscriptions,
+    invoice_hints: outcome.counts.invoiceHints,
     generation: credential.backfillGeneration,
   }
 

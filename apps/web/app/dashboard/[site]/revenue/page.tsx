@@ -7,6 +7,7 @@ import { IntervalSelect } from "@/components/dashboard/interval-select";
 import { RevenueBySource } from "@/components/dashboard/revenue-by-source";
 import { RevenueOverview } from "@/components/dashboard/revenue-overview";
 import { RevenueTransactions } from "@/components/dashboard/revenue-transactions";
+import { SubscriptionOverview } from "@/components/dashboard/subscription-overview";
 import { SquircleSurface } from "@/components/ui/squircle-card";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { LIVE_API, resolveSiteSlugCached, sites, type SiteSummary } from "@/lib/api";
@@ -65,6 +66,9 @@ export default function RevenuePage() {
           <>
             {/* The money, then every line behind it. */}
             <RevenueOverview siteId={site.data.site_id} />
+
+            {/* MRR and churn; renders nothing for a site with no subscriptions. */}
+            <SubscriptionOverview siteId={site.data.site_id} />
 
             {/* Where the money came from, before the lines behind it. */}
             <RevenueBySource siteId={site.data.site_id} />

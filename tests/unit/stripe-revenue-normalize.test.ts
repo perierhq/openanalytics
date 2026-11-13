@@ -210,13 +210,18 @@ describe('normalizeEvent — the ignore vocabulary', () => {
     expect(JSON.stringify(event.hints)).not.toContain('example.com')
   })
 
-  it('acks subscription context events the same way', () => {
+  it('reports an unreadable subscription event as unsupported_object_shape', () => {
+    // Subscription events are lifecycle inputs since Perier gap 7 (see
+    // stripe-subscription-lifecycle.test.ts); one whose object cannot be read
+    // is no longer "understood and empty".
     for (const type of [
       'customer.subscription.created',
       'customer.subscription.updated',
       'customer.subscription.deleted',
     ]) {
-      expect(normalizeOne(stripeEvent(type, { id: 'sub_1' })).ignored).toBe('no_observations')
+      const event = normalizeOne(stripeEvent(type, { id: 'sub_1' }))
+      expect(event.ignored).toBe('unsupported_object_shape')
+      expect(event.observations).toHaveLength(0)
     }
   })
 
