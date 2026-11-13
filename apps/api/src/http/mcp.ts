@@ -113,6 +113,12 @@ export interface McpToolDefinition {
     readonly name: string
     readonly description: string
     readonly required: boolean
+    /**
+     * `list` for a parameter the route reads as repeated `name=` values (a
+     * funnel's `steps`). The model sends a JSON array of strings, and each
+     * entry becomes one query parameter. Absent means a single string.
+     */
+    readonly list?: true
   }[]
   /**
    * For a write tool, the JSON Schema of its request body. The model supplies
@@ -453,6 +459,42 @@ const mcpTools: McpToolDefinition[] = [
       'Web-vital measurements per metric and device type over a range: sample count, mean, p50/p75/p90/p95/p99 and the good / needs-improvement / poor split. Takes no filters. Needs a person’s credential: a site API key is refused.',
     path: '/read/analytics/performance',
     params: [...RANGE_PARAMS, LIMIT_PARAM],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
+    name: 'funnel_results',
+    title: 'Funnel Results',
+    description:
+      'Run a funnel over a range and return, per step, the units that reached it and the conversion rate from the first step. Either name a stored funnel with funnel_id (from list_funnels), which runs its own steps, scope and window, or give ad-hoc steps with window_ms and optionally scope — never both. A step is a page path or a custom event name. The range is at most 92 days. Needs a person’s credential: a site API key is refused.',
+    path: '/read/analytics/funnel',
+    params: [
+      ...RANGE_PARAMS,
+      {
+        name: 'funnel_id',
+        description: 'A stored funnel to run, as returned by list_funnels.',
+        required: false,
+      },
+      {
+        name: 'steps',
+        description:
+          'Ad-hoc steps, in order: 2 to 8 page paths or custom event names. Not with funnel_id.',
+        required: false,
+        list: true,
+      },
+      {
+        name: 'window_ms',
+        description:
+          'Ad-hoc conversion window in milliseconds (up to 30 days); a unit’s steps must fall within it. Required with steps.',
+        required: false,
+      },
+      {
+        name: 'scope',
+        description:
+          'Ad-hoc unit: "visitor" (default) or "session", the visitor plus the client session hint.',
+        required: false,
+      },
+    ],
     needsSite: true,
     scope: 'analytics:read',
   },
@@ -861,7 +903,10 @@ export function inputSchema(tool: McpToolDefinition): Record<string, unknown> {
     required.push('site_id')
   }
   for (const param of tool.params) {
-    properties[param.name] = { type: 'string', description: param.description }
+    properties[param.name] =
+      param.list === true
+        ? { type: 'array', items: { type: 'string' }, description: param.description }
+        : { type: 'string', description: param.description }
     if (param.required) required.push(param.name)
   }
   if (tool.bodySchema !== undefined) {
@@ -895,7 +940,16 @@ export function toolArgumentRefusal(
     return `${tool.name} requires site_id (see list_sites)`
   }
   for (const param of tool.params) {
-    if (param.required && typeof args[param.name] !== 'string') {
+    const value = args[param.name]
+    if (param.list === true) {
+      // Refused rather than dropped: a funnel run on steps the model did not
+      // mean to send would answer a different question without saying so.
+      if (value === undefined) {
+        if (param.required) return `${tool.name} requires ${param.name}`
+      } else if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+        return `${tool.name} needs ${param.name} as an array of strings`
+      }
+    } else if (param.required && typeof value !== 'string') {
       return `${tool.name} requires ${param.name}`
     }
   }
@@ -961,7 +1015,13 @@ export function buildToolRequest(input: {
   // model invented is not forwarded rather than being refused.
   for (const param of tool.params) {
     const value = args[param.name]
-    if (typeof value === 'string' && value.length > 0) url.searchParams.set(param.name, value)
+    if (param.list === true && Array.isArray(value)) {
+      for (const entry of value) {
+        if (typeof entry === 'string') url.searchParams.append(param.name, entry)
+      }
+    } else if (typeof value === 'string' && value.length > 0) {
+      url.searchParams.set(param.name, value)
+    }
   }
   // Every ranged read names a zone, because the read route requires one. The
   // model's own `timezone` argument is already on the URL if it sent one — it is
@@ -970,7 +1030,7 @@ export function buildToolRequest(input: {
   // reads the dashboard on, so "last week" means to a model what it means to
   // them. `UTC` remains the floor for a caller that could not resolve one, which
   // is a defined zone rather than one invented from a token.
-  if (tool.params.some((param) => param.name === 'from') && !url.searchParams.has('timezone')) {
+  if (tool.params.some((param) => param.name === 'timezone') && !url.searchParams.has('timezone')) {
     url.searchParams.set('timezone', input.siteTimezone ?? 'UTC')
   }
 

@@ -268,3 +268,49 @@ describe('the shared argument refusal', () => {
     expect(toolArgumentRefusal(tool('top_pages'), { site_id: SITE, from: 'a', to: 'b' })).toBeNull()
   })
 })
+
+describe('a list parameter (funnel_results.steps)', () => {
+  const args = {
+    site_id: SITE,
+    from: '2026-07-16T00:00:00.000Z',
+    to: '2026-07-23T00:00:00.000Z',
+    steps: ['/pricing', 'signup', '/welcome'],
+    window_ms: '86400000',
+  }
+
+  it('is an array of strings in the schema, so a model sends the steps as a list', () => {
+    const schema = inputSchema(tool('funnel_results')) as {
+      properties: Record<string, { type: string; items?: { type: string } }>
+      required: string[]
+    }
+    expect(schema.properties['steps']).toMatchObject({ type: 'array', items: { type: 'string' } })
+    expect(schema.properties['funnel_id']?.type).toBe('string')
+    // Neither form is required on its own: the route refuses both-or-neither.
+    expect(schema.required).not.toContain('steps')
+    expect(schema.required).not.toContain('funnel_id')
+  })
+
+  it('becomes repeated query parameters, in order', () => {
+    const request = buildToolRequest({
+      tool: tool('funnel_results'),
+      args,
+      resourceUrl: ORIGIN,
+      credential: { header: 'authorization', value: 'Bearer abc' },
+    })
+    const url = new URL(request.url)
+    expect(url.pathname).toBe('/v1/read/analytics/funnel')
+    expect(url.searchParams.getAll('steps')).toEqual(['/pricing', 'signup', '/welcome'])
+    expect(url.searchParams.get('window_ms')).toBe('86400000')
+    expect(request.headers.get(SITE_HEADER)).toBe(SITE)
+  })
+
+  it('is refused when it is not an array of strings, rather than dropped', () => {
+    expect(
+      toolArgumentRefusal(tool('funnel_results'), { ...args, steps: '/pricing,signup' }),
+    ).toContain('array of strings')
+    expect(toolArgumentRefusal(tool('funnel_results'), { ...args, steps: ['/a', 2] })).toContain(
+      'array of strings',
+    )
+    expect(toolArgumentRefusal(tool('funnel_results'), args)).toBeNull()
+  })
+})

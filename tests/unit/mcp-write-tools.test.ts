@@ -137,6 +137,7 @@ const EXPECTED_READ_TOOLS = [
   'sessions',
   'custom_events',
   'performance',
+  'funnel_results',
   'revenue_summary',
   'revenue_timeseries',
   'site_install',
@@ -180,9 +181,9 @@ describe('the tool roster is pinned by name, not derived', () => {
     // writes. 10 + 19 = 29 was the arithmetic until the open-core split moved
     // `billing_usage` out to the surface that serves it, so a build with no such
     // surface advertised 28. The person-only analytics reads (`custom_events`,
-    // `performance`) make it 30.
-    expect(MCP_TOOLS).toHaveLength(30)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(30)
+    // `performance`, `funnel_results`) make it 31.
+    expect(MCP_TOOLS).toHaveLength(31)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(31)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -287,7 +288,7 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
 
   it('excludes the person-only analytics reads MCP gained after ADR-0046 D3', () => {
     const names = ASSISTANT_TOOLS.map((t) => t.name)
-    for (const name of ['custom_events', 'performance']) {
+    for (const name of ['custom_events', 'performance', 'funnel_results']) {
       expect(names, `${name} was not decided for the assistant`).not.toContain(name)
     }
   })

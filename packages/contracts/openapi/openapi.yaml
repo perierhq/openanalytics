@@ -1803,6 +1803,88 @@ paths:
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
+  /v1/read/analytics/funnel:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - name: funnel_id
+        in: query
+        required: false
+        description: |
+          A stored funnel on the selected site (`GET /v1/sites/{site_id}/funnels`).
+          Its own steps, scope and window are run. Cannot be combined with
+          `steps`, `window_ms` or `scope`.
+        schema:
+          type: string
+          format: uuid
+      - name: steps
+        in: query
+        required: false
+        description: |
+          Ad-hoc step keys, as repeated `steps=` parameters (2–8), when no
+          `funnel_id` is given. Each key matches a pageview's path or another
+          event's name.
+        schema:
+          type: array
+          minItems: 2
+          maxItems: 8
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+        style: form
+        explode: true
+      - name: window_ms
+        in: query
+        required: false
+        description: Ad-hoc conversion window in milliseconds. Required with `steps`.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 2592000000
+      - $ref: '#/components/parameters/FunnelScope'
+    get:
+      operationId: readAnalyticsFunnel
+      tags: [read-key]
+      summary: Run a stored or ad-hoc funnel over a range. Session or OAuth.
+      description: |
+        The same computation and response as
+        `GET /v1/sites/{site_id}/analytics/funnel`: per-step unit counts and the
+        conversion rate from the first step. Either name a stored funnel with
+        `funnel_id` or give ad-hoc `steps` and `window_ms`; both at once is
+        `VALIDATION_FAILED`. A `funnel_id` that is not a funnel on the selected
+        site, including a malformed one, is `NOT_FOUND`.
+
+        A person's read, not a key's, for the reason `custom-events` gives: a
+        private key gets `403`.
+
+        Requires the `analytics:read` scope.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: Per-step unit counts and conversion rates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsFunnelResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/sites/{site_id}/members:
     parameters:
       - name: site_id
@@ -6793,7 +6875,7 @@ components:
           when a create request names no scopes.
         - `analytics:read` — the aggregate reads under `/v1/read/analytics/`:
           seven for a key, plus the person-only reads (custom events,
-          performance) for an OAuth token or a session. Never granted
+          performance, funnels) for an OAuth token or a session. Never granted
           implicitly.
         - `realtime:read` — a realtime token for the selected site
           (`POST /v1/read/realtime/token`).

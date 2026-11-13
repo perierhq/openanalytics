@@ -260,7 +260,7 @@ function recentWindow(hours: number, now: Date): { from: string; to: string } {
   }
 }
 
-interface FunnelQuery {
+export interface FunnelQuery {
   readonly scope: FunnelScope
   readonly steps: readonly string[]
   readonly windowMs: number
@@ -271,7 +271,7 @@ interface FunnelQuery {
  * step count, window bound and scope enum are validated in one place shared with
  * the gateway operation. Steps are passed as repeated `steps=` query parameters.
  */
-function parseFunnel(
+export function parseFunnel(
   steps: readonly string[],
   query: Record<string, string | undefined>,
 ): FunnelQuery {

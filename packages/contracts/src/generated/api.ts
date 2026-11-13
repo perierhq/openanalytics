@@ -1912,6 +1912,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/analytics/funnel": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description A stored funnel on the selected site (`GET /v1/sites/{site_id}/funnels`).
+                 *     Its own steps, scope and window are run. Cannot be combined with
+                 *     `steps`, `window_ms` or `scope`.
+                 */
+                funnel_id?: string;
+                /**
+                 * @description Ad-hoc step keys, as repeated `steps=` parameters (2–8), when no
+                 *     `funnel_id` is given. Each key matches a pageview's path or another
+                 *     event's name.
+                 */
+                steps?: string[];
+                /** @description Ad-hoc conversion window in milliseconds. Required with `steps`. */
+                window_ms?: number;
+                /** @description The aggregation unit — resolved visitor identity, or that identity plus the client session hint. */
+                scope?: components["parameters"]["FunnelScope"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run a stored or ad-hoc funnel over a range. Session or OAuth.
+         * @description The same computation and response as
+         *     `GET /v1/sites/{site_id}/analytics/funnel`: per-step unit counts and the
+         *     conversion rate from the first step. Either name a stored funnel with
+         *     `funnel_id` or give ad-hoc `steps` and `window_ms`; both at once is
+         *     `VALIDATION_FAILED`. A `funnel_id` that is not a funnel on the selected
+         *     site, including a malformed one, is `NOT_FOUND`.
+         *
+         *     A person's read, not a key's, for the reason `custom-events` gives: a
+         *     private key gets `403`.
+         *
+         *     Requires the `analytics:read` scope.
+         */
+        get: operations["readAnalyticsFunnel"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/members": {
         parameters: {
             query?: never;
@@ -5602,7 +5682,7 @@ export interface components {
          *       when a create request names no scopes.
          *     - `analytics:read` — the aggregate reads under `/v1/read/analytics/`:
          *       seven for a key, plus the person-only reads (custom events,
-         *       performance) for an OAuth token or a session. Never granted
+         *       performance, funnels) for an OAuth token or a session. Never granted
          *       implicitly.
          *     - `realtime:read` — a realtime token for the selected site
          *       (`POST /v1/read/realtime/token`).
@@ -11636,6 +11716,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsPerformanceResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["MissingScopeOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readAnalyticsFunnel: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description A stored funnel on the selected site (`GET /v1/sites/{site_id}/funnels`).
+                 *     Its own steps, scope and window are run. Cannot be combined with
+                 *     `steps`, `window_ms` or `scope`.
+                 */
+                funnel_id?: string;
+                /**
+                 * @description Ad-hoc step keys, as repeated `steps=` parameters (2–8), when no
+                 *     `funnel_id` is given. Each key matches a pageview's path or another
+                 *     event's name.
+                 */
+                steps?: string[];
+                /** @description Ad-hoc conversion window in milliseconds. Required with `steps`. */
+                window_ms?: number;
+                /** @description The aggregation unit — resolved visitor identity, or that identity plus the client session hint. */
+                scope?: components["parameters"]["FunnelScope"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per-step unit counts and conversion rates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsFunnelResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];

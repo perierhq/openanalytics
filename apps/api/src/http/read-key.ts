@@ -15,6 +15,7 @@ import {
 import {
   chargeReadCost,
   getFinalizerState,
+  getFunnel,
   getLiveTrackingToken,
   getMembership,
   getSiteBasics,
@@ -35,6 +36,8 @@ import {
   TIMESERIES_RESOLUTIONS,
   customEventsWithLabels,
   parseCompare,
+  parseFunnel,
+  type FunnelQuery,
   parseFilters,
   parseLimit,
   parsePagesSort,
@@ -69,7 +72,11 @@ import type { RateLimiter } from './rate-limit.ts'
  * session, never a site-bound API key. Exported so the tests pin the same list
  * the middleware enforces.
  */
-export const PERSON_ONLY_ANALYTICS_READS: readonly string[] = ['/custom-events', '/performance']
+export const PERSON_ONLY_ANALYTICS_READS: readonly string[] = [
+  '/custom-events',
+  '/performance',
+  '/funnel',
+]
 
 /**
  * Who is asking, and what they are allowed to ask for.
@@ -1005,6 +1012,59 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         importPointer: c.get('siteImportPointer'),
         ...parseRange(query),
         limit: parseLimit(query),
+      }),
+    )
+  })
+
+  /**
+   * A funnel over a range: a stored one by `funnel_id`, or ad-hoc steps.
+   *
+   * A stored funnel is a saved question (migration 0024), and running it is
+   * the same computation the dashboard runs with the definition's steps, scope
+   * and window. Reading the definition here, under the caller's own site, is
+   * what lets a caller say "run my checkout funnel" without restating it. The
+   * lookup is site-scoped, so another site's funnel id reads as absent.
+   *
+   * Both forms at once is refused rather than merged: which steps were run
+   * would otherwise depend on a precedence rule nobody asked for.
+   */
+  reads.get('/funnel', async (c) => {
+    const { siteId } = c.get('readPrincipal')
+    const query = c.req.query()
+    const range = parseRange(query)
+    const funnelId = query['funnel_id']
+    const steps = c.req.queries('steps') ?? []
+
+    let funnel: FunnelQuery
+    if (funnelId !== undefined) {
+      if (steps.length > 0 || query['window_ms'] !== undefined || query['scope'] !== undefined) {
+        throw new ApiError(
+          'VALIDATION_FAILED',
+          'Name a stored funnel with funnel_id, or give steps, window_ms and scope — not both',
+          {
+            details: {
+              issues: [{ path: 'funnel_id', message: 'cannot be combined with ad-hoc steps' }],
+            },
+          },
+        )
+      }
+      // A malformed id and a missing one are the same answer, for the reason a
+      // site id is: a 400 for one would tell them apart.
+      const id = canonicalSiteId(funnelId)
+      const stored = id === null ? null : await getFunnel(db, { id, siteId })
+      if (!stored) throw new ApiError('NOT_FOUND', 'No funnel with this id on this site')
+      funnel = { steps: stored.steps, scope: stored.scope, windowMs: stored.windowMs }
+    } else {
+      funnel = parseFunnel(steps, query)
+    }
+
+    return c.json(
+      await analytics().funnel({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...range,
+        ...funnel,
       }),
     )
   })

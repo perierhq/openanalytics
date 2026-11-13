@@ -39,6 +39,20 @@ const siteBasics = {
   } | null,
 }
 const membershipRole = { value: 'owner' as 'owner' | 'admin' | 'viewer' }
+const STORED_FUNNEL = '0190f0aa-1111-7222-8333-444455556666'
+/** The stored funnel, as `getFunnel` returns it for `SITE` and no other site. */
+const storedFunnel = {
+  id: STORED_FUNNEL,
+  siteId: SITE,
+  name: 'Checkout',
+  steps: ['/cart', 'checkout_started', '/thanks'],
+  scope: 'session' as const,
+  windowMs: 3_600_000,
+  createdByUserId: null,
+  createdAt: new Date('2026-07-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-07-01T00:00:00.000Z'),
+  archivedAt: null,
+}
 const charges: string[] = []
 
 vi.mock('@openanalytics/postgres', async (importOriginal) => {
@@ -61,6 +75,8 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
         : null,
     getSiteBasics: async () => siteBasics.value,
     getFinalizerState: async () => null,
+    getFunnel: async (_db: unknown, input: { id: string; siteId: string }) =>
+      input.id === STORED_FUNNEL && input.siteId === SITE ? storedFunnel : null,
     listEventDisplayNames: async () => [
       { eventName: 'signup', displayName: 'Signed up', displayTemplate: '{{plan}} signup' },
     ],
@@ -118,6 +134,9 @@ function rowsFor(operation: string): Record<string, unknown>[] {
         visitors: '1',
       },
     ]
+  }
+  if (operation.startsWith('analytics.funnel_')) {
+    return [{ step_1: '10', step_2: '4', step_3: '1' }]
   }
   if (operation.startsWith('analytics.performance')) {
     return [
@@ -228,7 +247,7 @@ describe('custom events and performance, for a person', () => {
   })
 
   it('refuses a token without analytics:read, before the gateway', async () => {
-    for (const path of ['custom-events', 'performance']) {
+    for (const path of ['custom-events', 'performance', 'funnel']) {
       const app = buildApp()
       const res = await get(
         app,
@@ -241,7 +260,7 @@ describe('custom events and performance, for a person', () => {
   })
 
   it('answers a site the person is not a member of as SITE_NOT_FOUND', async () => {
-    for (const path of ['custom-events', 'performance']) {
+    for (const path of ['custom-events', 'performance', 'funnel']) {
       const app = buildApp()
       const res = await get(
         app,
@@ -291,6 +310,86 @@ async function callTool(
   }
 }
 
+describe('funnels, stored or ad hoc', () => {
+  it('runs a stored funnel with its own steps, scope and window', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/funnel?${RANGE}&funnel_id=${STORED_FUNNEL}`,
+      asToken(OAUTH_TOKEN),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      meta: { scope: string; window_ms: number }
+      steps: { key: string; count: number; conversion_rate: number }[]
+    }
+    expect(body.steps.map((step) => [step.key, step.count, step.conversion_rate])).toEqual([
+      ['/cart', 10, 1],
+      ['checkout_started', 4, 0.4],
+      ['/thanks', 1, 0.1],
+    ])
+    expect(body.meta).toMatchObject({ scope: 'session', window_ms: 3_600_000 })
+    expect(gatewayParams['analytics.funnel_session']).toMatchObject({
+      site_id: SITE,
+      steps: ['/cart', 'checkout_started', '/thanks'],
+      window_ms: 3_600_000,
+    })
+  })
+
+  it('runs ad-hoc steps, as the dashboard route does', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/funnel?${RANGE}&steps=%2Fpricing&steps=signup&window_ms=86400000`,
+      asSession(),
+    )
+    expect(res.status).toBe(200)
+    expect(gatewayParams['analytics.funnel_visitor']).toMatchObject({
+      steps: ['/pricing', 'signup'],
+      window_ms: 86_400_000,
+    })
+  })
+
+  it('refuses a stored id together with ad-hoc steps, naming the conflict', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/funnel?${RANGE}&funnel_id=${STORED_FUNNEL}&steps=%2Fa&steps=%2Fb`,
+      asToken(OAUTH_TOKEN),
+    )
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('VALIDATION_FAILED')
+    expect(body.error.message).toContain('not both')
+    expect(gatewayCalls).toHaveLength(0)
+  })
+
+  it('answers another site’s funnel, an unknown id and a malformed one alike', async () => {
+    for (const id of ['0190f0aa-9999-7222-8333-444455556666', 'not-a-uuid']) {
+      const app = buildApp()
+      const res = await get(
+        app,
+        `/v1/read/analytics/funnel?${RANGE}&funnel_id=${id}`,
+        asToken(OAUTH_TOKEN),
+      )
+      expect(res.status, id).toBe(404)
+      expect(((await res.json()) as { error: { code: string } }).error.code, id).toBe('NOT_FOUND')
+      expect(gatewayCalls, id).toHaveLength(0)
+    }
+  })
+
+  it('refuses ad-hoc steps without a window, through the domain schema', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/funnel?${RANGE}&steps=%2Fa&steps=%2Fb`,
+      asToken(OAUTH_TOKEN),
+    )
+    expect(res.status).toBe(400)
+    expect(gatewayCalls).toHaveLength(0)
+  })
+})
+
 describe('the MCP tools are these routes', () => {
   const range = {
     from: '2026-07-16T00:00:00.000Z',
@@ -312,5 +411,34 @@ describe('the MCP tools are these routes', () => {
       )
       expect(viaTool.body, tool).toEqual(await viaRoute.json())
     }
+  })
+
+  it('funnel_results runs a stored funnel and ad-hoc steps exactly as the route does', async () => {
+    const stored = await callTool(buildApp(), 'funnel_results', {
+      site_id: SITE,
+      ...range,
+      funnel_id: STORED_FUNNEL,
+    })
+    expect(stored.isError).toBe(false)
+    const storedRoute = await get(
+      buildApp(),
+      `/v1/read/analytics/funnel?${RANGE}&funnel_id=${STORED_FUNNEL}`,
+      asToken(OAUTH_TOKEN),
+    )
+    expect(stored.body).toEqual(await storedRoute.json())
+
+    const adHoc = await callTool(buildApp(), 'funnel_results', {
+      site_id: SITE,
+      ...range,
+      steps: ['/pricing', 'signup'],
+      window_ms: '86400000',
+    })
+    expect(adHoc.isError).toBe(false)
+    const adHocRoute = await get(
+      buildApp(),
+      `/v1/read/analytics/funnel?${RANGE}&steps=%2Fpricing&steps=signup&window_ms=86400000`,
+      asToken(OAUTH_TOKEN),
+    )
+    expect(adHoc.body).toEqual(await adHocRoute.json())
   })
 })
