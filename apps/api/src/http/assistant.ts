@@ -125,7 +125,20 @@ const ASSISTANT_READ_PREFIXES = ['/read/analytics/', '/read/revenue/']
  * them to the model; which tools the assistant has is a decision about the
  * assistant, and nobody has made it for these.
  */
-const ASSISTANT_EXCLUDED_PATHS = PERSON_ONLY_ANALYTICS_READS.map((path) => `/read/analytics${path}`)
+/**
+ * The two revenue aggregates the Perier fork added to MCP (DataFast gaps 3 and
+ * 4). They live under `/read/revenue/`, so the prefix alone would hand them to
+ * the model, and for the same reason as the person-only reads nobody has
+ * decided the assistant should have them.
+ */
+const ASSISTANT_UNDECIDED_REVENUE_READS = [
+  '/read/revenue/attribution',
+  '/read/revenue/events-before-purchase',
+]
+const ASSISTANT_EXCLUDED_PATHS = [
+  ...PERSON_ONLY_ANALYTICS_READS.map((path) => `/read/analytics${path}`),
+  ...ASSISTANT_UNDECIDED_REVENUE_READS,
+]
 export const ASSISTANT_TOOLS = MCP_TOOLS.filter(
   (tool) =>
     isReadOnlyTool(tool) &&

@@ -142,6 +142,8 @@ const EXPECTED_READ_TOOLS = [
   'visitor',
   'revenue_summary',
   'revenue_timeseries',
+  'revenue_by_source',
+  'events_before_purchase',
   'site_install',
   'team_members',
   // `billing_usage` was here until the open-core split. It is registered by the
@@ -183,9 +185,11 @@ describe('the tool roster is pinned by name, not derived', () => {
     // writes. 10 + 19 = 29 was the arithmetic until the open-core split moved
     // `billing_usage` out to the surface that serves it, so a build with no such
     // surface advertised 28. The person-only analytics reads (`custom_events`,
-    // `performance`, `funnel_results`, `recent_visitors`, `visitor`) make it 33.
-    expect(MCP_TOOLS).toHaveLength(33)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(33)
+    // `performance`, `funnel_results`, `recent_visitors`, `visitor`) make it 33,
+    // and the Perier fork's two revenue aggregates (`revenue_by_source`,
+    // `events_before_purchase`) 35.
+    expect(MCP_TOOLS).toHaveLength(35)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(35)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [

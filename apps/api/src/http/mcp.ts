@@ -572,6 +572,59 @@ const mcpTools: McpToolDefinition[] = [
     needsSite: true,
     scope: 'revenue:read',
   },
+  // Perier fork, DataFast gaps 3 and 4: two more owner-only aggregates on the
+  // same route subtree, with no customer, order or visitor id in either.
+  {
+    name: 'revenue_by_source',
+    title: 'Revenue by Source',
+    description:
+      'Revenue grouped by where buyers came from: per value of the first or last touch’s referrer domain, UTM source, medium or campaign, or entry page, the converted revenue (`revenue_minor`, integer minor units of `currency`), orders, unconverted orders and distinct buyers. The row with `value: null` is unattributed revenue and always comes first; an empty string means no referrer or no UTM tag. For ranges up to 92 days each row also has visitors (sessions that entered with that value), conversion_rate (buyers / visitors) and revenue_per_visitor_minor; above 92 days `visitors_available` is false and those are null, never zero. Same owner-only rule and `meta.revenue.connection_status` caveat as revenue_summary.',
+    path: '/read/revenue/attribution',
+    params: [
+      ...RANGE_PARAMS,
+      {
+        name: 'touch',
+        description: '"first" (default) or "last": which touch of the attribution to group by.',
+        required: false,
+      },
+      {
+        name: 'dimension',
+        description:
+          'referrer_domain (default), utm_source, utm_medium, utm_campaign or entry_page.',
+        required: false,
+      },
+      {
+        name: 'limit',
+        description: 'How many rows to return, 1 to 500. Defaults to 100.',
+        required: false,
+      },
+    ],
+    needsSite: true,
+    scope: 'revenue:read',
+  },
+  {
+    name: 'events_before_purchase',
+    title: 'Events Before Purchase',
+    description:
+      'Which custom events buyers fired before paying. Per event name: buyers who fired it in the window_ms before their first charge in the range, how often, and buyer_rate (share of all buyers); beside it non_buyer_visitors and non_buyer_rate, the share of visitors who did not buy and fired it in the range. Compare the two rates to see which in-product moments go with buying; it is correlation, not cause. non_buyer_rate is approximate (its denominator is the overview’s visitor estimate). The range is at most 92 days and the window at most 30 days. Owner-only, like revenue_summary.',
+    path: '/read/revenue/events-before-purchase',
+    params: [
+      ...RANGE_PARAMS,
+      {
+        name: 'window_ms',
+        description:
+          'How far before each buyer’s first charge to look, in milliseconds: 60000 to 2592000000 (30 days). Defaults to 7 days.',
+        required: false,
+      },
+      {
+        name: 'limit',
+        description: 'How many event rows to return, 1 to 200. Defaults to 50.',
+        required: false,
+      },
+    ],
+    needsSite: true,
+    scope: 'revenue:read',
+  },
 
   // --- Account reads (ADR-0048 D3). These dispatch to the business subtree's
   // GET routes through the grant arm, not to `/read/*`, so their site id is a
