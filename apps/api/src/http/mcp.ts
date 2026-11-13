@@ -166,19 +166,21 @@ const READ_ONLY: McpToolAnnotations = {
   idempotentHint: true,
 }
 
+const TIMEZONE_PARAM = {
+  name: 'timezone',
+  description:
+    'Optional IANA timezone the days and weeks are cut on (for example Asia/Kolkata). ' +
+    "Defaults to the site's own reporting timezone, which is the zone its owner reads " +
+    'the dashboard in — send one only to answer a question about a different calendar. ' +
+    'A UTC offset such as +05:30 is refused; the answer names the zone it used in ' +
+    '`meta.timezone`.',
+  required: false,
+} as const
+
 const RANGE_PARAMS = [
   { name: 'from', description: 'Range start, ISO-8601 UTC (inclusive).', required: true },
   { name: 'to', description: 'Range end, ISO-8601 UTC (exclusive).', required: true },
-  {
-    name: 'timezone',
-    description:
-      'Optional IANA timezone the days and weeks are cut on (for example Asia/Kolkata). ' +
-      "Defaults to the site's own reporting timezone, which is the zone its owner reads " +
-      'the dashboard in — send one only to answer a question about a different calendar. ' +
-      'A UTC offset such as +05:30 is refused; the answer names the zone it used in ' +
-      '`meta.timezone`.',
-    required: false,
-  },
+  TIMEZONE_PARAM,
 ] as const
 
 const LIMIT_PARAM = {
@@ -362,6 +364,14 @@ const EVENT_DEFINITION_CONTENT_PROPERTIES = {
  * intersection). Everyone the dashboard refuses is refused here, and the
  * refusal arrives as tool content the model has to read.
  *
+ * **The person-only reads** (`custom_events`, `performance`, `funnel_results`,
+ * `recent_visitors`, `visitor`) dispatch into `/v1/read/analytics/*` paths a
+ * private key cannot reach (`PERSON_ONLY_ANALYTICS_READS` in `read-key.ts`).
+ * Every MCP caller is a person, so for this surface they are ordinary reads.
+ * The visitor reads are pseudonymous rows, not customer rows: their route
+ * drops the journey entries the dashboard serves, and their revenue marker
+ * needs both the owner role and the `revenue:read` scope.
+ *
  * Still deliberately **not** here: realtime. `/v1/read/realtime/token` mints a
  * *token*; a tool that hands a model a bearer credential is a category error
  * regardless of what the credential opens.
@@ -494,6 +504,50 @@ const mcpTools: McpToolDefinition[] = [
           'Ad-hoc unit: "visitor" (default) or "session", the visitor plus the client session hint.',
         required: false,
       },
+    ],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
+    name: 'recent_visitors',
+    title: 'Recent Visitors',
+    description:
+      'The individual visitors seen on one site in the last few hours (1 to 24, default 2), newest last-seen first: an anonymous visitor hash, country, device, browser, OS, first and last seen, pageviews. The hash rotates at UTC midnight, so one person can appear twice across midnight and the two rows cannot be linked; it is not a durable identity. Provisional data. For an owner whose grant includes revenue:read a row may carry a `revenue` marker (attributed revenue in the window); otherwise the field is absent, never zero. Needs a person’s credential: a site API key is refused.',
+    path: '/read/analytics/recent-visitors',
+    params: [
+      {
+        name: 'hours',
+        description: 'How many hours back to look, 1 to 24. Defaults to 2.',
+        required: false,
+      },
+      TIMEZONE_PARAM,
+      {
+        name: 'limit',
+        description: 'How many visitors to return, 1 to 200. Defaults to 100.',
+        required: false,
+      },
+    ],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
+    name: 'visitor',
+    title: 'Visitor Trail',
+    description:
+      'One visitor’s page-by-page trail over the same recent window: their sessions, newest first, each with its page views in order (path, title, referrer domain). Takes the `visitor` hash from a recent_visitors row. An unknown or expired hash returns an empty list, not an error. Provisional data. An owner whose grant includes revenue:read also gets the summed `revenue` marker; individual payment entries are not returned by any tool. Needs a person’s credential: a site API key is refused.',
+    path: '/read/analytics/visitor',
+    params: [
+      {
+        name: 'hash',
+        description: 'The visitor hash, from a recent_visitors row.',
+        required: true,
+      },
+      {
+        name: 'hours',
+        description: 'How many hours back to look, 1 to 24. Defaults to 2.',
+        required: false,
+      },
+      TIMEZONE_PARAM,
     ],
     needsSite: true,
     scope: 'analytics:read',

@@ -37,6 +37,11 @@ import {
   customEventsWithLabels,
   parseCompare,
   parseFunnel,
+  parseRecentHours,
+  parseRecentLimit,
+  parseTimezone,
+  parseVisitorHash,
+  recentWindow,
   type FunnelQuery,
   parseFilters,
   parseLimit,
@@ -76,6 +81,8 @@ export const PERSON_ONLY_ANALYTICS_READS: readonly string[] = [
   '/custom-events',
   '/performance',
   '/funnel',
+  '/recent-visitors',
+  '/visitor',
 ]
 
 /**
@@ -1067,6 +1074,63 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         ...funnel,
       }),
     )
+  })
+
+  /**
+   * Whether this caller is served the visitor reads' revenue marker.
+   *
+   * The dashboard's rule is the owner-only capability (ADR-0036 CP7). Here the
+   * scope is a ceiling on top of it, as on the revenue reads (ADR-0043 D4): an
+   * owner whose client never asked for `revenue:read` is not shown money
+   * through `analytics:read`. Absent, never zero, either way.
+   */
+  const servesVisitorRevenue = (principal: ReadPrincipal): boolean =>
+    principal.kind !== 'api_key' &&
+    roleHasCapability(principal.role, 'revenue:read') &&
+    hasReadScope(principal.scopes, 'revenue:read')
+
+  /**
+   * Recent visitors and one visitor's trail (ADR-0024), for a person.
+   *
+   * The dashboard's own reads, with one subtraction: `revenue_events` is never
+   * served here. Those entries are the transaction journey's vocabulary, and
+   * the journey stays off `/v1/read` for every credential (ADR-0043 D15). The
+   * summed `revenue` marker, an aggregate with no customer or order in it,
+   * follows `servesVisitorRevenue`.
+   */
+  reads.get('/recent-visitors', async (c) => {
+    const principal = c.get('readPrincipal')
+    const query = c.req.query()
+    const timezone = parseTimezone(query)
+    const window = recentWindow(parseRecentHours(query), new Date())
+    return c.json(
+      await analytics().recentVisitors({
+        siteId: principal.siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...window,
+        timezone,
+        limit: parseRecentLimit(query),
+        includeRevenue: servesVisitorRevenue(principal),
+      }),
+    )
+  })
+
+  reads.get('/visitor', async (c) => {
+    const principal = c.get('readPrincipal')
+    const query = c.req.query()
+    const timezone = parseTimezone(query)
+    const window = recentWindow(parseRecentHours(query), new Date())
+    const { revenue_events: _journeyEntries, ...trail } = await analytics().visitorTrail({
+      siteId: principal.siteId,
+      cacheEpoch: c.get('siteCacheEpoch'),
+      importPointer: c.get('siteImportPointer'),
+      ...window,
+      timezone,
+      visitor: parseVisitorHash(query),
+      includeRevenue: servesVisitorRevenue(principal),
+    })
+    return c.json(trail)
   })
 
   app.route('/read/analytics', reads)

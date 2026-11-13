@@ -22,6 +22,8 @@ const OTHER_SITE = '8b7c6d55-1111-4222-8333-444455556666'
 const OAUTH_TOKEN = 'AAAAAAAABBBBBBBBCCCCCCCCDDDDDDDD'
 /** The same person, through a client whose grant carries no `analytics:read`. */
 const OAUTH_TOKEN_SITE_ONLY = 'EEEEEEEEFFFFFFFFGGGGGGGGHHHHHHHH'
+/** The same person, through a client that also asked for `revenue:read`. */
+const OAUTH_TOKEN_REVENUE = 'IIIIIIIIJJJJJJJJKKKKKKKKLLLLLLLL'
 const COOKIE = 'oa_session=live-session-value'
 const USER = 'ff33a1c0-1111-4222-8333-999900001111'
 const RANGE = 'from=2026-07-16T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC'
@@ -63,6 +65,9 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
     resolveOAuthAccessToken: async (_db: unknown, token: string) => {
       if (token === OAUTH_TOKEN) {
         return { id: 'grant-1', userId: USER, scopes: 'site:read analytics:read' }
+      }
+      if (token === OAUTH_TOKEN_REVENUE) {
+        return { id: 'grant-3', userId: USER, scopes: 'site:read analytics:read revenue:read' }
       }
       if (token === OAUTH_TOKEN_SITE_ONLY) {
         return { id: 'grant-2', userId: USER, scopes: 'site:read' }
@@ -132,6 +137,51 @@ function rowsFor(operation: string): Record<string, unknown>[] {
         events: '1',
         billable_events: '1',
         visitors: '1',
+      },
+    ]
+  }
+  if (operation === 'analytics.recent_visitors') {
+    return [
+      {
+        visitor: 'v-1',
+        user_id: '',
+        country: 'DE',
+        device_type: 'desktop',
+        browser: 'Firefox',
+        os: 'Linux',
+        first_seen: '2026-07-23 14:00:00.000',
+        last_seen: '2026-07-23 14:30:00.000',
+        pageviews: '3',
+      },
+    ]
+  }
+  if (operation === 'analytics.visitor_revenue') {
+    return [{ visitor_key: 'v-1', amount_minor: '4200', currency: 'EUR', transaction_count: '1' }]
+  }
+  if (operation === 'analytics.visitor_trail') {
+    return [
+      {
+        session_id: 's-1',
+        event_id: 'e-1',
+        occurred_at: '2026-07-23 14:00:00.000',
+        page_path: '/',
+        page_title: 'Home',
+        referrer_domain: '',
+      },
+    ]
+  }
+  if (operation === 'analytics.visitor_revenue_entries') {
+    return [
+      {
+        object_id: 'ch_secret_order',
+        occurred_at: '2026-07-23 14:10:00.000',
+        status: 'succeeded',
+        currency: 'EUR',
+        gross_minor: '4200',
+        reporting_currency: 'EUR',
+        reporting_gross_minor: '4200',
+        conversion_source: 'identity',
+        session_id: 's-1',
       },
     ]
   }
@@ -390,6 +440,85 @@ describe('funnels, stored or ad hoc', () => {
   })
 })
 
+describe('recent visitors and one visitor’s trail', () => {
+  const HASH = 'hash=v-1&timezone=UTC'
+
+  it('serves the rows, with the revenue marker for an owner whose grant asked for revenue', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      '/v1/read/analytics/recent-visitors?timezone=UTC',
+      asToken(OAUTH_TOKEN_REVENUE),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: { visitor: string; revenue?: unknown }[] }
+    expect(body.items).toEqual([
+      expect.objectContaining({
+        visitor: 'v-1',
+        pageviews: 3,
+        revenue: { amount_minor: 4200, currency: 'EUR', transaction_count: 1 },
+      }),
+    ])
+  })
+
+  it('withholds revenue from an owner whose grant did not ask for it — the scope is a ceiling', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      '/v1/read/analytics/recent-visitors?timezone=UTC',
+      asToken(OAUTH_TOKEN),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: Record<string, unknown>[] }
+    expect(body.items[0]).not.toHaveProperty('revenue')
+    // Not computed and then hidden: the revenue query is never made.
+    expect(gatewayCalls).not.toContain('analytics.visitor_revenue')
+  })
+
+  it('withholds revenue from a non-owner who holds the scope — the role is the floor', async () => {
+    membershipRole.value = 'admin'
+    const app = buildApp()
+    const res = await get(
+      app,
+      '/v1/read/analytics/recent-visitors?timezone=UTC',
+      asToken(OAUTH_TOKEN_REVENUE),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: Record<string, unknown>[] }
+    expect(body.items[0]).not.toHaveProperty('revenue')
+    expect(gatewayCalls).not.toContain('analytics.visitor_revenue')
+  })
+
+  it('serves an owner’s session the marker, as the dashboard does', async () => {
+    const app = buildApp()
+    const res = await get(app, '/v1/read/analytics/recent-visitors?timezone=UTC', asSession())
+    const body = (await res.json()) as { items: Record<string, unknown>[] }
+    expect(body.items[0]).toHaveProperty('revenue')
+  })
+
+  it('serves the trail with the summed marker and never the journey entries', async () => {
+    const app = buildApp()
+    const res = await get(app, `/v1/read/analytics/visitor?${HASH}`, asToken(OAUTH_TOKEN_REVENUE))
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    const body = JSON.parse(text) as Record<string, unknown>
+    expect(body['visitor']).toBe('v-1')
+    expect(body['revenue']).toEqual({ amount_minor: 4200, currency: 'EUR', transaction_count: 1 })
+    expect(body).not.toHaveProperty('revenue_events')
+    // The provider's object id rides only in the journey entries.
+    expect(text).not.toContain('ch_secret_order')
+  })
+
+  it('refuses a missing hash and a window past a day, before the gateway', async () => {
+    for (const query of ['timezone=UTC', `${HASH}&hours=25`]) {
+      const app = buildApp()
+      const res = await get(app, `/v1/read/analytics/visitor?${query}`, asToken(OAUTH_TOKEN))
+      expect(res.status, query).toBe(400)
+      expect(gatewayCalls, query).toHaveLength(0)
+    }
+  })
+})
+
 describe('the MCP tools are these routes', () => {
   const range = {
     from: '2026-07-16T00:00:00.000Z',
@@ -440,5 +569,53 @@ describe('the MCP tools are these routes', () => {
       asToken(OAUTH_TOKEN),
     )
     expect(adHoc.body).toEqual(await adHocRoute.json())
+  })
+
+  it('recent_visitors and visitor answer what the routes answer, in the site’s zone', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-07-23T15:00:00.000Z'))
+    try {
+      const list = await callTool(buildApp(), 'recent_visitors', { site_id: SITE, timezone: 'UTC' })
+      expect(list.isError).toBe(false)
+      const listRoute = await get(
+        buildApp(),
+        '/v1/read/analytics/recent-visitors?timezone=UTC',
+        asToken(OAUTH_TOKEN),
+      )
+      expect(list.body).toEqual(await listRoute.json())
+
+      const trail = await callTool(buildApp(), 'visitor', {
+        site_id: SITE,
+        hash: 'v-1',
+        hours: '6',
+        timezone: 'UTC',
+      })
+      expect(trail.isError).toBe(false)
+      const trailRoute = await get(
+        buildApp(),
+        '/v1/read/analytics/visitor?hash=v-1&hours=6&timezone=UTC',
+        asToken(OAUTH_TOKEN),
+      )
+      expect(trail.body).toEqual(await trailRoute.json())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('visitor refuses a call without the hash, naming it', async () => {
+    const res = await buildApp().fetch(
+      new Request('http://api.test/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${OAUTH_TOKEN}` },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'visitor', arguments: { site_id: SITE } },
+        }),
+      }),
+    )
+    const envelope = (await res.json()) as { error?: { message: string } }
+    expect(envelope.error?.message).toBe('visitor requires hash')
   })
 })

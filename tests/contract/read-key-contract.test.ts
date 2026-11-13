@@ -111,25 +111,11 @@ describe('the read-key surface (ADR-0042)', () => {
   })
 
   /**
-   * The surfaces D4 excluded, asserted as absent rather than assumed absent —
-   * the mirror of the test ADR-0024 D7 left on the public share surface.
-   *
-   * **`revenue` left this list on 2026-08-06** (ADR-0043 D5), and the reversal
-   * is dated in ADR-0042's own file. It is not a key surface — no key can hold
-   * `revenue:read` — but it is now a `/v1/read` path, so an assertion phrased as
-   * "the string does not appear" no longer states what D4 meant. The three tests
-   * below say it precisely instead: no key may reach it, and the row-level reads
-   * are absent for everybody.
+   * The surfaces D4 excluded from the key are `/v1/read` paths for a person now
+   * (custom events, performance, funnels, recent visitors, one visitor's
+   * trail). What D4 meant is asserted below in its precise form: no key may
+   * reach them. The row-level revenue reads are still absent for everybody.
    */
-  it('exposes no individual visitor, and no surface D4 excluded', () => {
-    for (const excluded of ['recent-visitors', 'visitor']) {
-      expect(spec, `${excluded} must not be readable here`).not.toContain(
-        `/v1/read/analytics/${excluded}`,
-      )
-      expect(spec).not.toContain(`/v1/read/${excluded}`)
-    }
-  })
-
   it('keeps revenue off every key-accepting route', () => {
     // The precise form of what D4 meant, now that a revenue path exists. A key
     // cannot hold `revenue:read` (ADR-0043 D5), so the revenue routes must not
@@ -146,13 +132,28 @@ describe('the read-key surface (ADR-0042)', () => {
     // D4 kept these reports off the key surface. They are `/v1/read` paths now,
     // for an OAuth token or a session, so the precise form of D4 is the one
     // revenue uses: the contract must not list `privateApiKey` for them.
-    for (const surface of ['custom-events', 'performance', 'funnel']) {
+    for (const surface of [
+      'custom-events',
+      'performance',
+      'funnel',
+      'recent-visitors',
+      'visitor',
+    ]) {
       const block = pathBlock(`/v1/read/analytics/${surface}`)
       expect(block, `${surface} must not accept a key`).not.toContain('privateApiKey')
       expect(block).toContain('- sessionCookie: []')
       expect(block).toContain("oauthAccessToken: ['analytics:read']")
       expect(block, `${surface} takes no site id`).not.toContain('SiteIdPath')
     }
+  })
+
+  it('says the visitor trail drops the journey entries the dashboard serves', () => {
+    // ADR-0043 D15 keeps the transaction journey off `/v1/read`. The trail's
+    // response schema is shared with the dashboard, which does carry
+    // `revenue_events`, so the subtraction has to be stated on the path.
+    expect(pathBlock('/v1/read/analytics/visitor')).toContain(
+      '**`revenue_events` is never served here.**',
+    )
   })
 
   it('keeps the row-level revenue reads off this surface entirely', () => {

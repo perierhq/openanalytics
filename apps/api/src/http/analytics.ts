@@ -176,7 +176,7 @@ const RECENT_WINDOW_MAX_HOURS = 24
 const RECENT_WINDOW_DEFAULT_HOURS = 2
 const RECENT_VISITORS_MAX_LIMIT = 200
 
-function parseRecentHours(query: Record<string, string | undefined>): number {
+export function parseRecentHours(query: Record<string, string | undefined>): number {
   const raw = query['hours']
   if (raw === undefined) return RECENT_WINDOW_DEFAULT_HOURS
   const hours = Number(raw)
@@ -196,7 +196,7 @@ function parseRecentHours(query: Record<string, string | undefined>): number {
   return hours
 }
 
-function parseRecentLimit(query: Record<string, string | undefined>): number {
+export function parseRecentLimit(query: Record<string, string | undefined>): number {
   const raw = query['limit']
   if (raw === undefined) return 100
   const n = Number(raw)
@@ -216,7 +216,7 @@ function parseRecentLimit(query: Record<string, string | undefined>): number {
   return n
 }
 
-function parseVisitorHash(query: Record<string, string | undefined>): string {
+export function parseVisitorHash(query: Record<string, string | undefined>): string {
   const hash = query['hash']
   if (hash === undefined || hash.length === 0 || hash.length > 128) {
     throw new ApiError(
@@ -253,7 +253,7 @@ function parseVisitorHash(query: Record<string, string | undefined>): string {
  * rollup ranges where a whole-minute boundary is both harmless and the thing
  * that makes the cache work.
  */
-function recentWindow(hours: number, now: Date): { from: string; to: string } {
+export function recentWindow(hours: number, now: Date): { from: string; to: string } {
   return {
     from: new Date(now.getTime() - hours * 3_600_000).toISOString(),
     to: now.toISOString(),

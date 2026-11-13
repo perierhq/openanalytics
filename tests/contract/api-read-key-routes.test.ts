@@ -279,7 +279,13 @@ describe('the person-only reads refuse a key (ADR-0042 D4)', () => {
     }
     siteBasics.value = activeSite()
 
-    for (const surface of ['custom-events', 'performance', 'funnel']) {
+    for (const surface of [
+      'custom-events',
+      'performance',
+      'funnel',
+      'recent-visitors',
+      'visitor',
+    ]) {
       charges.length = 0
       const app = buildApp({ withBusinessSubtree: true })
       const res = await get(`/v1/read/analytics/${surface}?${RANGE}`, KEY, app)
@@ -451,7 +457,7 @@ describe('a path that does not exist says so', () => {
     }
     siteBasics.value = activeSite()
 
-    for (const excluded of ['recent-visitors', 'visitor', 'revenue']) {
+    for (const excluded of ['revenue', 'revenue/transactions']) {
       const app = buildApp({ withBusinessSubtree: true })
       const res = await get(`/v1/read/analytics/${excluded}?${RANGE}`, KEY, app)
       expect(res.status, excluded).toBe(404)

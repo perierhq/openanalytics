@@ -205,11 +205,20 @@ describe('the revenue tool rows (ADR-0049 D2)', () => {
     for (const entry of MCP_TOOLS) {
       expect(entry.path, entry.name).not.toContain('transactions')
       expect(entry.path, entry.name).not.toContain('journey')
-      expect(entry.path, entry.name).not.toContain('visitor')
       // Realtime mints a credential rather than returning a read, and a tool
       // that hands a model a bearer token is a category error.
       expect(entry.path, entry.name).not.toContain('realtime')
     }
+  })
+
+  it('names a visitor only in the two person-only visitor reads', () => {
+    // The visitor reads are pseudonymous rows (a rotating hash), not customer
+    // rows: the row-level revenue half stays out because the read route drops
+    // `revenue_events` (api-read-person-routes.test.ts). Any other path naming
+    // a visitor would be a read nobody has decided.
+    expect(
+      MCP_TOOLS.filter((entry) => entry.path.includes('visitor')).map((entry) => entry.path),
+    ).toEqual(['/read/analytics/recent-visitors', '/read/analytics/visitor'])
   })
 
   it('dispatches into the revenue route with the range, the site header and the site’s zone', () => {

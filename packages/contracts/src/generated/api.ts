@@ -1992,6 +1992,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/analytics/recent-visitors": {
+        parameters: {
+            query: {
+                /**
+                 * @description How many hours back the recent-visitor window reaches. Capped well below
+                 *     the other read ranges because these operations read the event facts per
+                 *     visitor rather than a rollup.
+                 */
+                hours?: components["parameters"]["RecentWindowHours"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description Maximum visitors to return. */
+                limit?: components["parameters"]["RecentVisitorsLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Individual visitors seen in a short recent window. Session or OAuth.
+         * @description The same response as `GET /v1/sites/{site_id}/analytics/recent-visitors`:
+         *     one row per anonymous visitor hash, which rotates at UTC midnight and
+         *     is not a durable handle on a person (ADR-0036).
+         *
+         *     A person's read, not a key's: a private key gets `403`. ADR-0042 D4 kept
+         *     individual visitors off the site-bound key surface, and they stay off it.
+         *
+         *     The `revenue` marker is served to an **owner** (ADR-0036 CP7) whose
+         *     credential also carries `revenue:read`; for anyone else it is absent,
+         *     never zero. The scope is a ceiling on the capability, as on the revenue
+         *     reads (ADR-0043 D4).
+         *
+         *     Requires the `analytics:read` scope.
+         */
+        get: operations["readAnalyticsRecentVisitors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/read/analytics/visitor": {
+        parameters: {
+            query: {
+                /**
+                 * @description A `visitor` value taken from a `recent-visitors` row or a realtime feed
+                 *     event — always the D-102 anonymous hash (ADR-0036). Opaque, site-scoped
+                 *     and rotating at UTC midnight, so it is not a durable handle on a person.
+                 */
+                hash: components["parameters"]["VisitorHash"];
+                /**
+                 * @description How many hours back the recent-visitor window reaches. Capped well below
+                 *     the other read ranges because these operations read the event facts per
+                 *     visitor rather than a rollup.
+                 */
+                hours?: components["parameters"]["RecentWindowHours"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One visitor's page-by-page trail over the recent window. Session or OAuth.
+         * @description The same response as `GET /v1/sites/{site_id}/analytics/visitor`, with
+         *     one subtraction: **`revenue_events` is never served here.** Those
+         *     entries are the transaction journey's vocabulary, and the journey stays
+         *     off `/v1/read` for every credential (ADR-0043 D15). The summed `revenue`
+         *     marker follows the rule `recent-visitors` gives.
+         *
+         *     A person's read, not a key's: a private key gets `403`.
+         *
+         *     Requires the `analytics:read` scope.
+         */
+        get: operations["readAnalyticsVisitor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/members": {
         parameters: {
             query?: never;
@@ -5682,7 +5822,8 @@ export interface components {
          *       when a create request names no scopes.
          *     - `analytics:read` — the aggregate reads under `/v1/read/analytics/`:
          *       seven for a key, plus the person-only reads (custom events,
-         *       performance, funnels) for an OAuth token or a session. Never granted
+         *       performance, funnels, recent visitors and one visitor's trail) for
+         *       an OAuth token or a session. Never granted
          *       implicitly.
          *     - `realtime:read` — a realtime token for the selected site
          *       (`POST /v1/read/realtime/token`).
@@ -11792,6 +11933,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsFunnelResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["MissingScopeOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readAnalyticsRecentVisitors: {
+        parameters: {
+            query: {
+                /**
+                 * @description How many hours back the recent-visitor window reaches. Capped well below
+                 *     the other read ranges because these operations read the event facts per
+                 *     visitor rather than a rollup.
+                 */
+                hours?: components["parameters"]["RecentWindowHours"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description Maximum visitors to return. */
+                limit?: components["parameters"]["RecentVisitorsLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent visitors, newest last-seen first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsRecentVisitorsResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["MissingScopeOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readAnalyticsVisitor: {
+        parameters: {
+            query: {
+                /**
+                 * @description A `visitor` value taken from a `recent-visitors` row or a realtime feed
+                 *     event — always the D-102 anonymous hash (ADR-0036). Opaque, site-scoped
+                 *     and rotating at UTC midnight, so it is not a durable handle on a person.
+                 */
+                hash: components["parameters"]["VisitorHash"];
+                /**
+                 * @description How many hours back the recent-visitor window reaches. Capped well below
+                 *     the other read ranges because these operations read the event facts per
+                 *     visitor rather than a rollup.
+                 */
+                hours?: components["parameters"]["RecentWindowHours"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The visitor's sessions and the pages in each. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalyticsVisitorResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];

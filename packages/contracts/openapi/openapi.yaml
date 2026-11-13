@@ -1885,6 +1885,96 @@ paths:
         '503':
           $ref: '#/components/responses/AnalyticsUnavailable'
 
+  /v1/read/analytics/recent-visitors:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RecentWindowHours'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/RecentVisitorsLimit'
+    get:
+      operationId: readAnalyticsRecentVisitors
+      tags: [read-key]
+      summary: Individual visitors seen in a short recent window. Session or OAuth.
+      description: |
+        The same response as `GET /v1/sites/{site_id}/analytics/recent-visitors`:
+        one row per anonymous visitor hash, which rotates at UTC midnight and
+        is not a durable handle on a person (ADR-0036).
+
+        A person's read, not a key's: a private key gets `403`. ADR-0042 D4 kept
+        individual visitors off the site-bound key surface, and they stay off it.
+
+        The `revenue` marker is served to an **owner** (ADR-0036 CP7) whose
+        credential also carries `revenue:read`; for anyone else it is absent,
+        never zero. The scope is a ceiling on the capability, as on the revenue
+        reads (ADR-0043 D4).
+
+        Requires the `analytics:read` scope.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: Recent visitors, newest last-seen first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsRecentVisitorsResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/read/analytics/visitor:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/VisitorHash'
+      - $ref: '#/components/parameters/RecentWindowHours'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: readAnalyticsVisitor
+      tags: [read-key]
+      summary: One visitor's page-by-page trail over the recent window. Session or OAuth.
+      description: |
+        The same response as `GET /v1/sites/{site_id}/analytics/visitor`, with
+        one subtraction: **`revenue_events` is never served here.** Those
+        entries are the transaction journey's vocabulary, and the journey stays
+        off `/v1/read` for every credential (ADR-0043 D15). The summed `revenue`
+        marker follows the rule `recent-visitors` gives.
+
+        A person's read, not a key's: a private key gets `403`.
+
+        Requires the `analytics:read` scope.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: The visitor's sessions and the pages in each.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsVisitorResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/sites/{site_id}/members:
     parameters:
       - name: site_id
@@ -6875,7 +6965,8 @@ components:
           when a create request names no scopes.
         - `analytics:read` — the aggregate reads under `/v1/read/analytics/`:
           seven for a key, plus the person-only reads (custom events,
-          performance, funnels) for an OAuth token or a session. Never granted
+          performance, funnels, recent visitors and one visitor's trail) for
+          an OAuth token or a session. Never granted
           implicitly.
         - `realtime:read` — a realtime token for the selected site
           (`POST /v1/read/realtime/token`).
