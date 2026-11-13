@@ -63,7 +63,14 @@ env:
   REGISTRY: ghcr.io
   # Lower-cased on purpose: the organisation is `OpenLabs-so` and a registry path
   # must be lower case, so `${{ github.repository_owner }}` cannot be used raw.
-  IMAGE_REPO: ghcr.io/openlabs-so/openanalytics
+  #
+  # A fork publishes to its own registry by setting the repository variable
+  # `OA_IMAGE_REPO` (Settings → Secrets and variables → Actions → Variables),
+  # lower case, for example `ghcr.io/perierhq/openanalytics`. Unset, it is this
+  # repository's. The token below can only write to its own owner's packages,
+  # so a fork without the variable fails at the push instead of publishing
+  # anywhere.
+  IMAGE_REPO: ${{ vars.OA_IMAGE_REPO || 'ghcr.io/openlabs-so/openanalytics' }}
 
 jobs:
   # Cheap and first: a tag that disagrees with the tree is a release nobody can

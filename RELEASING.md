@@ -135,6 +135,24 @@ against the version it is a candidate for — `v0.2.0-rc.1` wants `0.2.0` in
 `package.json`, not `0.2.0-rc.1`, so a second attempt is a tag rather than
 another commit.
 
+## Releasing from a fork
+
+A fork can run the same workflow and publish its own images. Set the
+repository variable `OA_IMAGE_REPO` to the fork's registry path, in lower case
+(`ghcr.io/perierhq/openanalytics` for the perierhq fork); the workflow pushes
+there instead of `ghcr.io/openlabs-so/openanalytics`. Everything else in this
+file applies, including the package visibility check below.
+
+Tag a fork's build as a pre-release (`vX.Y.Z-<fork>.N`), so it never moves
+`latest`. The version check compares only the part before the `-`, so the
+perierhq build `v0.8.1-perier.1` has `0.8.1` in `package.json`. A deployment
+then names the fork's registry when it upgrades, because `upgrade.sh` defaults
+to this repository's:
+
+```sh
+OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.8.1-perier.1
+```
+
 ## Check that a new package is public. Do not assume either way
 
 A container package can be **private when it is first created**, whatever the
