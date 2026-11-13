@@ -10,6 +10,10 @@ import {
   isUtcDayAligned,
   isUtcMinuteAligned,
   isUtcQuarterAligned,
+  MAX_FUNNEL_STEP_CONDITIONS,
+  funnelPagePatternToLike,
+  funnelStepsSchema,
+  parseFunnelStep,
   type AnalyticsFilter,
   type RollupResolution,
 } from '@openanalytics/domain'
@@ -1625,28 +1629,70 @@ const pageSessionOperations: readonly QueryOperation[] = [
 // ---------------------------------------------------------------------------
 
 const FUNNEL_MAX_STEPS = 8
+const FUNNEL_MAX_CONDITIONS = MAX_FUNNEL_STEP_CONDITIONS
 
-/** `{step_count} >= k AND event_key = {step_k}` for each fixed slot. */
+/**
+ * A property's value as text, as a step condition compares it: a JSON string
+ * as itself, a number or boolean as its JSON text. `funnelPropertyText` in the
+ * domain is the reference, and the property breakdown stores the same text.
+ */
+function funnelPropertyValue(keyPlaceholder: string): string {
+  return (
+    `if(JSONType(er.properties, ${keyPlaceholder}) = 'String', ` +
+    `JSONExtractString(er.properties, ${keyPlaceholder}), ` +
+    `JSONExtractRaw(er.properties, ${keyPlaceholder}))`
+  )
+}
+
+/**
+ * One fixed slot per step, gated by `{step_count} >= k`. The step kind is a
+ * bound value, never SQL: `page` is a LIKE over pageview paths, `event` a name
+ * plus up to three property conditions (an unused condition binds an empty
+ * key and passes), and `key` is the original rule — the page path of a
+ * pageview or the name of anything else, exactly. Every funnel stored before
+ * step kinds existed binds `key` in every slot, so its statement differs only
+ * in the identity map below.
+ */
 function funnelStepConditions(): string {
   const conditions: string[] = []
   for (let k = 1; k <= FUNNEL_MAX_STEPS; k += 1) {
     const tail = k === FUNNEL_MAX_STEPS ? '' : ','
+    const where: string[] = []
+    for (let j = 1; j <= FUNNEL_MAX_CONDITIONS; j += 1) {
+      const key = `{step_${k}_where_${j}_key:String}`
+      where.push(
+        `(${key} = '' OR (JSONHas(er.properties, ${key}) AND ` +
+          `${funnelPropertyValue(key)} = {step_${k}_where_${j}_value:String}))`,
+      )
+    }
     conditions.push(
-      `      ({step_count:UInt8} >= ${k}) AND ` +
-        `(if(er.type = 'page_view', er.page_path, er.name) = {step_${k}:String})${tail}`,
+      `      ({step_count:UInt8} >= ${k}) AND multiIf(\n` +
+        `        {step_${k}_kind:String} = 'page', er.type = 'page_view' AND like(er.page_path, {step_${k}:String}),\n` +
+        `        {step_${k}_kind:String} = 'event', er.type != 'page_view' AND er.name = {step_${k}:String} AND ${where.join(' AND ')},\n` +
+        `        if(er.type = 'page_view', er.page_path, er.name) = {step_${k}:String})${tail}`,
     )
   }
   return conditions.join('\n')
 }
 
-/** `countIf(units.level >= k) AS step_k` for each fixed slot. */
-function funnelStepCounts(): string {
+/** Per-visitor unit counts, `countIf(units.level >= k) AS u_k`, for each slot. */
+function funnelUnitCounts(): string {
   const counts: string[] = []
   for (let k = 1; k <= FUNNEL_MAX_STEPS; k += 1) {
-    const tail = k === FUNNEL_MAX_STEPS ? '' : ','
-    counts.push(`  countIf(units.level >= ${k}) AS step_${k}${tail}`)
+    counts.push(`    countIf(units.level >= ${k}) AS u_${k},`)
   }
   return counts.join('\n')
+}
+
+/** The per-step outputs: units, buyers among them and those buyers' revenue. */
+function funnelStepOutputs(): string {
+  const outputs: string[] = []
+  for (let k = 1; k <= FUNNEL_MAX_STEPS; k += 1) {
+    outputs.push(`  sum(v.u_${k}) AS step_${k},`)
+    outputs.push(`  countIf(v.vlevel >= ${k} AND v.orders > 0) AS buyers_${k},`)
+    outputs.push(`  sumIf(v.revenue_minor, v.vlevel >= ${k}) AS revenue_${k},`)
+  }
+  return outputs.join('\n')
 }
 
 const FUNNEL_MAX_SPAN_MS = 92 * MS_PER_DAY
@@ -1657,8 +1703,12 @@ const funnelParamsSchema = z
     site_id: z.uuid(),
     from: utcInstantSchema,
     to: utcInstantSchema,
-    steps: z.array(z.string().min(1).max(512)).min(2).max(FUNNEL_MAX_STEPS),
+    // The domain schema, so a step the api accepted is a step this binds: the
+    // two cannot disagree on what a JSON step object may say.
+    steps: funnelStepsSchema,
     window_ms: z.number().int().min(1).max(FUNNEL_MAX_WINDOW_MS),
+    // Absent is "no revenue", which is every caller that predates it.
+    with_revenue: z.boolean().default(false),
   })
   .superRefine((value, ctx) => {
     const fromMs = Date.parse(value.from)
@@ -1675,6 +1725,31 @@ const funnelParamsSchema = z
     }
   })
 
+/**
+ * The anonymous id -> identify hash map, from the identify rows of the range.
+ *
+ * Read from one day before `from`, because the anonymous id rotates at UTC
+ * midnight: an identify earlier on the range's first day still names that
+ * day's id, and no earlier pairing can (the id did not exist yet). The latest
+ * pairing wins, as in `resolveFunnelUnits`. The scan is the funnel's own range
+ * plus that day, on the same `(site_id, occurred_at)` sort-key prefix.
+ */
+const FUNNEL_IDENTITY_MAP = [
+  '  LEFT JOIN (',
+  '    SELECT ix.anonymous_id AS anonymous_id, argMax(ix.user_id, ix.occurred_at) AS identified_as',
+  '    FROM events_raw AS ix',
+  '    WHERE ix.site_id = {site_id:UUID}',
+  "      AND ix.occurred_at >= toDateTime64({from:String}, 3, 'UTC') - INTERVAL 1 DAY",
+  "      AND ix.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+  "      AND ix.type = 'identify'",
+  "      AND ix.user_id != ''",
+  '    GROUP BY ix.anonymous_id',
+  '  ) AS idm ON idm.anonymous_id = er.anonymous_id',
+].join('\n')
+
+/** The resolved identity — the key `revenue_attributions.visitor_id` carries. */
+const FUNNEL_VISITOR_KEY = "if(idm.identified_as != '', idm.identified_as, er.anonymous_id)"
+
 function defineFunnel(definition: {
   id: string
   unitExpr: string
@@ -1682,23 +1757,61 @@ function defineFunnel(definition: {
 }): QueryOperation {
   const sql = [
     'SELECT',
-    funnelStepCounts(),
+    funnelStepOutputs(),
+    // One currency per site by construction (the projection writes every fact
+    // in the site's reporting currency); empty when no buyer was found.
+    '  anyIf(v.currency, v.orders > 0) AS currency',
     'FROM (',
     '  SELECT',
-    '    windowFunnel({window_ms:UInt64})(',
+    '    units.vkey AS vkey,',
+    '    max(units.level) AS vlevel,',
+    funnelUnitCounts(),
+    '    any(rev.revenue_minor) AS revenue_minor,',
+    '    any(rev.orders) AS orders,',
+    '    any(rev.currency) AS currency',
+    '  FROM (',
+    '    SELECT',
+    `      ${definition.unitExpr} AS unit,`,
+    `      any(${FUNNEL_VISITOR_KEY}) AS vkey,`,
+    '      windowFunnel({window_ms:UInt64})(',
     // windowFunnel's timestamp argument accepts Date/DateTime and unsigned
     // integers; toUnixTimestamp64Milli returns Int64, so cast to UInt64 (the
     // value is always positive) to keep the millisecond window unit.
-    '      toUInt64(toUnixTimestamp64Milli(er.occurred_at)),',
+    '        toUInt64(toUnixTimestamp64Milli(er.occurred_at)),',
     funnelStepConditions(),
-    '    ) AS level',
-    '  FROM events_raw AS er',
-    '  WHERE er.site_id = {site_id:UUID}',
-    "    AND er.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
-    "    AND er.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
-    "    AND er.type IN ('page_view', 'custom_event', 'conversion')",
-    `  GROUP BY ${definition.unitExpr}`,
-    ') AS units',
+    '      ) AS level',
+    '    FROM events_raw AS er',
+    FUNNEL_IDENTITY_MAP,
+    '    WHERE er.site_id = {site_id:UUID}',
+    "      AND er.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+    "      AND er.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+    "      AND er.type IN ('page_view', 'custom_event', 'conversion')",
+    '    GROUP BY unit',
+    '  ) AS units',
+    // Attributed, converted charges of the range per resolved identity — the
+    // visitor-revenue read's own facts and eligibility rule. Gated by
+    // `{with_revenue}` so a caller who may not see money never has it read:
+    // the api binds it only for an owner whose credential carries
+    // revenue:read, and every other caller gets zeros it then drops.
+    '  LEFT JOIN (',
+    '    SELECT',
+    '      att.visitor_id AS visitor_key,',
+    '      sum(cur.reporting_gross_minor) AS revenue_minor,',
+    '      count() AS orders,',
+    '      any(cur.reporting_currency) AS currency',
+    '    FROM (',
+    VISITOR_REVENUE_FACTS,
+    '    ) AS cur',
+    '    INNER JOIN (',
+    VISITOR_REVENUE_ATTRIBUTIONS,
+    '    ) AS att ON att.object_id = cur.object_id',
+    VISITOR_REVENUE_ELIGIBLE,
+    "      AND cur.conversion_source != 'unavailable'",
+    '      AND {with_revenue:UInt8} = 1',
+    '    GROUP BY att.visitor_id',
+    '  ) AS rev ON rev.visitor_key = units.vkey',
+    '  GROUP BY units.vkey',
+    ') AS v',
   ].join('\n')
 
   return defineOperation({
@@ -1717,34 +1830,56 @@ function defineFunnel(definition: {
         to: toClickHouseInstant(params.to),
         window_ms: params.window_ms,
         step_count: steps.length,
+        with_revenue: params.with_revenue ? 1 : 0,
       }
       for (let k = 1; k <= FUNNEL_MAX_STEPS; k += 1) {
-        bound[`step_${k}`] = steps[k - 1] ?? ''
+        const raw = steps[k - 1]
+        const parsed = raw === undefined ? null : parseFunnelStep(raw)
+        const step = parsed?.ok === true ? parsed.step : null
+        bound[`step_${k}_kind`] = step?.kind ?? 'key'
+        bound[`step_${k}`] =
+          step === null
+            ? ''
+            : step.kind === 'key'
+              ? step.key
+              : step.kind === 'page'
+                ? funnelPagePatternToLike(step.pattern)
+                : step.name
+        const where = step?.kind === 'event' ? step.where : []
+        for (let j = 1; j <= FUNNEL_MAX_CONDITIONS; j += 1) {
+          bound[`step_${k}_where_${j}_key`] = where[j - 1]?.key ?? ''
+          bound[`step_${k}_where_${j}_value`] = where[j - 1]?.value ?? ''
+        }
       }
       return bound
     },
   })
 }
 
-const funnelOperations: readonly QueryOperation[] = [
-  // The unit is the D-102 anonymous id — the ADR-0036 D3 identity rule for
-  // unit-counting reads. This is byte-identical to the resolved-identity
-  // expression it replaces on every row the funnel can see: the population is
-  // page_view/custom_event/conversion, and `user_id` is non-empty only on
-  // identify-typed rows, which are excluded above. The old expression merely
-  // looked like it folded identity; the new one says what it counts.
-  defineFunnel({
-    id: 'analytics.funnel_visitor',
-    summary: 'Ordered step funnel over events_raw, one unit per anonymous visitor id.',
-    unitExpr: 'er.anonymous_id',
-  }),
-  defineFunnel({
-    id: 'analytics.funnel_session',
-    summary:
-      'Ordered step funnel over events_raw, one unit per (anonymous id, client session hint).',
-    unitExpr: '(er.anonymous_id, er.session_id)',
-  }),
-]
+/**
+ * Built on first use rather than at module load: the statement embeds the
+ * visitor-revenue fragments, which are declared further down this file.
+ */
+function funnelOperations(): readonly QueryOperation[] {
+  return [
+    // The unit is the resolved identity: the identify hash an anonymous id was
+    // paired with in the range, else the D-102 anonymous id (ADR-0036 D3). The
+    // funnel rows themselves never carry a `user_id` (only identify rows do),
+    // which is why the pairing is read from the identify rows by a join.
+    defineFunnel({
+      id: 'analytics.funnel_visitor',
+      summary:
+        'Ordered step funnel over events_raw, one unit per resolved visitor (identify hash, else anonymous id), with buyers and revenue per step.',
+      unitExpr: FUNNEL_VISITOR_KEY,
+    }),
+    defineFunnel({
+      id: 'analytics.funnel_session',
+      summary:
+        'Ordered step funnel over events_raw, one unit per (anonymous id, client session hint), with buyers and revenue per step.',
+      unitExpr: '(er.anonymous_id, er.session_id)',
+    }),
+  ]
+}
 
 // ---------------------------------------------------------------------------
 // Recent visitors (ADR-0024).
@@ -3583,7 +3718,7 @@ const OPERATIONS: readonly QueryOperation[] = [
   ...importedReportOperations,
   ...sessionOperations,
   ...pageSessionOperations,
-  ...funnelOperations,
+  ...funnelOperations(),
   ...recentVisitorOperations,
   ...filteredOperations,
   ...revenueOperations,

@@ -325,7 +325,13 @@ describe('operation registry', () => {
     )
     expect(recent.sql).not.toContain("if(er.user_id != '', er.user_id, er.anonymous_id)")
     expect(trail.sql).toContain('er.anonymous_id = {visitor:String}')
-    expect(funnel.sql).toContain('GROUP BY er.anonymous_id')
+    // The funnel's visitor unit is the anonymous id, or the identify hash it
+    // was paired with: a signed-in person's days are one unit, never a
+    // competing row identity next to their anonymous one.
+    expect(funnel.sql).toContain(
+      "if(idm.identified_as != '', idm.identified_as, er.anonymous_id) AS unit",
+    )
+    expect(funnel.sql).toContain('GROUP BY unit')
 
     const day = 24 * 3_600_000
     const from = '2026-07-23T00:00:00.000Z'
@@ -400,9 +406,12 @@ describe('operation registry', () => {
     })
     expect(bound?.['step_count']).toBe(2)
     expect(bound?.['step_1']).toBe('/pricing')
+    expect(bound?.['step_1_kind']).toBe('key')
     expect(bound?.['step_2']).toBe('signup')
     // Unused slots are bound to an empty string, gated off by the step_count guard.
     expect(bound?.['step_8']).toBe('')
+    // Revenue is opt-in: a caller that predates it reads none.
+    expect(bound?.['with_revenue']).toBe(0)
     expect(funnel?.sql).toContain('windowFunnel({window_ms:UInt64})')
     // A range past the synchronous funnel cap is refused (async is a follow-up).
     expect(() =>
@@ -424,6 +433,47 @@ describe('operation registry', () => {
         window_ms: 1_000,
       }),
     ).toThrow(ApiError)
+  })
+
+  it('binds step kinds as values, never SQL, and refuses a malformed step object', () => {
+    const funnel = findOperation('analytics.funnel_session')!
+    const bound = funnel.bindParams({
+      site_id: SITE,
+      from: '2026-07-01T00:00:00.000Z',
+      to: '2026-07-08T00:00:00.000Z',
+      steps: [
+        '{"page":"/de/discount/*"}',
+        '{"event":"plan_selected","where":{"plan":"yearly","trial":"true"}}',
+        '/100%_done',
+      ],
+      window_ms: 1_800_000,
+      with_revenue: true,
+    })
+    expect(bound['step_1_kind']).toBe('page')
+    expect(bound['step_1']).toBe('/de/discount/%')
+    expect(bound['step_2_kind']).toBe('event')
+    expect(bound['step_2']).toBe('plan_selected')
+    expect(bound['step_2_where_1_key']).toBe('plan')
+    expect(bound['step_2_where_1_value']).toBe('yearly')
+    expect(bound['step_2_where_2_key']).toBe('trial')
+    expect(bound['step_2_where_3_key']).toBe('')
+    // A legacy key is compared exactly, so its LIKE metacharacters stay literal.
+    expect(bound['step_3_kind']).toBe('key')
+    expect(bound['step_3']).toBe('/100%_done')
+    expect(bound['with_revenue']).toBe(1)
+    expect(funnel.sql).toContain('like(er.page_path, {step_1:String})')
+
+    for (const bad of ['{"page":"no-slash"}', '{nope', '{"event":"x","extra":1}']) {
+      expect(() =>
+        funnel.bindParams({
+          site_id: SITE,
+          from: '2026-07-01T00:00:00.000Z',
+          to: '2026-07-02T00:00:00.000Z',
+          steps: ['/a', bad],
+          window_ms: 1_000,
+        }),
+      ).toThrow(ApiError)
+    }
   })
 
   it('is a single statement with no comment escape', () => {
