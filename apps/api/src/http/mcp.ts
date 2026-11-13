@@ -1007,8 +1007,21 @@ export interface McpRoutesDeps {
   /** The api's own public origin, for building the internal request's URL and
    * the RFC 9728 metadata. */
   readonly resourceUrl: string
-  /** The authorization server's issuer — Better Auth's base. */
+  /**
+   * The authorization server's issuer, exactly as its own metadata spells it.
+   *
+   * Better Auth issues as its configured `baseURL` — the api origin, not the
+   * `/api/auth` path its endpoints live under — and an OAuth client compares
+   * this string with the `issuer` in the document it fetches (RFC 8414 §3.3).
+   * Any other spelling is an "issuer mismatch" and no MCP host gets further.
+   */
   readonly authorizationServer: string
+  /**
+   * Where Better Auth serves its RFC 8414 document, which is not the issuer's
+   * well-known URL: the plugin mounts it under its own base path. The root
+   * aliases below forward here.
+   */
+  readonly authorizationServerMetadataUrl: string
   /**
    * Resolves a bearer to a live OAuth grant, or nothing.
    *
@@ -1056,19 +1069,18 @@ export function createMcpRoutes(deps: McpRoutesDeps): Hono<Env> {
   /**
    * RFC 8414 authorization-server metadata, at the origin's root (ADR-0047 D7).
    *
-   * The issuer is `<origin>/api/auth`, so RFC 8414 §3.1's well-known URL is the
-   * *path-insertion* spelling — `/.well-known/oauth-authorization-server/api/auth`
-   * — while many OAuth clients (MCP hosts among them) also try the bare root
-   * document. Both answer here, and neither is a second authorship: the request
+   * The issuer is the bare origin, so RFC 8414 §3.1's well-known URL is the
+   * root document; an issuer with a path gets the *path-insertion* spelling
+   * too. `/.well-known/oauth-authorization-server/api/auth` stays as an alias
+   * for clients that cached 0.8.0's advertisement of `<origin>/api/auth`. All of
+   * them answer here, and none is a second authorship: the request
    * is forwarded through `dispatch` to Better Auth's own document, which
    * carries the ADR-0047 overrides (`registration_endpoint`, the full scope
    * list). An alias that re-stated the JSON would age the first time the
    * plugin's document moved.
    */
   const forwardAuthorizationServerMetadata = async (): Promise<Response> => {
-    const response = await deps.dispatch(
-      new Request(`${deps.authorizationServer}/.well-known/oauth-authorization-server`),
-    )
+    const response = await deps.dispatch(new Request(deps.authorizationServerMetadataUrl))
     // Re-wrapped rather than returned as-is: the inner response is the
     // dispatched app's, and returning it directly would carry that route's
     // context headers into this one.
@@ -1077,8 +1089,13 @@ export function createMcpRoutes(deps: McpRoutesDeps): Hono<Env> {
       headers: { 'content-type': 'application/json' },
     })
   }
-  app.get('/.well-known/oauth-authorization-server', forwardAuthorizationServerMetadata)
-  app.get('/.well-known/oauth-authorization-server/api/auth', forwardAuthorizationServerMetadata)
+  const issuerPath = new URL(deps.authorizationServer).pathname.replace(/\/$/u, '')
+  const metadataPaths = new Set([
+    '/.well-known/oauth-authorization-server',
+    `/.well-known/oauth-authorization-server${issuerPath}`,
+    '/.well-known/oauth-authorization-server/api/auth',
+  ])
+  for (const path of metadataPaths) app.get(path, forwardAuthorizationServerMetadata)
 
   /**
    * `401` with the pointer RFC 9728 §5.1 requires.

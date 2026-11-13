@@ -234,6 +234,30 @@ describeIfPostgres('dynamic client registration', () => {
       }
     })
 
+    it('advertises the authorization server under the issuer its own metadata names', async () => {
+      // RFC 9728 §3.3 and RFC 8414 §3.3: a client takes `authorization_servers[0]`
+      // as an issuer, fetches that issuer's metadata from the RFC 8414 well-known
+      // URL, and refuses the document unless its `issuer` is that same string.
+      // 0.8.0 advertised `<origin>/api/auth` while Better Auth issues as its
+      // `baseURL`, and every MCP host stopped at "issuer mismatch".
+      const prm = await request('/.well-known/oauth-protected-resource')
+      expect(prm.status).toBe(200)
+      const { authorization_servers: servers } = (await prm.json()) as {
+        authorization_servers: string[]
+      }
+      expect(servers).toHaveLength(1)
+      const issuer = servers[0] as string
+
+      // RFC 8414 §3.1: the well-known segment goes between the host and any
+      // path the issuer has.
+      const parsed = new URL(issuer)
+      const path = parsed.pathname.replace(/\/$/u, '')
+      const res = await request(`/.well-known/oauth-authorization-server${path}`)
+      expect(res.status).toBe(200)
+      const doc = (await res.json()) as { issuer?: string }
+      expect(doc.issuer).toBe(issuer)
+    })
+
     it('mounts neither of the library’s registration endpoints', async () => {
       // The ungated one (`mcp/register`) is the door this milestone found open;
       // the session-gated one (`oauth2/register`) mints confidential clients.

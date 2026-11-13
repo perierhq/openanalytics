@@ -1038,7 +1038,9 @@ describeIfPostgres('the OAuth read arm', () => {
         authorization_servers: string[]
         scopes_supported: string[]
       }
-      expect(body.authorization_servers[0]).toContain('/api/auth')
+      // Better Auth's issuer, which is its `baseURL` — not the `/api/auth`
+      // path its endpoints are under (the 0.8.0 "issuer mismatch").
+      expect(body.authorization_servers).toEqual([ORIGIN])
       // The full grant vocabulary (ADR-0048): this list is where an MCP
       // client learns what it may request, so the OAuth-only scopes must
       // appear here or they never reach the consent screen.

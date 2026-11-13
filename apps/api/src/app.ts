@@ -321,6 +321,18 @@ function defaultTestEmailLimiter(): RateLimiter {
   return new InProcessRateLimiter({ requestsPerMinute: 5, burst: 5 })
 }
 
+/**
+ * The issuer Better Auth puts in its own metadata: its configured `baseURL`,
+ * spelled exactly as configured. Read off the instance rather than re-derived
+ * from the environment, so the advertised string and the issued one cannot
+ * disagree. Falls back to the api origin when there is no instance (or a test
+ * double without options), which is what `AUTH_BASE_URL` makes both of them.
+ */
+function authIssuer(auth: Auth | undefined, apiOrigin: string): string {
+  const options = (auth as { options?: { baseURL?: unknown } } | undefined)?.options
+  return typeof options?.baseURL === 'string' ? options.baseURL : apiOrigin
+}
+
 export function createApp(deps: AppDeps) {
   /**
    * The api's own public origin.
@@ -735,9 +747,13 @@ export function createApp(deps: AppDeps) {
       createMcpRoutes({
         dispatch: async (request) => app.fetch(request),
         resourceUrl: apiOrigin,
-        // Better Auth's own base is the issuer: `/api/auth/.well-known/openid-configuration`
-        // and `/api/auth/oauth2/*` are where a client goes next.
-        authorizationServer: `${apiOrigin}/api/auth`,
+        // The issuer is Better Auth's configured `baseURL` — the string its
+        // metadata puts in `issuer` — not the `/api/auth` path its endpoints
+        // live under. Advertising the path made every OAuth client stop at
+        // "issuer mismatch" (0.8.0). The document still lives under
+        // `/api/auth`, and so do the endpoints it names.
+        authorizationServer: authIssuer(deps.auth, apiOrigin),
+        authorizationServerMetadataUrl: `${apiOrigin}/api/auth/.well-known/oauth-authorization-server`,
         // The read arm's own resolver, so "is this token live" has one answer.
         verifyBearer: async (token) => resolveOAuthAccessToken(readDb, token),
         // The default calendar a ranged tool reads on (ADR-0079 D5), scoped to
