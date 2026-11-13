@@ -1,10 +1,8 @@
 # OpenAnalytics
 
-
 <a href="https://vercel.com/open-source-program">
   <img alt="Vercel OSS Program" src="https://vercel.com/oss/program-badge-2026.svg" />
 </a>
-
 
 Privacy-first web analytics. One lightweight tracker script, no
 cookies, no cross-site profiles, aggregate-only reads — self-hostable on your
