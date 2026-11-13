@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { computeFunnel, funnelConfigSchema, type FunnelEvent } from '@openanalytics/domain'
+import {
+  computeFunnel,
+  funnelConfigSchema,
+  funnelPagePatternToLike,
+  funnelPropertyText,
+  funnelStepsSchema,
+  parseFunnelStep,
+  resolveFunnelUnits,
+  type FunnelEvent,
+} from '@openanalytics/domain'
 
 /**
  * The pure funnel matcher (docs snapshot 02 §15; plan Milestone 8 item 7 and
@@ -113,5 +122,107 @@ describe('funnelConfigSchema', () => {
     const ok = funnelConfigSchema.safeParse({ steps: ['/a', '/b'], windowMs: 1_800_000 })
     expect(ok.success).toBe(true)
     expect(ok.success && ok.data.scope).toBe('visitor')
+  })
+})
+
+describe('funnel step kinds', () => {
+  const page = (unitKey: string, ms: number, id: string, path: string): FunnelEvent => ({
+    unitKey,
+    occurredMs: ms,
+    eventId: id,
+    stepKey: path,
+    isPageView: true,
+  })
+  const event = (
+    unitKey: string,
+    ms: number,
+    id: string,
+    name: string,
+    properties: Record<string, unknown> = {},
+  ): FunnelEvent => ({ unitKey, occurredMs: ms, eventId: id, stepKey: name, properties })
+
+  it('keeps a legacy key an exact match on path or name', () => {
+    expect(parseFunnelStep('/pricing')).toEqual({
+      ok: true,
+      step: { kind: 'key', key: '/pricing' },
+    })
+    expect(parseFunnelStep('/de/search/*')).toEqual({
+      ok: true,
+      step: { kind: 'key', key: '/de/search/*' },
+    })
+  })
+
+  it('parses page and event step objects and refuses malformed ones', () => {
+    expect(parseFunnelStep('{"page":"/de/search/*"}')).toEqual({
+      ok: true,
+      step: { kind: 'page', pattern: '/de/search/*' },
+    })
+    expect(parseFunnelStep('{"event":"plan_selected","where":{"plan":"yearly"}}')).toEqual({
+      ok: true,
+      step: { kind: 'event', name: 'plan_selected', where: [{ key: 'plan', value: 'yearly' }] },
+    })
+    expect(parseFunnelStep('{"page":"no-slash"}').ok).toBe(false)
+    expect(parseFunnelStep('{"page":"/a","event":"b"}').ok).toBe(false)
+    expect(parseFunnelStep('{"event":"x","where":{"oa_metric":"1"}}').ok).toBe(false)
+    expect(parseFunnelStep('{"event":"x","where":{"a":"1","b":"2","c":"3","d":"4"}}').ok).toBe(
+      false,
+    )
+    expect(parseFunnelStep('{not json').ok).toBe(false)
+    expect(funnelStepsSchema.safeParse(['/a', '{"page":"/b"}']).success).toBe(true)
+    expect(funnelStepsSchema.safeParse(['/a', '{"page":1}']).success).toBe(false)
+  })
+
+  it('matches a wildcard page step on pageviews only', () => {
+    const steps = ['{"page":"/de/search/*"}', 'checkout']
+    const events = [
+      page('A', 0, 'a1', '/de/search/berlin-munich'),
+      event('A', 1_000, 'a2', 'checkout'),
+      // B's matching path is a custom event name, not a pageview.
+      event('B', 0, 'b1', '/de/search/x'),
+      event('B', 1_000, 'b2', 'checkout'),
+      page('C', 0, 'c1', '/en/search/x'),
+    ]
+    expect(computeFunnel(events, { steps, windowMs: 60_000 }).map((r) => r.count)).toEqual([1, 1])
+  })
+
+  it('treats LIKE metacharacters in a page pattern literally', () => {
+    expect(funnelPagePatternToLike('/a_b%c/*')).toBe('/a\\_b\\%c/%')
+    const steps = ['{"page":"/a_b"}', 'x']
+    const events = [page('A', 0, 'a1', '/aXb'), event('A', 1, 'a2', 'x')]
+    expect(computeFunnel(events, { steps, windowMs: 60_000 }).map((r) => r.count)).toEqual([0, 0])
+  })
+
+  it('applies property conditions, comparing numbers and booleans as JSON text', () => {
+    const steps = ['/pricing', '{"event":"plan_selected","where":{"plan":"yearly","n":"2"}}']
+    const events = [
+      page('A', 0, 'a1', '/pricing'),
+      event('A', 1_000, 'a2', 'plan_selected', { plan: 'yearly', n: 2 }),
+      page('B', 0, 'b1', '/pricing'),
+      event('B', 1_000, 'b2', 'plan_selected', { plan: 'monthly', n: 2 }),
+    ]
+    expect(computeFunnel(events, { steps, windowMs: 60_000 }).map((r) => r.count)).toEqual([2, 1])
+    expect(funnelPropertyText(true)).toBe('true')
+    expect(funnelPropertyText(null)).toBeNull()
+  })
+
+  it('folds anonymous ids into the identify hash they were paired with', () => {
+    const unitOf = resolveFunnelUnits([
+      { anonymousId: 'mon', userId: 'u1', occurredMs: 10 },
+      { anonymousId: 'wed', userId: 'u1', occurredMs: 20 },
+      { anonymousId: 'x', userId: '', occurredMs: 30 },
+    ])
+    expect([unitOf('mon'), unitOf('wed'), unitOf('x'), unitOf('anon')]).toEqual([
+      'u1',
+      'u1',
+      'x',
+      'anon',
+    ])
+    const steps = ['/pricing', 'purchase']
+    const day = 86_400_000
+    const events = [
+      page(unitOf('mon'), 0, 'a1', '/pricing'),
+      event(unitOf('wed'), 2 * day, 'a2', 'purchase'),
+    ]
+    expect(computeFunnel(events, { steps, windowMs: 7 * day }).map((r) => r.count)).toEqual([1, 1])
   })
 })
