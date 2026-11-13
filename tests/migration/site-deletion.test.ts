@@ -256,7 +256,7 @@ describeIfPostgres('site deletion', () => {
       // 69, not 70 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047 and the two of ClickHouse 0031): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
       expect(targets).toHaveLength(69)
       const byStore = (store: string) => targets.filter((t) => t.store === store).length
-      expect(byStore('clickhouse')).toBe(36)
+      expect(byStore('clickhouse')).toBe(38)
       expect(byStore('redis')).toBe(5)
       expect(byStore('postgres')).toBe(25)
       expect(byStore('stripe')).toBe(0)

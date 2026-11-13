@@ -504,7 +504,7 @@ describeIfPostgres('import runs', () => {
       expect(targets).toHaveLength(69)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       const byStore = (store: string) => targets.filter((t) => t.store === store).length
-      expect(byStore('clickhouse')).toBe(36)
+      expect(byStore('clickhouse')).toBe(38)
       expect(byStore('redis')).toBe(5)
       expect(byStore('postgres')).toBe(25)
       expect(byStore('object')).toBe(1)
