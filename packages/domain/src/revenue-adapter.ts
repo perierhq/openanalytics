@@ -151,7 +151,8 @@ export interface RevenueEventNormalization {
   readonly subscriptions?: readonly RevenueSubscriptionObservation[]
   readonly subscriptionChanges?: readonly RevenueSubscriptionChange[]
   readonly invoiceHints?: readonly RevenueInvoiceHint[]
-  /** Present exactly when `observations` **and** `hints` are both empty. */
+  /** Present exactly when `observations`, `hints` and the three lifecycle lists
+   * are all empty. */
   readonly ignored?: RevenueIgnoreReason
 }
 

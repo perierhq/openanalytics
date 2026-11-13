@@ -52,6 +52,9 @@
  *   Checkout's payment mode is a charge, labelled `one_off`, and nothing else.
  */
 
+import { createHash } from 'node:crypto'
+import { canonicalize } from './revenue-ingest.ts'
+
 // --- Vocabulary --------------------------------------------------------------
 
 /**
@@ -194,6 +197,17 @@ export interface RevenueSubscriptionSnapshot {
   readonly canceled_at: string | null
   /** When the subscription actually ended. */
   readonly ended_at: string | null
+}
+
+/**
+ * The stored `payload_hash` of a subscription head: the same canonical JSON
+ * hash the money heads use, so the three-way decision means the same thing for
+ * both.
+ */
+export function revenueSubscriptionHash(snapshot: RevenueSubscriptionSnapshot): string {
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalize(snapshot)))
+    .digest('hex')
 }
 
 export interface RevenueSubscriptionObservation {

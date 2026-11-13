@@ -683,6 +683,7 @@ export {
   planSubscriptionLifecycle,
   purchaseKindFor,
   revenueLifecycleBackfillEventId,
+  revenueSubscriptionHash,
   subscriptionInterval,
   subscriptionMrrMinor,
   type PurchaseKind,

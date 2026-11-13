@@ -147,6 +147,7 @@ export {
 } from './credential-vault.ts'
 
 export {
+  STRIPE_LIFECYCLE_API_VERSION,
   STRIPE_LIST_PAGE_SIZE,
   STRIPE_REVENUE_PROVIDER_ID,
   createStripeRevenueAdapter,

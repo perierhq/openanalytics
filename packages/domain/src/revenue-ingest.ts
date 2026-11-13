@@ -457,7 +457,9 @@ export function decideRevenueObject(
  * differently while being identical, turning every reconcile sweep into a
  * spurious re-fetch.
  */
-function canonicalize(value: unknown): unknown {
+/** Key-sorted, `undefined`-free copy; the hash input. Shared with the
+ * subscription heads (`revenueSubscriptionHash`). */
+export function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize)
   if (typeof value === 'object' && value !== null) {
     const record = value as Record<string, unknown>
