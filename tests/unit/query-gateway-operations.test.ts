@@ -126,7 +126,27 @@ describe('operation registry', () => {
       // unconverted remainder — which reads facts for a range total because the
       // bucket cannot carry a currency dimension without breaking its own unit
       // of replacement.
+      // Revenue by first/last-touch dimension and its visitors denominator
+      // (Perier fork, DataFast gap 3): aggregates only, one operation per
+      // (touch, dimension) because a column is never a bound parameter.
+      'analytics.revenue_attribution_first_entry_page',
+      'analytics.revenue_attribution_first_referrer_domain',
+      'analytics.revenue_attribution_first_utm_campaign',
+      'analytics.revenue_attribution_first_utm_medium',
+      'analytics.revenue_attribution_first_utm_source',
+      'analytics.revenue_attribution_last_entry_page',
+      'analytics.revenue_attribution_last_referrer_domain',
+      'analytics.revenue_attribution_last_utm_campaign',
+      'analytics.revenue_attribution_last_utm_medium',
+      'analytics.revenue_attribution_last_utm_source',
+      'analytics.revenue_attribution_visitors_entry_page',
+      'analytics.revenue_attribution_visitors_referrer_domain',
+      'analytics.revenue_attribution_visitors_utm_campaign',
+      'analytics.revenue_attribution_visitors_utm_medium',
+      'analytics.revenue_attribution_visitors_utm_source',
+      'analytics.revenue_events_before_purchase',
       'analytics.revenue_order_objects',
+      'analytics.revenue_purchase_population',
       'analytics.revenue_summary_day',
       'analytics.revenue_summary_hour',
       'analytics.revenue_timeseries_day',
@@ -182,6 +202,10 @@ describe('operation registry', () => {
       // subquery (ADR-0036 CP7): the identify() hashes an anonymous id paired
       // inside the window, which only events_raw can answer.
       'analytics.visitor_revenue_entries',
+      // Perier fork, DataFast gap 4: the custom events a buyer's identity fired
+      // before their first charge. Range capped at 92 days, look-back window at
+      // 30, custom events only, one row per event name.
+      'analytics.revenue_events_before_purchase',
       // ADR-0075 D-F3: a filter selects sessions on the fact table, but the
       // report it produces is over the events those sessions did — and no
       // rollup carries both halves. Each is capped at 92 days with a row cap and

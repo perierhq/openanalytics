@@ -45,6 +45,16 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
   // without the bound one journey load scans every partition the site has ever
   // had, because the sort key leads on site and object id rather than on time.
   'analytics.revenue_order_objects': { object_id: 'ch_1' },
+  // Perier fork, DataFast gaps 3 and 4. The visitors denominator is bound to
+  // the dimension values the revenue read returned; the events-before-purchase
+  // read takes its look-back window.
+  ...Object.fromEntries(
+    ['referrer_domain', 'utm_source', 'utm_medium', 'utm_campaign', 'entry_page'].map((slug) => [
+      `analytics.revenue_attribution_visitors_${slug}`,
+      { values: ['google.com', "it's"] },
+    ]),
+  ),
+  'analytics.revenue_events_before_purchase': { window_ms: 86_400_000 },
 }
 
 /**

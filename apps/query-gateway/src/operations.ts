@@ -2738,6 +2738,410 @@ const revenueOperations: readonly QueryOperation[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Revenue by source, campaign and entry page, and the custom events that came
+// before a purchase (Perier fork, DataFast gaps 3 and 4).
+//
+// Both families read the money FACTS and the attribution rows through the same
+// argMax-per-object rule the transactions list uses, never `FINAL`, and both
+// return aggregates only: a dimension value or an event name with counts, never
+// an object id, a visitor id or a customer.
+//
+// ## Revenue by dimension (gap 3)
+//
+// One operation per (touch, dimension), because the touch and the dimension are
+// column choices and a column is never a bound parameter here. A charge whose
+// attribution row is missing or unmatched lands in ONE row whose value is NULL,
+// ordered first so the row cap can never cut it: unattributed revenue is a
+// first-class outcome (ADR-0033 D6) and a breakdown that silently dropped it
+// would add up to less than the summary above it.
+//
+// `revenue_minor` sums the reporting-currency gross of CONVERTED charges only.
+// An unconverted charge has zeroed reporting amounts, so it is counted in
+// `orders` and again in `unconverted_orders`, and never folded in as zero.
+//
+// ## Visitors per dimension value (the denominator)
+//
+// Read from the session facts, not from the sources rollup, and the reason is a
+// property of the rollup rather than a preference: `sources_*` counts every
+// page view under the referrer that page view carried, and an internal
+// navigation's self-referral is stored as the empty string -- so the rollup's
+// "direct" row is nearly every visitor the site had, and a conversion rate
+// against it would be meaningless. The session fact stores the ENTRY source of
+// each session, which is exactly what an attribution touchpoint is (migration
+// 0017 part A), so numerator and denominator count the same kind of thing. The
+// entry page has no rollup at all. Bound to the values the revenue read
+// returned, so the work is proportional to the rows shown, and capped at 92
+// days like every other fact-grain read.
+//
+// ## Events before purchase (gap 4)
+//
+// For each buyer (an attributed visitor with a charge in the range), the custom
+// events their identity fired in the `window_ms` before their FIRST charge in
+// the range. Reads `events_raw`, so it opts in to `allowRawEvents` and earns it
+// the way the funnel does: site-scoped, range capped at 92 days, window capped
+// at 30 days, custom events only (`name != ''`), one row per event name.
+//
+// The identity widening is the visitor-revenue rule run in the other direction:
+// an attribution keyed on an identify() hash also owns the anonymous ids that
+// hash was paired with inside the scanned window, so a `paywall_viewed` fired
+// before sign-in still counts for the buyer who signed in and paid.
+//
+// The baseline counts visitors who are NOT buyers and fired the event inside
+// the range itself. Its denominator (`visitors_total - buyers_total`) comes from
+// the population operation and is approximate: `metrics_15m` stores `uniq`
+// state, and an identified visitor's pre-identify anonymous id is a separate
+// visitor there exactly as it is everywhere else in the dashboard.
+// ---------------------------------------------------------------------------
+
+/** Longest range the fact-grain revenue breakdown reads. Same cap as the remainder. */
+const REVENUE_ATTRIBUTION_MAX_SPAN_MS = MAX_SPAN_HOUR_MS
+/** Longest range a session-fact or events_raw read here may scan. */
+const REVENUE_FACT_SCAN_MAX_SPAN_MS = 92 * MS_PER_DAY
+/** Bounds on the look-back window before a purchase. */
+const EVENTS_BEFORE_PURCHASE_MIN_WINDOW_MS = 60_000
+const EVENTS_BEFORE_PURCHASE_MAX_WINDOW_MS = 30 * MS_PER_DAY
+const EVENTS_BEFORE_PURCHASE_MAX_ROWS = 200
+/** Most dimension values one visitors read may name. */
+const ATTRIBUTION_VISITOR_VALUES_MAX = TOP_N_MAX
+
+export const REVENUE_ATTRIBUTION_TOUCHES = ['first', 'last'] as const
+export type RevenueAttributionTouch = (typeof REVENUE_ATTRIBUTION_TOUCHES)[number]
+
+/**
+ * The dimensions a charge can be grouped by: the attribution column suffix and
+ * the session-fact column that carries the same value for a session entry.
+ */
+export const REVENUE_ATTRIBUTION_DIMENSIONS = [
+  { slug: 'referrer_domain', attribution: 'referrer_domain', session: 'referrer_domain' },
+  { slug: 'utm_source', attribution: 'utm_source', session: 'utm_source' },
+  { slug: 'utm_medium', attribution: 'utm_medium', session: 'utm_medium' },
+  { slug: 'utm_campaign', attribution: 'utm_campaign', session: 'utm_campaign' },
+  { slug: 'entry_page', attribution: 'entry_page', session: 'entry_page_path' },
+] as const
+export type RevenueAttributionDimension = (typeof REVENUE_ATTRIBUTION_DIMENSIONS)[number]['slug']
+
+/**
+ * A string list as a ClickHouse array-literal parameter. Dimension values are
+ * visitor-supplied text (a campaign name, a path), so every character the
+ * literal or the parameter's escaped text form gives meaning to is escaped.
+ */
+function toClickHouseStringArray(values: readonly string[]): string {
+  const escape = (value: string): string =>
+    value
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\t/g, '\\t')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+  return `[${values.map((value) => `'${escape(value)}'`).join(',')}]`
+}
+
+function halfOpenSpan(
+  value: { from: string; to: string },
+  ctx: z.core.$RefinementCtx,
+  maxMs: number,
+  label: string,
+): void {
+  const fromMs = Date.parse(value.from)
+  const toMs = Date.parse(value.to)
+  if (fromMs >= toMs) {
+    ctx.addIssue({ code: 'custom', message: 'range must be half-open with from < to' })
+    return
+  }
+  if (toMs - fromMs > maxMs) {
+    ctx.addIssue({ code: 'custom', message: `${label} range span exceeds the ${maxMs}ms maximum` })
+  }
+  for (const key of ['from', 'to'] as const) {
+    if (!isUtcQuarterAligned(value[key])) {
+      ctx.addIssue({ code: 'custom', path: [key], message: `${key} must be quarter-hour-aligned` })
+    }
+  }
+}
+
+/** Current facts of the range: the eligible charges, one row per object. */
+const ATTRIBUTION_CHARGE_FACTS = [
+  '  SELECT',
+  '    re.object_id AS object_id,',
+  '    argMax(re.object_kind, re.version) AS object_kind,',
+  "    toDateTime64(argMax(re.occurred_at, re.version), 3, 'UTC') AS occurred_at,",
+  '    argMax(re.status, re.version) AS status,',
+  '    argMax(re.reporting_gross_minor, re.version) AS reporting_gross_minor,',
+  '    argMax(re.conversion_source, re.version) AS conversion_source',
+  '  FROM revenue_events AS re',
+  '  WHERE re.site_id = {site_id:UUID}',
+  "    AND re.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+  "    AND re.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+  '  GROUP BY re.site_id, re.provider, re.object_id',
+].join('\n')
+
+const ATTRIBUTION_CHARGE_ELIGIBLE = [
+  "cur.object_kind = 'charge'",
+  "cur.status NOT IN ('failed', 'canceled', 'cancelled')",
+]
+
+function defineRevenueAttribution(definition: {
+  touch: RevenueAttributionTouch
+  dimension: (typeof REVENUE_ATTRIBUTION_DIMENSIONS)[number]
+}): QueryOperation {
+  const prefix = definition.touch === 'first' ? 'ft_' : 'lt_'
+  const column = `${prefix}${definition.dimension.attribution}`
+  return defineOperation({
+    id: `analytics.revenue_attribution_${definition.touch}_${definition.dimension.slug}`,
+    summary: `Converted charge revenue, orders and buyers per ${definition.touch}-touch ${definition.dimension.slug}.`,
+    requiresSiteScope: true,
+    params: z
+      .strictObject({
+        site_id: z.uuid(),
+        from: utcInstantSchema,
+        to: utcInstantSchema,
+        limit: z.number().int().min(1).max(TOP_N_MAX).default(TOP_N_DEFAULT),
+      })
+      .superRefine((value, ctx) =>
+        halfOpenSpan(value, ctx, REVENUE_ATTRIBUTION_MAX_SPAN_MS, 'revenue attribution'),
+      ),
+    sql: [
+      'SELECT',
+      "  if(att.visitor_id = '', NULL, att.dim_value) AS value,",
+      "  sumIf(cur.reporting_gross_minor, cur.conversion_source != 'unavailable') AS revenue_minor,",
+      '  count() AS orders,',
+      "  countIf(cur.conversion_source = 'unavailable') AS unconverted_orders,",
+      "  uniqExactIf(att.visitor_id, att.visitor_id != '') AS buyers",
+      'FROM (',
+      ATTRIBUTION_CHARGE_FACTS,
+      ') AS cur',
+      'LEFT JOIN (',
+      '  SELECT',
+      '    ra.object_id AS object_id,',
+      '    argMax(ra.visitor_id, ra.version) AS visitor_id,',
+      `    argMax(ra.${column}, ra.version) AS dim_value`,
+      '  FROM revenue_attributions AS ra',
+      '  WHERE ra.site_id = {site_id:UUID}',
+      "    AND ra.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+      "    AND ra.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+      '  GROUP BY ra.site_id, ra.provider, ra.object_id',
+      ') AS att ON att.object_id = cur.object_id',
+      `WHERE ${ATTRIBUTION_CHARGE_ELIGIBLE.join('\n  AND ')}`,
+      'GROUP BY value',
+      'ORDER BY isNull(value) DESC, revenue_minor DESC, orders DESC, value ASC',
+      'LIMIT {limit:UInt32}',
+    ].join('\n'),
+    maxRows: TOP_N_MAX,
+    bind: (params) => ({
+      site_id: params.site_id,
+      from: toClickHouseInstant(params.from),
+      to: toClickHouseInstant(params.to),
+      limit: params.limit,
+    }),
+  })
+}
+
+function defineRevenueAttributionVisitors(
+  dimension: (typeof REVENUE_ATTRIBUTION_DIMENSIONS)[number],
+): QueryOperation {
+  return defineOperation({
+    id: `analytics.revenue_attribution_visitors_${dimension.slug}`,
+    summary: `Unique visitors whose session entered with each named ${dimension.slug}, from the session facts.`,
+    requiresSiteScope: true,
+    cacheProfile: 'default',
+    params: z
+      .strictObject({
+        site_id: z.uuid(),
+        from: utcInstantSchema,
+        to: utcInstantSchema,
+        values: z.array(z.string().max(2048)).min(1).max(ATTRIBUTION_VISITOR_VALUES_MAX),
+      })
+      .superRefine((value, ctx) =>
+        halfOpenSpan(value, ctx, REVENUE_FACT_SCAN_MAX_SPAN_MS, 'attribution visitors'),
+      ),
+    sql: [
+      'SELECT',
+      '  cur.dim_value AS value,',
+      '  uniqExact(cur.visitor_id) AS visitors',
+      'FROM (',
+      '  SELECT',
+      `    argMax(sfv.${dimension.session}, sfv.version) AS dim_value,`,
+      '    argMax(sfv.visitor_id, sfv.version) AS visitor_id,',
+      '    argMax(sfv.retracted, sfv.version) AS retracted',
+      '  FROM session_facts_versions AS sfv',
+      '  WHERE sfv.site_id = {site_id:UUID}',
+      "    AND sfv.session_start >= toDateTime64({from:String}, 3, 'UTC')",
+      "    AND sfv.session_start <  toDateTime64({to:String}, 3, 'UTC')",
+      '  GROUP BY sfv.site_id, sfv.session_id',
+      ') AS cur',
+      'WHERE cur.retracted = 0',
+      '  AND cur.dim_value IN {values:Array(String)}',
+      'GROUP BY value',
+      `LIMIT ${ATTRIBUTION_VISITOR_VALUES_MAX}`,
+    ].join('\n'),
+    maxRows: ATTRIBUTION_VISITOR_VALUES_MAX,
+    bind: (params) => ({
+      site_id: params.site_id,
+      from: toClickHouseInstant(params.from),
+      to: toClickHouseInstant(params.to),
+      values: toClickHouseStringArray(params.values),
+    }),
+  })
+}
+
+/** Buyers of the range: attributed identity and the first charge's instant. */
+const PURCHASE_BUYERS = [
+  '  SELECT',
+  '    att.visitor_id AS buyer,',
+  '    min(cur.occurred_at) AS purchased_at',
+  '  FROM (',
+  ATTRIBUTION_CHARGE_FACTS.replace(/^/gm, '  '),
+  '  ) AS cur',
+  '  INNER JOIN (',
+  '    SELECT',
+  '      ra.object_id AS object_id,',
+  '      argMax(ra.visitor_id, ra.version) AS visitor_id',
+  '    FROM revenue_attributions AS ra',
+  '    WHERE ra.site_id = {site_id:UUID}',
+  "      AND ra.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+  "      AND ra.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+  '    GROUP BY ra.site_id, ra.provider, ra.object_id',
+  '  ) AS att ON att.object_id = cur.object_id',
+  `  WHERE ${ATTRIBUTION_CHARGE_ELIGIBLE.join('\n    AND ')}`,
+  "    AND att.visitor_id != ''",
+  '  GROUP BY att.visitor_id',
+].join('\n')
+
+const purchaseRangeParams = z
+  .strictObject({
+    site_id: z.uuid(),
+    from: utcInstantSchema,
+    to: utcInstantSchema,
+  })
+  .superRefine((value, ctx) =>
+    halfOpenSpan(value, ctx, REVENUE_FACT_SCAN_MAX_SPAN_MS, 'events before purchase'),
+  )
+
+/**
+ * The two denominators of the events-before-purchase read: distinct buyers in
+ * the range, and visitors the site had in it (the overview's own `uniq`).
+ */
+const revenuePurchasePopulationOperation = defineOperation({
+  id: 'analytics.revenue_purchase_population',
+  summary: 'Distinct attributed buyers and total visitors in a range.',
+  requiresSiteScope: true,
+  params: purchaseRangeParams,
+  sql: [
+    'SELECT',
+    '  (SELECT count() FROM (',
+    PURCHASE_BUYERS,
+    '  )) AS buyers_total,',
+    '  (SELECT uniqMerge(t.visitors) FROM metrics_15m AS t',
+    '   WHERE t.site_id = {site_id:UUID}',
+    "     AND t.bucket_start >= toDateTime64({from:String}, 3, 'UTC')",
+    "     AND t.bucket_start <  toDateTime64({to:String}, 3, 'UTC')) AS visitors_total",
+  ].join('\n'),
+  maxRows: 1,
+  bind: (params) => ({
+    site_id: params.site_id,
+    from: toClickHouseInstant(params.from),
+    to: toClickHouseInstant(params.to),
+  }),
+})
+
+const revenueEventsBeforePurchaseOperation = defineOperation({
+  id: 'analytics.revenue_events_before_purchase',
+  summary:
+    'Per custom event: buyers who fired it in a bounded window before their first charge, and non-buyers who fired it in the range.',
+  requiresSiteScope: true,
+  allowRawEvents: true,
+  params: z
+    .strictObject({
+      site_id: z.uuid(),
+      from: utcInstantSchema,
+      to: utcInstantSchema,
+      window_ms: z
+        .number()
+        .int()
+        .min(EVENTS_BEFORE_PURCHASE_MIN_WINDOW_MS)
+        .max(EVENTS_BEFORE_PURCHASE_MAX_WINDOW_MS),
+      limit: z.number().int().min(1).max(EVENTS_BEFORE_PURCHASE_MAX_ROWS).default(50),
+    })
+    .superRefine((value, ctx) =>
+      halfOpenSpan(value, ctx, REVENUE_FACT_SCAN_MAX_SPAN_MS, 'events before purchase'),
+    ),
+  sql: [
+    'SELECT',
+    '  ev.event_name AS event_name,',
+    '  ev.event_type AS event_type,',
+    '  uniqExactIf(ev.visitor_key, ev.before_purchase = 1) AS buyers,',
+    '  countIf(ev.before_purchase = 1) AS events,',
+    '  uniqExactIf(ev.visitor_key, ev.is_buyer = 0 AND ev.in_range = 1) AS non_buyer_visitors',
+    'FROM (',
+    '  SELECT',
+    '    keyed.event_name AS event_name,',
+    '    keyed.event_type AS event_type,',
+    '    keyed.visitor_key AS visitor_key,',
+    "    toUInt8(b.buyer != '') AS is_buyer,",
+    "    toUInt8(keyed.occurred_at >= toDateTime64({from:String}, 3, 'UTC')) AS in_range,",
+    "    toUInt8(b.buyer != ''",
+    '      AND keyed.occurred_at < b.purchased_at',
+    '      AND keyed.occurred_at >= subtractMilliseconds(b.purchased_at, {window_ms:Int64})) AS before_purchase',
+    '  FROM (',
+    '    SELECT',
+    '      er.name AS event_name,',
+    '      er.type AS event_type,',
+    '      er.occurred_at AS occurred_at,',
+    "      if(er.user_id != '', er.user_id, if(link.user_id != '', link.user_id, er.anonymous_id)) AS visitor_key",
+    '    FROM events_raw AS er',
+    '    LEFT JOIN (',
+    '      SELECT l.anonymous_id AS anonymous_id, any(l.user_id) AS user_id',
+    '      FROM events_raw AS l',
+    '      WHERE l.site_id = {site_id:UUID}',
+    "        AND l.occurred_at >= toDateTime64({scan_from:String}, 3, 'UTC')",
+    "        AND l.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+    "        AND l.user_id != ''",
+    "        AND l.anonymous_id != ''",
+    '        AND l.user_id IN (SELECT pb.buyer FROM (',
+    PURCHASE_BUYERS.replace(/^/gm, '        '),
+    '        ) AS pb)',
+    '      GROUP BY l.anonymous_id',
+    '    ) AS link ON link.anonymous_id = er.anonymous_id',
+    '    WHERE er.site_id = {site_id:UUID}',
+    "      AND er.occurred_at >= toDateTime64({scan_from:String}, 3, 'UTC')",
+    "      AND er.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+    "      AND er.name != ''",
+    '  ) AS keyed',
+    '  LEFT JOIN (',
+    PURCHASE_BUYERS.replace(/^/gm, '  '),
+    '  ) AS b ON b.buyer = keyed.visitor_key',
+    ') AS ev',
+    'GROUP BY ev.event_name, ev.event_type',
+    'HAVING buyers > 0 OR non_buyer_visitors > 0',
+    'ORDER BY buyers DESC, non_buyer_visitors DESC, event_name ASC, event_type ASC',
+    'LIMIT {limit:UInt32}',
+  ].join('\n'),
+  maxRows: EVENTS_BEFORE_PURCHASE_MAX_ROWS,
+  bind: (params) => ({
+    site_id: params.site_id,
+    from: toClickHouseInstant(params.from),
+    to: toClickHouseInstant(params.to),
+    // The scan reaches back one window below the range, because a buyer whose
+    // first charge is at the range's floor still has a whole window before it.
+    scan_from: toClickHouseInstant(
+      new Date(Date.parse(params.from) - params.window_ms).toISOString(),
+    ),
+    window_ms: params.window_ms,
+    limit: params.limit,
+  }),
+})
+
+const revenueAttributionOperations: readonly QueryOperation[] = [
+  ...REVENUE_ATTRIBUTION_TOUCHES.flatMap((touch) =>
+    REVENUE_ATTRIBUTION_DIMENSIONS.map((dimension) =>
+      defineRevenueAttribution({ touch, dimension }),
+    ),
+  ),
+  ...REVENUE_ATTRIBUTION_DIMENSIONS.map((dimension) => defineRevenueAttributionVisitors(dimension)),
+  revenuePurchasePopulationOperation,
+  revenueEventsBeforePurchaseOperation,
+]
+
+// ---------------------------------------------------------------------------
 // Site cards — the whole account's list figures in one read (ADR-0080).
 //
 // The first operations in this registry that bind `{site_ids:Array(UUID)}`
@@ -3587,6 +3991,7 @@ const OPERATIONS: readonly QueryOperation[] = [
   ...recentVisitorOperations,
   ...filteredOperations,
   ...revenueOperations,
+  ...revenueAttributionOperations,
   ...siteCardOperations,
   freshnessOperation,
 ]
