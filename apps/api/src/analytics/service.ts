@@ -25,6 +25,12 @@ import {
 } from '@openanalytics/domain'
 import type { AnalyticsGateway } from '../gateway-client.ts'
 import {
+  buildSubscriptionSeries,
+  mapPurchaseKinds,
+  mapSubscriptionTotals,
+  purchaseKindOrNull,
+} from './subscriptions.ts'
+import {
   FILTERABLE_REPORT_SLUGS,
   FILTERED_MAX_SPAN_DAYS,
   IMPORT_RUN_OPERATIONS,
@@ -1992,6 +1998,130 @@ export class AnalyticsService {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Subscription lifecycle (Perier fork, DataFast gap 7). Kept in one block so
+  // neighbouring gaps can rebase around it; the row mapping is in
+  // `subscriptions.ts`.
+  // -------------------------------------------------------------------------
+
+  /**
+   * MRR, active and trialing subscriptions at both ends of the range, the
+   * movements inside it, and the range's charges split by purchase kind.
+   *
+   * The range is the revenue summary's own (`resolveRevenue`), so the two
+   * cards on one dashboard always describe the same instants. The purchase-kind
+   * split is a fact read capped at the hour-rollup span: it degrades rather than
+   * fails, exactly like the unconverted remainder, and `partial` says so.
+   */
+  async subscriptionSummary(req: RevenueRequest): Promise<Schemas['SubscriptionSummaryResponse']> {
+    const resolved = resolveRevenue(req)
+    if (!resolved.servable) this.#notServable(resolved.reason)
+    const range = { from: resolved.effectiveFrom, to: resolved.effectiveTo }
+
+    const [totals, kinds, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        'analytics.subscription_lifecycle_totals',
+        { site_id: req.siteId, ...range },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#querySubscriptionPurchaseKinds(req, range),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+
+    return {
+      meta: {
+        ...this.#meta({
+          requested: { from: req.from, to: req.to },
+          effective: range,
+          timezone: req.timezone,
+          resolution: resolved.grain,
+          freshness: this.#revenueFreshness(freshness, req.connection),
+          comparisonRange: null,
+          truncated: totals.meta.truncated,
+          cached: totals.meta.cached,
+          partial: kinds.degraded,
+        }),
+        revenue: this.#revenueMeta(req.connection),
+      },
+      totals: mapSubscriptionTotals(totals.rows[0], req.reportingCurrency),
+      purchase_kinds: kinds.rows,
+    }
+  }
+
+  async #querySubscriptionPurchaseKinds(
+    req: RevenueRequest,
+    range: { from: string; to: string },
+  ): Promise<{ rows: Schemas['SubscriptionPurchaseKindRow'][]; degraded: boolean }> {
+    try {
+      const result = await this.#gateway.query<Record<string, unknown>>(
+        'analytics.revenue_purchase_kinds',
+        { site_id: req.siteId, ...range },
+        { cacheEpoch: req.cacheEpoch },
+      )
+      return { rows: mapPurchaseKinds(result.rows), degraded: false }
+    } catch {
+      return { rows: [], degraded: true }
+    }
+  }
+
+  /**
+   * MRR, active and trialing subscriptions per site-local day.
+   *
+   * Two reads for one chart: the range's starting levels from the totals
+   * operation, and the per-day movements. The api runs the levels forward and
+   * fills the days with no movement, so the line is continuous and its last
+   * point equals the summary's `mrr_end_minor` for the same range.
+   */
+  async subscriptionTimeseries(
+    req: RevenueRequest,
+  ): Promise<Schemas['SubscriptionTimeseriesResponse']> {
+    const resolved = resolveRevenue(req)
+    if (!resolved.servable) this.#notServable(resolved.reason)
+    const range = { from: resolved.effectiveFrom, to: resolved.effectiveTo }
+
+    const [totals, days, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        'analytics.subscription_lifecycle_totals',
+        { site_id: req.siteId, ...range },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#gateway.query<Record<string, unknown>>(
+        'analytics.subscription_timeseries_day',
+        { site_id: req.siteId, ...range, timezone: req.timezone },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+    const start = mapSubscriptionTotals(totals.rows[0], req.reportingCurrency)
+
+    return {
+      meta: {
+        ...this.#meta({
+          requested: { from: req.from, to: req.to },
+          effective: range,
+          timezone: req.timezone,
+          resolution: 'day',
+          freshness: this.#revenueFreshness(freshness, req.connection),
+          comparisonRange: null,
+          truncated: totals.meta.truncated || days.meta.truncated,
+          cached: totals.meta.cached && days.meta.cached,
+        }),
+        revenue: this.#revenueMeta(req.connection),
+      },
+      series: buildSubscriptionSeries({
+        rows: days.rows,
+        start: {
+          mrr: start.mrr_start_minor,
+          active: start.active_start,
+          trialing: start.trialing_start,
+        },
+        ...range,
+        timezone: req.timezone,
+        currency: req.reportingCurrency,
+      }),
+    }
+  }
+
   /**
    * One page of transactions, newest first.
    *
@@ -2673,6 +2803,9 @@ function mapRevenueTransaction(r: Record<string, unknown>): Schemas['RevenueTran
     // vocabulary: `none` is a first-class outcome (D6), not a gap.
     matched_via: matchedVia(str(r['matched_via'])),
     confidence: matchConfidence(str(r['confidence'])),
+    // Perier gap 7: what a charge paid for, from the invoice join; null on a
+    // refund or dispute (the gateway answers '' for those).
+    purchase_kind: purchaseKindOrNull(r['purchase_kind']),
   }
 }
 
