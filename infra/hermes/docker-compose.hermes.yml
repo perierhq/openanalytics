@@ -1,0 +1,35 @@
+# hermes: the non-secret half of what used to be hand-edited into
+# infra/selfhost/docker-compose.override.yml on the server. See README.md here.
+#
+# Added to the files compose reads through ONE line in infra/selfhost/.env,
+# the same way docker-compose.neon.yml is:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:../hermes/docker-compose.hermes.yml
+#
+# Paths in COMPOSE_FILE are relative to infra/selfhost, where every script
+# runs. Paths inside this file are relative to the project directory, which is
+# also infra/selfhost (the directory of the first file), hence `../hermes/`.
+#
+# `!override` needs Docker Compose 2.24.4 or newer.
+services:
+  # Cloudflare Tunnel terminates TLS and reaches Caddy on the host's loopback.
+  # Nothing is published on a public interface, and there is no 443.
+  caddy:
+    ports: !override
+      - '127.0.0.1:8080:80'
+    volumes:
+      # Same container path as the base file's mount, so this one replaces it.
+      - ../hermes/Caddyfile:/etc/caddy/Caddyfile:ro
+
+  # Memory and cache caps, noisy system logs removed, 7-day TTLs on the rest.
+  # `zz-` so it is read after the image's own config.d/openanalytics.xml.
+  clickhouse:
+    volumes:
+      - ../hermes/clickhouse-hermes.xml:/etc/clickhouse-server/config.d/zz-hermes.xml:ro
+
+  # The repository's queue policy plus `save ""` (AOF only).
+  valkey-queue:
+    environment:
+      OA_VALKEY_CONF: /usr/local/etc/valkey/valkey-queue-hermes.conf
+    volumes:
+      - ../hermes/valkey-queue-hermes.conf:/usr/local/etc/valkey/valkey-queue-hermes.conf:ro

@@ -1,0 +1,30 @@
+<clickhouse>
+  <!--
+    Local tuning on hermes (2 vCPU / 3.7 GiB, shared with ~10 containers).
+    Stock ClickHouse defaults assume a dedicated big server.
+  -->
+
+  <!-- Cap memory well below host RAM (default is 90% of the whole box). -->
+  <max_server_memory_usage>1610612736</max_server_memory_usage>
+
+  <!-- Caches sized for a dataset measured in MiB, not TB. -->
+  <mark_cache_size>268435456</mark_cache_size>
+  <index_mark_cache_size>67108864</index_mark_cache_size>
+  <primary_index_cache_size>134217728</primary_index_cache_size>
+  <uncompressed_cache_size>134217728</uncompressed_cache_size>
+
+  <!-- Per-second/profiler collectors: most of idle CPU and the 11 GiB that filled the disk. Nothing in the app reads them. -->
+  <trace_log remove="1"/>
+  <metric_log remove="1"/>
+  <asynchronous_metric_log remove="1"/>
+  <query_metric_log remove="1"/>
+  <processors_profile_log remove="1"/>
+
+  <!-- Keep the useful ones, but bounded. -->
+  <query_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_log>
+  <query_views_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_views_log>
+  <part_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></part_log>
+  <text_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></text_log>
+  <error_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></error_log>
+  <background_schedule_pool_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></background_schedule_pool_log>
+</clickhouse>

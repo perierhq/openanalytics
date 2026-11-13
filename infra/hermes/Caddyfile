@@ -1,0 +1,64 @@
+# TLS is terminated at Cloudflare Tunnel. Caddy serves HTTP on the compose
+# network only — do not publish 80/443 on the host.
+#
+# This replaces infra/selfhost/Caddyfile on hermes through
+# infra/hermes/docker-compose.hermes.yml. The hostnames come from
+# infra/selfhost/.env:
+#
+#   OA_APP_HOST        dashboard          analytics.perier.pl
+#   OA_API_HOST        control plane      oa-api.perier.pl
+#   OA_COLLECTOR_HOST  ingest + oa.js     oa.perier.pl
+#   OA_REALTIME_HOST   SSE stream         oa-rt.perier.pl
+
+{
+	auto_https off
+	email {$OA_ACME_EMAIL}
+}
+
+# Cloudflare Tunnel is in front. Do NOT assert X-Real-IP from the TCP peer —
+# that is cloudflared, and every visitor would become the same docker IP.
+# Keep CF-Connecting-IP / CF-IPCountry / CF-IPCity: Cloudflare overwrites
+# those at the edge, so a client cannot forge them through the tunnel.
+# Strip the other platform headers so a visitor cannot pick their own
+# identity / geo / rate-limit bucket.
+(client_identity_hygiene) {
+	header_up -Fly-Client-IP
+	header_up -True-Client-IP
+	header_up -X-Vercel-IP-Country
+	header_up -X-Vercel-IP-City
+	header_up -Fly-Client-Country
+}
+
+http://{$OA_APP_HOST} {
+	reverse_proxy web:3000
+}
+
+http://{$OA_API_HOST} {
+	reverse_proxy api:8082 {
+		import client_identity_hygiene
+	}
+}
+
+http://{$OA_COLLECTOR_HOST} {
+	handle /oa.js {
+		root * /srv/tracker
+		header Cache-Control "public, max-age=3600"
+		header Access-Control-Allow-Origin "*"
+		file_server {
+			precompressed gzip
+		}
+	}
+
+	handle {
+		reverse_proxy collector:8083 {
+			import client_identity_hygiene
+		}
+	}
+}
+
+http://{$OA_REALTIME_HOST} {
+	reverse_proxy realtime:8084 {
+		import client_identity_hygiene
+		flush_interval -1
+	}
+}
