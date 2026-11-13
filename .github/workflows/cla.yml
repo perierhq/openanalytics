@@ -48,7 +48,7 @@ jobs:
           path-to-signatures: .github/cla-signatures.json
           path-to-document: https://github.com/OpenLabs-so/openanalytics/blob/main/CLA.md
           branch: main
-          allowlist: Uaghazade1,alizadarahul,dependabot[bot]
+          allowlist: Uaghazade1,alizadarahul,dependabot[bot],kacperkwapisz,perier-open-session[bot]
           create-file-commit-message: 'chore(cla): start the signature file'
           signed-commit-message: 'chore(cla): $contributorName signed in #$pullRequestNo'
           custom-notsigned-prcomment: >-
