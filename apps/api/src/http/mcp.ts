@@ -476,7 +476,7 @@ const mcpTools: McpToolDefinition[] = [
     name: 'funnel_results',
     title: 'Funnel Results',
     description:
-      'Run a funnel over a range and return, per step, the units that reached it and the conversion rate from the first step. Either name a stored funnel with funnel_id (from list_funnels), which runs its own steps, scope and window, or give ad-hoc steps with window_ms and optionally scope — never both. A step is a page path or a custom event name. The range is at most 92 days. Needs a person’s credential: a site API key is refused.',
+      'Run a funnel over a range and return, per step, the units that reached it and the conversion rate from the first step. Either name a stored funnel with funnel_id (from list_funnels), which runs its own steps, scope and window, or give ad-hoc steps with window_ms and optionally scope — never both. A step is a page path or custom event name matched exactly, or a JSON step object: {"page":"/discount/*"} for a path pattern where * matches anything, or {"event":"plan_selected","where":{"plan":"yearly"}} for an event whose properties equal the given text (up to 3 conditions). With scope "visitor" a signed-in person’s days count as one unit through identify(). For an owner whose grant includes revenue:read each step also carries buyers (visitors who reached it and have an attributed charge in the range) and revenue_minor, with the response’s currency; otherwise those fields are absent, never zero. The range is at most 92 days. Needs a person’s credential: a site API key is refused.',
     path: '/read/analytics/funnel',
     params: [
       ...RANGE_PARAMS,
@@ -488,7 +488,7 @@ const mcpTools: McpToolDefinition[] = [
       {
         name: 'steps',
         description:
-          'Ad-hoc steps, in order: 2 to 8 page paths or custom event names. Not with funnel_id.',
+          'Ad-hoc steps, in order: 2 to 8 page paths, custom event names or JSON step objects ({"page":"/x/*"} or {"event":"name","where":{"key":"value"}}). Not with funnel_id.',
         required: false,
         list: true,
       },

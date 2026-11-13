@@ -186,7 +186,20 @@ function rowsFor(operation: string): Record<string, unknown>[] {
     ]
   }
   if (operation.startsWith('analytics.funnel_')) {
-    return [{ step_1: '10', step_2: '4', step_3: '1' }]
+    return [
+      {
+        step_1: '10',
+        step_2: '4',
+        step_3: '1',
+        buyers_1: '2',
+        buyers_2: '2',
+        buyers_3: '1',
+        revenue_1: '7998',
+        revenue_2: '7998',
+        revenue_3: '3999',
+        currency: 'EUR',
+      },
+    ]
   }
   if (operation.startsWith('analytics.performance')) {
     return [
@@ -425,6 +438,50 @@ describe('funnels, stored or ad hoc', () => {
       expect(res.status, id).toBe(404)
       expect(((await res.json()) as { error: { code: string } }).error.code, id).toBe('NOT_FOUND')
       expect(gatewayCalls, id).toHaveLength(0)
+    }
+  })
+
+  it('serves buyers and revenue per step to an owner whose grant asked for revenue', async () => {
+    const app = buildApp()
+    const res = await get(
+      app,
+      `/v1/read/analytics/funnel?${RANGE}&funnel_id=${STORED_FUNNEL}`,
+      asToken(OAUTH_TOKEN_REVENUE),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      steps: { buyers?: number; revenue_minor?: number }[]
+      currency?: string | null
+    }
+    expect(body.steps.map((step) => [step.buyers, step.revenue_minor])).toEqual([
+      [2, 7998],
+      [2, 7998],
+      [1, 3999],
+    ])
+    expect(body.currency).toBe('EUR')
+    expect(gatewayParams['analytics.funnel_session']).toMatchObject({ with_revenue: true })
+  })
+
+  it('withholds funnel revenue without the scope or without the owner role', async () => {
+    for (const [role, token] of [
+      ['owner', OAUTH_TOKEN],
+      ['admin', OAUTH_TOKEN_REVENUE],
+    ] as const) {
+      membershipRole.value = role
+      const app = buildApp()
+      const res = await get(
+        app,
+        `/v1/read/analytics/funnel?${RANGE}&funnel_id=${STORED_FUNNEL}`,
+        asToken(token),
+      )
+      expect(res.status, role).toBe(200)
+      const body = (await res.json()) as { steps: Record<string, unknown>[] }
+      expect(body.steps[0], role).not.toHaveProperty('buyers')
+      expect(body, role).not.toHaveProperty('currency')
+      // Not computed and then hidden: the gateway is told not to read money.
+      expect(gatewayParams['analytics.funnel_session'], role).toMatchObject({
+        with_revenue: false,
+      })
     }
   })
 

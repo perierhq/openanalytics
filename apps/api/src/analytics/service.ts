@@ -264,6 +264,12 @@ export interface AnalyticsFunnelRequest extends CacheEpochScoped, ImportScoped {
   readonly scope: FunnelScope
   readonly steps: readonly string[]
   readonly windowMs: number
+  /**
+   * Whether to read and return buyers and revenue per step. Owner-only
+   * (ADR-0036 CP7), decided by the route; when false the fields are absent,
+   * never zero, and the gateway never reads the revenue facts.
+   */
+  readonly withRevenue: boolean
 }
 
 /** Coerces a ClickHouse JSON scalar (UInt64 arrives as a string) to a number. */
@@ -1553,6 +1559,7 @@ export class AnalyticsService {
           to: req.to,
           steps: req.steps,
           window_ms: req.windowMs,
+          with_revenue: req.withRevenue,
         },
         { cacheEpoch: req.cacheEpoch },
       ),
@@ -1568,9 +1575,20 @@ export class AnalyticsService {
         key,
         count,
         conversion_rate: entry > 0 ? count / entry : 0,
+        // Buyers are counted per resolved visitor (identify hash, else
+        // anonymous id) whatever the scope, because that is the identity a
+        // charge is attributed to.
+        ...(req.withRevenue
+          ? {
+              buyers: num(row?.[`buyers_${index + 1}`]),
+              revenue_minor: num(row?.[`revenue_${index + 1}`]),
+            }
+          : {}),
       }
     })
 
+    // The site's reporting currency, or null when no step had a buyer.
+    const currency = str(row?.['currency'])
     return {
       meta: {
         requested_range: { from: req.from, to: req.to },
@@ -1585,6 +1603,7 @@ export class AnalyticsService {
         cached: result.meta.cached,
       },
       steps,
+      ...(req.withRevenue ? { currency: currency === '' ? null : currency } : {}),
     }
   }
 

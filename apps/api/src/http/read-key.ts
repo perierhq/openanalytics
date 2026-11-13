@@ -1036,7 +1036,8 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
    * would otherwise depend on a precedence rule nobody asked for.
    */
   reads.get('/funnel', async (c) => {
-    const { siteId } = c.get('readPrincipal')
+    const principal = c.get('readPrincipal')
+    const { siteId } = principal
     const query = c.req.query()
     const range = parseRange(query)
     const funnelId = query['funnel_id']
@@ -1072,6 +1073,8 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         importPointer: c.get('siteImportPointer'),
         ...range,
         ...funnel,
+        // Buyers and revenue per step follow the visitor reads' revenue rule.
+        withRevenue: servesVisitorRevenue(principal),
       }),
     )
   })

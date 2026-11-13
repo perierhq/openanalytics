@@ -1981,6 +1981,11 @@ export interface paths {
          *     A person's read, not a key's, for the reason `custom-events` gives: a
          *     private key gets `403`.
          *
+         *     `buyers` and `revenue_minor` per step, and `currency`, are served to an
+         *     **owner** (ADR-0036 CP7) whose credential also carries `revenue:read`,
+         *     as the visitor reads' `revenue` marker is; for anyone else they are
+         *     absent, never zero.
+         *
          *     Requires the `analytics:read` scope.
          */
         get: operations["readAnalyticsFunnel"];
@@ -3160,8 +3165,15 @@ export interface paths {
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
                 /**
-                 * @description Ordered funnel step keys, as repeated `steps=` parameters (2–8). Each key
-                 *     matches a pageview's path or another event's name.
+                 * @description Ordered funnel steps, as repeated `steps=` parameters (2–8).
+                 *
+                 *     A step is either a plain key, matching a pageview's path or another
+                 *     event's name exactly, or a JSON step object (it starts with `{`):
+                 *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+                 *     `*` standing for any run of characters; `{"event":"plan_selected",
+                 *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+                 *     when every listed property equals the given text (a number or boolean
+                 *     compares as its JSON text), at most 3 conditions per step.
                  */
                 steps: components["parameters"]["FunnelSteps"];
                 /** @description Conversion window in milliseconds; a unit's steps must fall within it. */
@@ -3178,12 +3190,19 @@ export interface paths {
         /**
          * An ordered multi-step funnel over the canonical event facts.
          * @description Ordered steps matched per unit within a window (docs snapshot 02 §15, plan
-         *     Milestone 8 item 7). The unit is the resolved visitor identity (`scope=
-         *     visitor`) or that identity paired with the client session hint (`scope=
-         *     session`). Each event's funnel key is the page path for a pageview and the
-         *     event name otherwise. Steps are ordered by `(occurred_at, event_id)` — a
-         *     deterministic tie-break. The synchronous range is bounded; a larger range
-         *     is an async job (a documented follow-up).
+         *     Milestone 8 item 7). With `scope=visitor` the unit is the resolved
+         *     visitor: the `identify()` hash an anonymous id was paired with in the
+         *     range, else the anonymous id, so a signed-in person's days are one unit
+         *     although the anonymous id rotates at UTC midnight. With `scope=session`
+         *     it is the anonymous id paired with the client session hint. Steps are
+         *     plain keys or JSON step objects (see the `steps` parameter) and are
+         *     ordered by `(occurred_at, event_id)` — a deterministic tie-break. The
+         *     synchronous range is bounded; a larger range is an async job (a
+         *     documented follow-up).
+         *
+         *     For a caller holding `revenue:read` (owner-only) each step also carries
+         *     `buyers` and `revenue_minor`, and the response its `currency`; for anyone
+         *     else those fields are absent, never zero.
          */
         get: operations["getAnalyticsFunnel"];
         put?: never;
@@ -7577,6 +7596,26 @@ export interface components {
             count: number;
             /** @description count / step-1 count, in [0, 1]; 0 when the funnel entry is empty. */
             conversion_rate: number;
+            /**
+             * Format: int64
+             * @description Resolved visitors (the `identify()` hash where one was paired in the
+             *     range, else the anonymous id) who reached at least this step and have
+             *     at least one attributed, converted charge in the range. Counted per
+             *     visitor in both scopes, because a charge is attributed to a visitor,
+             *     not to a session. The charge need not come after the step.
+             *
+             *     **Owner-only, like `VisitorRevenue`:** present only for a caller
+             *     holding `revenue:read` (on `/v1/read`, also as a granted scope);
+             *     absent, never `0`, for anyone else.
+             */
+            buyers?: number;
+            /**
+             * Format: int64
+             * @description Gross amount of those buyers' attributed, converted charges in the
+             *     range, in the site's reporting currency (`currency` on the response),
+             *     minor units. Present exactly when `buyers` is.
+             */
+            revenue_minor?: number;
         };
         FunnelMeta: {
             requested_range: components["schemas"]["DateRange"];
@@ -7591,12 +7630,25 @@ export interface components {
         AnalyticsFunnelResponse: {
             meta: components["schemas"]["FunnelMeta"];
             steps: components["schemas"]["FunnelStep"][];
+            /**
+             * @description The site's reporting currency for every step's `revenue_minor`, or
+             *     null when no step had a buyer. Present exactly when the steps carry
+             *     `buyers` and `revenue_minor` (owner-only).
+             */
+            currency?: components["schemas"]["Currency"] | null;
         };
         /**
-         * @description Ordered funnel step keys, each matching a pageview's path or another
-         *     event's name. Exactly the shape
+         * @description Ordered funnel steps. Exactly the shape
          *     `GET /v1/sites/{site_id}/analytics/funnel` takes as repeated `steps=`
          *     parameters, so a stored definition can be handed to it unchanged.
+         *
+         *     A step is either a plain key, matching a pageview's path or another
+         *     event's name exactly, or a JSON step object (it starts with `{`):
+         *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+         *     `*` standing for any run of characters; `{"event":"plan_selected",
+         *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+         *     when every listed property equals the given text (a number or boolean
+         *     compares as its JSON text), at most 3 conditions per step.
          */
         FunnelStepKeys: string[];
         /**
@@ -9694,8 +9746,15 @@ export interface components {
          */
         VisitorHash: string;
         /**
-         * @description Ordered funnel step keys, as repeated `steps=` parameters (2–8). Each key
-         *     matches a pageview's path or another event's name.
+         * @description Ordered funnel steps, as repeated `steps=` parameters (2–8).
+         *
+         *     A step is either a plain key, matching a pageview's path or another
+         *     event's name exactly, or a JSON step object (it starts with `{`):
+         *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+         *     `*` standing for any run of characters; `{"event":"plan_selected",
+         *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+         *     when every listed property equals the given text (a number or boolean
+         *     compares as its JSON text), at most 3 conditions per step.
          */
         FunnelSteps: string[];
         /** @description Conversion window in milliseconds; a unit's steps must fall within it. */
@@ -13380,8 +13439,15 @@ export interface operations {
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
                 /**
-                 * @description Ordered funnel step keys, as repeated `steps=` parameters (2–8). Each key
-                 *     matches a pageview's path or another event's name.
+                 * @description Ordered funnel steps, as repeated `steps=` parameters (2–8).
+                 *
+                 *     A step is either a plain key, matching a pageview's path or another
+                 *     event's name exactly, or a JSON step object (it starts with `{`):
+                 *     `{"page":"/discount/*"}` matches pageviews whose path fits the pattern,
+                 *     `*` standing for any run of characters; `{"event":"plan_selected",
+                 *     "where":{"plan":"yearly"}}` matches that custom event or conversion
+                 *     when every listed property equals the given text (a number or boolean
+                 *     compares as its JSON text), at most 3 conditions per step.
                  */
                 steps: components["parameters"]["FunnelSteps"];
                 /** @description Conversion window in milliseconds; a unit's steps must fall within it. */

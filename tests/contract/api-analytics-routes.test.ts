@@ -300,6 +300,22 @@ describe('analytics read authorization', () => {
     const body = (await ok.json()) as { steps: { count: number }[] }
     expect(body.steps).toHaveLength(2)
     expect(body.steps[0]!.count).toBe(100)
+    // A viewer is never shown money, and the gateway is told not to read it.
+    expect(body.steps[0]).not.toHaveProperty('buyers')
+    expect(body).not.toHaveProperty('currency')
+    expect(gatewayParams['analytics.funnel_visitor']).toMatchObject({ with_revenue: false })
+
+    membership.value = { role: 'owner', isBillingOwner: true }
+    const owned = await app.fetch(
+      new Request(
+        `http://api.test/v1/sites/${SITE}/analytics/funnel?from=2026-07-16T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC&steps=/pricing&steps=signup&window_ms=1800000`,
+      ),
+    )
+    expect(owned.status).toBe(200)
+    const ownedBody = (await owned.json()) as { steps: Record<string, unknown>[] }
+    expect(ownedBody.steps[0]).toHaveProperty('buyers')
+    expect(ownedBody).toHaveProperty('currency')
+    expect(gatewayParams['analytics.funnel_visitor']).toMatchObject({ with_revenue: true })
 
     const bad = await app.fetch(
       new Request(

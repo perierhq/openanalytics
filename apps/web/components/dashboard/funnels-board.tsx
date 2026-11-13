@@ -36,6 +36,13 @@ import {
   type FunnelDefinition,
   type FunnelScope,
 } from "@/lib/api";
+import { formatMoney } from "@/lib/currencies";
+import {
+  editableStep,
+  parseWhere,
+  stepLabel,
+  storedStep,
+} from "@/lib/funnel-steps";
 import { MOCK_CUSTOM_EVENTS, MOCK_PAGES, mockSiteBySlug } from "@/lib/mock";
 import { useApi } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
@@ -53,7 +60,13 @@ import { cn } from "@/lib/utils";
  * A step's key is a page path for pageview steps ("/pricing") and the event
  * name otherwise ("signup_completed") — the same vocabulary the compute
  * endpoint takes, validated against the same bounds (2–8 steps, window ≤ 30
- * days), so a definition that saves is a definition that runs.
+ * days), so a definition that saves is a definition that runs. A page step
+ * may carry `*` wildcards ("/discount/*") and an event step property
+ * conditions ("plan=yearly"); those are stored as JSON step objects
+ * (`lib/funnel-steps.ts`), everything else stays a plain key.
+ *
+ * For an owner the readings also carry buyers and revenue per step; for
+ * anyone else the api leaves them out and nothing money-shaped renders.
  */
 
 /* ------------------------------------------------------------------ */
@@ -118,13 +131,23 @@ function mockReadings(def: FunnelDefinition): PlotStep[] {
   let count = 8412;
   return def.steps.map((key, index) => {
     if (index > 0) count = Math.round(count * (0.34 + 0.1 * ((index * 7) % 3)));
-    return { label: key, value: count };
+    const buyers = Math.round(count * 0.04);
+    return {
+      label: stepLabel(key),
+      value: count,
+      revenue: { buyers, minor: buyers * 3999, currency: "EUR" },
+    };
   });
 }
 
 /* Derived helpers ---------------------------------------------------- */
 
-type PlotStep = { label: string; value: number };
+type PlotStep = {
+  label: string;
+  value: number;
+  /** Owner-only: absent for anyone else, never zero. */
+  revenue?: { buyers: number; minor: number; currency: string | null };
+};
 
 const fmt = (value: number) =>
   value >= 1000
@@ -396,7 +419,19 @@ function FunnelDetailModal({
         window_ms: def.window_ms,
         scope: def.scope,
       }).then((response) =>
-        response.steps.map((step) => ({ label: step.key, value: step.count }))
+        response.steps.map((step) => ({
+          label: stepLabel(step.key),
+          value: step.count,
+          ...(step.buyers !== undefined
+            ? {
+                revenue: {
+                  buyers: step.buyers,
+                  minor: step.revenue_minor ?? 0,
+                  currency: response.currency ?? null,
+                },
+              }
+            : {}),
+        }))
       ),
     () => mockReadings(def),
     `${siteId}:${def.id}`
@@ -530,7 +565,7 @@ function FunnelDetailModal({
                   >
                     {steps.map((step, index) => (
                       <div
-                        key={step.label}
+                        key={index}
                         onMouseEnter={() => setHovered(index)}
                         onMouseLeave={() => setHovered(null)}
                         className={cn(
@@ -584,8 +619,9 @@ function FunnelDetailModal({
                         <Funnel
                           width={funnelSize.width}
                           height={funnelSize.height}
-                          data={steps.map((step) => ({
-                            id: step.label,
+                          data={steps.map((step, index) => ({
+                            // By position: two steps may share a label.
+                            id: String(index),
                             label: step.label,
                             value: step.value,
                           }))}
@@ -604,9 +640,7 @@ function FunnelDetailModal({
                           ]}
                           colors={(part) => {
                             const shades = sweepShades(steps.length);
-                            const index = steps.findIndex(
-                              (step) => step.label === part.id
-                            );
+                            const index = Number(part.id);
                             const dimmed = hovered !== null && hovered !== index;
                             // keep the hue, just lift it toward the card so
                             // non-hovered parts read quieter without going gray
@@ -638,7 +672,7 @@ function FunnelDetailModal({
                       const meta = stepMeta(steps, index);
                       return (
                         <div
-                          key={step.label}
+                          key={index}
                           onMouseEnter={() => setHovered(index)}
                           onMouseLeave={() => setHovered(null)}
                           className={cn(
@@ -661,6 +695,16 @@ function FunnelDetailModal({
                               </p>
                             </>
                           )}
+                          {step.revenue ? (
+                            <p className="pt-1.5 text-xs tabular-nums text-muted-foreground">
+                              {fmt(step.revenue.buyers)}{" "}
+                              {step.revenue.buyers === 1 ? "buyer" : "buyers"}
+                              {step.revenue.currency !== null &&
+                              step.revenue.minor > 0
+                                ? ` · ${formatMoney(step.revenue.minor, step.revenue.currency)}`
+                                : ""}
+                            </p>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -695,20 +739,32 @@ const ROW_SPRING = {
 const ROW_EASE = { duration: 0.24, ease: [0.22, 1, 0.36, 1] } as const;
 
 /**
- * One editor row. `kind` is presentation only — the contract's step is a
- * string, and the server tells a page from an event by the leading slash —
- * so the toggle changes which suggestions appear and how input is
- * normalized, and saving flattens back to strings.
+ * One editor row. The contract's step is a string: a plain key (the server
+ * tells a page from an event by the leading slash) or a JSON step object for
+ * a wildcard page or an event with conditions. The toggle changes which
+ * suggestions appear and how input is normalized, and saving flattens each
+ * row back to its string (`storedStep`).
  */
-type EditorStep = { id: string; kind: "page" | "event"; value: string };
+type EditorStep = {
+  id: string;
+  kind: "page" | "event";
+  value: string;
+  /** Property conditions as typed, `plan=yearly`; event rows only. */
+  where: string;
+};
 
-function editorStep(kind: EditorStep["kind"], value: string): EditorStep {
-  return { id: crypto.randomUUID(), kind, value };
+function editorStep(
+  kind: EditorStep["kind"],
+  value: string,
+  where = ""
+): EditorStep {
+  return { id: crypto.randomUUID(), kind, value, where };
 }
 
-/** A stored step's kind, read back the way the server reads it. */
-function kindOf(value: string): EditorStep["kind"] {
-  return value.startsWith("/") ? "page" : "event";
+/** A stored step, read back into a row the way the server reads it. */
+function rowOf(raw: string): EditorStep {
+  const step = editableStep(raw);
+  return editorStep(step.kind, step.value, step.where);
 }
 
 /** A page step always carries its slash — typed or not. */
@@ -756,7 +812,7 @@ function FunnelEditor({
   // back with their kind read the way the server reads it: by the slash.
   const [steps, setSteps] = React.useState<EditorStep[]>(() =>
     def
-      ? def.steps.map((value) => editorStep(kindOf(value), value))
+      ? def.steps.map(rowOf)
       : [editorStep("page", "/"), editorStep("page", "")]
   );
   const [windowMs, setWindowMs] = React.useState(
@@ -825,17 +881,16 @@ function FunnelEditor({
     );
 
   // Flatten back to the contract's strings: a page carries its slash, an
-  // event never starts with one (the server tells them apart exactly so).
-  const cleanSteps = steps
-    .map((row) => {
-      const trimmed = row.value.trim();
-      if (trimmed === "") return "";
-      return row.kind === "page"
-        ? normalizePage(trimmed)
-        : trimmed.replace(/^\/+/, "");
-    })
-    .filter(Boolean);
-  const valid = name.trim().length > 0 && cleanSteps.length >= 2;
+  // event never starts with one (the server tells them apart exactly so),
+  // and a wildcard or a condition makes the row a JSON step object.
+  const cleanSteps = steps.map(storedStep).filter(Boolean);
+  const whereProblem =
+    steps
+      .filter((row) => row.kind === "event")
+      .map((row) => parseWhere(row.where))
+      .find((parsed) => !parsed.ok) ?? null;
+  const valid =
+    name.trim().length > 0 && cleanSteps.length >= 2 && whereProblem === null;
 
   const activeStep = steps.find((row) => row.id === activeStepId) ?? null;
   const activeSuggestions =
@@ -847,7 +902,11 @@ function FunnelEditor({
 
   const save = () => {
     if (!valid) {
-      setError("Give the funnel a name and at least two steps.");
+      setError(
+        whereProblem !== null && !whereProblem.ok
+          ? `${whereProblem.reason}.`
+          : "Give the funnel a name and at least two steps."
+      );
       return;
     }
     setError(null);
@@ -973,7 +1032,9 @@ function FunnelEditor({
             <p className="text-xs leading-5 text-muted-foreground">
               In order, 2-8 of them. Each step is a page or a custom event;
               the small icon switches which, and typing suggests what the site
-              has actually seen.
+              has actually seen. A * in a page matches anything
+              (/discount/*), and an event can require properties
+              (plan=yearly).
             </p>
             {/* Grey plate, white rows — the house list anatomy. `layout` on
                 the plate springs the survivors into place while a removed
@@ -1021,6 +1082,7 @@ function FunnelEditor({
                         updateStep(row.id, {
                           kind: nextKind,
                           value: nextKind === "page" ? "/" : "",
+                          where: "",
                         });
                       }}
                       title={row.kind === "page" ? "Page step" : "Event step"}
@@ -1059,6 +1121,18 @@ function FunnelEditor({
                       }
                       value={row.value}
                     />
+                    {row.kind === "event" ? (
+                      <input
+                        aria-label={`Step ${index + 1} properties`}
+                        className="h-8 w-32 min-w-0 shrink-0 rounded-md bg-[#f6f6f6] px-2 text-xs outline-none placeholder:text-muted-foreground/50 sm:w-40"
+                        onChange={(event) =>
+                          updateStep(row.id, { where: event.target.value })
+                        }
+                        placeholder="plan=yearly"
+                        title="Optional: property=value, comma-separated, up to 3"
+                        value={row.where}
+                      />
+                    ) : null}
                     {steps.length > 2 ? (
                       <button
                         aria-label={`Remove step ${index + 1}`}
@@ -1092,6 +1166,12 @@ function FunnelEditor({
               ) : null}
             </motion.div>
           </div>
+
+          {whereProblem !== null && !whereProblem.ok ? (
+            <p className="text-xs text-destructive-foreground">
+              {whereProblem.reason}.
+            </p>
+          ) : null}
 
           {/* The suggestion list rides its own portal above the modal
               (z-[70] over z-[60]); mousedown is swallowed so the pick lands

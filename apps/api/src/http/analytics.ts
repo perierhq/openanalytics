@@ -531,7 +531,7 @@ export function createAnalyticsRoutes(deps: {
 
   // Funnels: ordered step sequence over the event facts, bounded and cached (§15).
   app.get(`${base}/funnel`, async (c) => {
-    const { siteId } = c.get('membership')
+    const { siteId, role } = c.get('membership')
     const range = parseRange(c.req.query())
     const steps = c.req.queries('steps') ?? []
     const funnel = parseFunnel(steps, c.req.query())
@@ -542,6 +542,9 @@ export function createAnalyticsRoutes(deps: {
         importPointer: c.get('siteImportPointer'),
         ...range,
         ...funnel,
+        // Buyers and revenue per step are owner-only (ADR-0036 CP7): absent,
+        // never zero, for anyone else.
+        withRevenue: roleHasCapability(role, 'revenue:read'),
       }),
     )
   })
