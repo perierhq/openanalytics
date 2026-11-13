@@ -465,9 +465,9 @@ describe('the MCP tools are the read routes', () => {
     expect(call?.params['window_ms']).toBe(86_400_000)
   })
 
-  it('does not hand either tool to the assistant', () => {
+  it('hands both tools to the assistant (Perier fork decision)', () => {
     const names = ASSISTANT_TOOLS.map((tool) => tool.name)
-    expect(names).not.toContain('revenue_by_source')
-    expect(names).not.toContain('events_before_purchase')
+    expect(names).toContain('revenue_by_source')
+    expect(names).toContain('events_before_purchase')
   })
 })

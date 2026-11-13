@@ -269,19 +269,27 @@ describe('annotations divide reads from writes', () => {
  * recomputed the filter would agree with any filter, including a widened one.
  */
 describe('the assistant sees the analytics and revenue reads, and nothing else', () => {
-  it('is exactly these ten tools', () => {
-    expect(ASSISTANT_TOOLS.map((t) => t.name)).toEqual([
-      'list_sites',
-      'site_overview',
-      'site_timeseries',
-      'top_pages',
-      'top_sources',
-      'geography',
-      'devices',
-      'sessions',
-      'revenue_summary',
-      'revenue_timeseries',
-    ])
+  it('is exactly these tools', () => {
+    expect([...ASSISTANT_TOOLS.map((t) => t.name)].sort()).toEqual(
+      [
+        'list_sites',
+        'site_overview',
+        'site_timeseries',
+        'top_pages',
+        'top_sources',
+        'geography',
+        'devices',
+        'sessions',
+        'revenue_summary',
+        'revenue_timeseries',
+        'custom_events',
+        'custom_event_properties',
+        'performance',
+        'funnel_results',
+        'revenue_by_source',
+        'events_before_purchase',
+      ].sort(),
+    )
   })
 
   it('excludes the management reads the session principal carries no scope for', () => {
@@ -293,17 +301,10 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
     }
   })
 
-  it('excludes the person-only analytics reads MCP gained after ADR-0046 D3', () => {
+  it('excludes the per-visitor reads (Perier fork: aggregates only for the assistant)', () => {
     const names = ASSISTANT_TOOLS.map((t) => t.name)
-    for (const name of [
-      'custom_events',
-      'custom_event_properties',
-      'performance',
-      'funnel_results',
-      'recent_visitors',
-      'visitor',
-    ]) {
-      expect(names, `${name} was not decided for the assistant`).not.toContain(name)
+    for (const name of ['recent_visitors', 'visitor']) {
+      expect(names, `${name} must not reach the assistant`).not.toContain(name)
     }
   })
 

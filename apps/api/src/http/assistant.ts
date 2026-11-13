@@ -27,7 +27,6 @@ import {
   isReadOnlyTool,
   toolArgumentRefusal,
 } from './mcp.ts'
-import { PERSON_ONLY_ANALYTICS_READS } from './read-key.ts'
 
 /**
  * The AI analytics assistant (ADR-0046).
@@ -120,25 +119,13 @@ export interface AssistantRoutesDeps {
 const ASSISTANT_READ_PATHS = ['/read/sites']
 const ASSISTANT_READ_PREFIXES = ['/read/analytics/', '/read/revenue/']
 /**
- * The person-only analytics reads MCP gained after ADR-0046 D3 drew this
- * roster. They live under `/read/analytics/`, so the prefix alone would hand
- * them to the model; which tools the assistant has is a decision about the
- * assistant, and nobody has made it for these.
+ * Perier fork: the assistant gets the aggregate reads MCP gained after
+ * ADR-0046 D3 (custom events and their properties, performance, funnel
+ * results, revenue by source, events before purchase); a site owner asked for
+ * them. The two per-visitor reads stay out: the assistant's provider is a third
+ * party, and a single visitor's journey is not an aggregate.
  */
-/**
- * The two revenue aggregates the Perier fork added to MCP (DataFast gaps 3 and
- * 4). They live under `/read/revenue/`, so the prefix alone would hand them to
- * the model, and for the same reason as the person-only reads nobody has
- * decided the assistant should have them.
- */
-const ASSISTANT_UNDECIDED_REVENUE_READS = [
-  '/read/revenue/attribution',
-  '/read/revenue/events-before-purchase',
-]
-const ASSISTANT_EXCLUDED_PATHS = [
-  ...PERSON_ONLY_ANALYTICS_READS.map((path) => `/read/analytics${path}`),
-  ...ASSISTANT_UNDECIDED_REVENUE_READS,
-]
+const ASSISTANT_EXCLUDED_PATHS = ['/read/analytics/recent-visitors', '/read/analytics/visitor']
 export const ASSISTANT_TOOLS = MCP_TOOLS.filter(
   (tool) =>
     isReadOnlyTool(tool) &&
