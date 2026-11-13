@@ -894,6 +894,40 @@ docker compose up -d --build --force-recreate tracker-build   # built here
 Both `oa.js` and `oa.js.gz` are written together — a stale `.gz` beside a fresh
 `.js` is what almost everyone would be served.
 
+### MCP
+
+The api is an MCP server at `https://<OA_API_HOST>/mcp` (streamable HTTP,
+POST only). A client signs in with OAuth: it finds the authorization server
+from `/.well-known/oauth-protected-resource`, registers itself, and sends you
+through a consent screen that lists the scopes it asked for. Private API keys
+are not accepted there; they read `/v1/read` directly.
+
+Every tool is a request against the api's own routes with your token, so
+membership, roles, the site's status and the query budget apply exactly as
+they do in the dashboard. The read tools:
+
+| Tool                                                                                               | Scope            | Reads                                                                  |
+| -------------------------------------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------- |
+| `list_sites`, `site_install`                                                                       | `site:read`      | Your sites; one site's snippet and tracking key                        |
+| `site_overview`, `site_timeseries`, `top_pages`, `top_sources`, `geography`, `devices`, `sessions` | `analytics:read` | The dashboard's aggregate reports                                      |
+| `custom_events`, `performance`                                                                     | `analytics:read` | Custom events with their labels; web vitals                            |
+| `funnel_results`                                                                                   | `analytics:read` | A stored funnel by id, or ad-hoc steps: counts and conversion per step |
+| `recent_visitors`, `visitor`                                                                       | `analytics:read` | Visitors of the last 1–24 hours, and one visitor's page trail          |
+| `list_funnels`, `list_event_definitions`, `list_widgets`, `share_settings`                         | `analytics:read` | A site's saved funnels, event definitions, widgets and share settings  |
+| `revenue_summary`, `revenue_timeseries`                                                            | `revenue:read`   | Revenue totals and buckets. Owners only                                |
+| `team_members`                                                                                     | `team:read`      | A site's members, with email addresses                                 |
+
+The write tools need the matching write scope (`sites:write`, `funnels:write`,
+`events:write`, `widgets:write`, `share:write`) and the role the dashboard
+would need. None of them deletes data; `archive_funnel` hides a funnel and can
+be undone.
+
+`custom_events`, `performance`, `funnel_results`, `recent_visitors` and
+`visitor` read `/v1/read/analytics/*` routes that only a person's credential
+reaches: an OAuth token or a dashboard session. A private API key gets `403`
+there. The visitor reads show a visitor's revenue only to an owner whose
+grant includes `revenue:read`, and never list individual payments.
+
 ### Health
 
 Every service answers `GET /health` on its own port with a dependency list, and
