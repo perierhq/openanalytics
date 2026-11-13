@@ -8,17 +8,70 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
-## Perier fork: Unreleased
+## Perier fork: [0.9.0-perier.1] - 2026-11-13
 
-**Upgrade notes.** ClickHouse migration 0030 runs on its own with the other
-migrations. Its 92 days of history do not: run
-`node packages/clickhouse/dist/cli.js backfill-event-properties` once in the
-migrate image after upgrading (`--dry-run` first counts the rows). It only
-fills (site, bucket) pairs that have no row yet, so it can run with the worker
-up, and running it twice writes nothing.
+The perierhq fork's build, tagged `v0.9.0-perier.1` and published to
+`ghcr.io/perierhq/openanalytics`. It is 0.8.1-perier.1 plus the fork's
+DataFast gap work: revenue by source and entry page, events before purchase,
+custom-event property breakdowns, funnel step kinds with revenue per step, and
+subscription MRR and churn.
+
+**Upgrade notes.** Run `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics
+./upgrade.sh` from the `v0.9.0-perier.1` checkout, as for 0.8.1-perier.1. Then:
+
+1. **Migrations run on their own** with the rest: ClickHouse 0030
+   (`custom_event_properties_15m` / `_1d` and their views) and 0031
+   (`subscription_lifecycle`, `subscription_invoices`), and Postgres 0047
+   (`revenue_subscriptions`, `revenue_subscription_changes`,
+   `revenue_invoices`, and `subscriptions` / `invoices` in the sync state).
+   All additive. The worker writes the two 0031 tables, so ClickHouse needs
+   new `oa_ingest` grants. They are rendered when its container is created,
+   and the new image tag recreates it, so `./upgrade.sh` delivers them. If you
+   run your own ClickHouse image, recreate it
+   (`docker compose up -d --force-recreate clickhouse`). Until then the
+   lifecycle projection logs and retries, and nothing else is affected.
+2. **Fill the property breakdowns' history by hand.** 0030 only rolls up
+   events from the moment it runs. In the migrate image, run
+   `node packages/clickhouse/dist/cli.js backfill-event-properties --dry-run`
+   first, which counts what it would write, then the same command without
+   `--dry-run`. It fills the last 92 days, only for (site, bucket) pairs with
+   no row yet, so it can run with the worker up and a second run writes
+   nothing.
+3. **Subscriptions come from the Stripe sync.** There is no separate
+   backfill command. A Stripe connection made after the upgrade walks every
+   subscription since the account began (and 90 days of invoices) in its
+   first backfill, within the usual page budget. An existing connection's
+   regular sync only lists subscriptions created in its reconcile window
+   (`REVENUE_RECONCILE_WINDOW_HOURS`, 48 by default), and the webhook adds
+   others as they change. To load every existing subscription at once,
+   disconnect Stripe in Settings › Integrations and connect it again with the
+   same key: a disconnect keeps the revenue history, and the new connection
+   runs the full backfill. The new connection has a new webhook URL, so point
+   the Stripe endpoint at it and paste its new signing secret. For live
+   updates, add `invoice.paid`,
+   `invoice.payment_succeeded` and `invoice_payment.paid` to the Stripe
+   webhook endpoint's events (the `customer.subscription.*` events were
+   already on the list). The key needs `Invoices` and `Subscriptions` read,
+   which the connect guide already asked for.
+4. **Visitor-scope funnel counts change** (see Changed). Funnels counted per
+   visitor will show different numbers from the same data after the upgrade.
 
 ### Changed
 
+- **Renewals are revenue, not conversions.** In revenue by source, `orders`,
+  `buyers` and the conversion rate count only new subscriptions and one-off
+  purchases. `revenue_minor` still includes every charge, so the rows add up
+  to the summary, and the new `recurring_revenue_minor` says how much of it
+  came from renewals and plan changes. Events before purchase measures the
+  window before a buyer's first new or one-off charge, and a customer who only
+  renewed is neither a buyer nor in the non-buyer baseline. A charge whose
+  invoice has not arrived yet counts as a one-off until it does.
+- **The in-app assistant gets the aggregate reads**: `custom_events`,
+  `custom_event_properties`, `performance`, `funnel_results`,
+  `revenue_by_source`, `events_before_purchase`, `subscription_summary` and
+  `subscription_timeseries`. The per-visitor reads (`recent_visitors`,
+  `visitor`) stay MCP-only, because the assistant's model provider is a third
+  party.
 - **Visitor-scope funnel numbers change.** A funnel counted per visitor now
   treats someone who signed in (`identify()`) as one visitor across the days
   they were signed in. Before, the anonymous id rotating at UTC midnight made
@@ -28,6 +81,30 @@ up, and running it twice writes nothing.
 
 ### Added
 
+- **Revenue by source or entry page.**
+  `GET /v1/sites/{site_id}/revenue/attribution` and
+  `/v1/read/revenue/attribution` group revenue, orders and buyers by the first
+  or last touch's referrer domain, UTM source, medium or campaign, or entry
+  page, with the unattributed row first. For ranges up to 92 days each row
+  also has visitors (sessions that entered with that value), conversion rate
+  and revenue per visitor. Owner-only, like the other revenue reads. The
+  revenue page gains a card for it, and the MCP tool is `revenue_by_source`.
+- **Events before purchase.** `GET /v1/sites/{site_id}/revenue/events-before-purchase`
+  and its `/v1/read` twin list the custom events buyers fired in a window
+  (1 minute to 30 days, 7 by default) before their first purchase, beside the
+  share of non-buyers who fired them. Up to 92 days, owner-only. MCP tool
+  `events_before_purchase`.
+- **Subscription MRR and churn.** The Stripe connection now also reads
+  subscriptions and invoices. `GET /v1/sites/{site_id}/revenue/subscriptions/summary`
+  and `/timeseries` (and their `/v1/read` twins) return MRR, paying and
+  trialing subscriptions at both ends of a range, new, expansion, contraction
+  and churned MRR, trial and cancellation counts, and the range's charges
+  split into new, renewal, plan change and one-off. Each transaction carries
+  a `purchase_kind`. The revenue page shows a subscriptions card after the
+  overview, and the MCP tools are `subscription_summary` and
+  `subscription_timeseries`. All owner-only. Five new site deletion targets
+  hold the data (three Postgres, two ClickHouse), and a deleted site loses
+  them with everything else.
 - **Funnel step kinds.** A page step can use `*` (`/discount/*`), and an
   event step can require property values (`plan=yearly`, up to three). Both
   are stored as JSON step objects inside the existing step strings, so funnels
@@ -47,6 +124,8 @@ up, and running it twice writes nothing.
   definition declares properties, only those keys are returned. `order_id`
   and `oa_*` keys never are. ClickHouse migration 0030 adds the rollup, and
   both of its tables are deletion targets.
+- **MCP has 38 tools** (26 reads, 12 writes): the five above are new.
+  `SELF-HOSTING.md` lists them.
 
 ## Perier fork: [0.8.1-perier.1] - 2026-11-13
 
