@@ -95,6 +95,24 @@ export function saleTotals(sales: readonly RevenueTransaction[]): Money[] {
   }));
 }
 
+/**
+ * The revenue gate every chart layer shares: the member may read revenue
+ * (owner only, decided without a request) and a provider is connected. A
+ * `disabled` connection keeps its recorded history, which is still real
+ * money, so it counts. Throws what the connection read throws; callers turn
+ * that into "no layer".
+ */
+export async function hasRevenueAccess(
+  siteId: string,
+  role: SiteRole,
+  revenueState: ChartMarkerDeps["revenueState"],
+  signal?: AbortSignal
+): Promise<boolean> {
+  if (!canReadRevenue(role)) return false;
+  const state = await revenueState(siteId, { signal });
+  return state.status !== "not_connected";
+}
+
 async function loadSales(
   siteId: string,
   role: SiteRole,
@@ -102,11 +120,8 @@ async function loadSales(
   deps: ChartMarkerDeps,
   signal?: AbortSignal
 ): Promise<RevenueTransaction[]> {
-  if (!canReadRevenue(role)) return [];
   try {
-    const state = await deps.revenueState(siteId, { signal });
-    // `disabled` keeps its recorded history, which is still real sales.
-    if (state.status === "not_connected") return [];
+    if (!(await hasRevenueAccess(siteId, role, deps.revenueState, signal))) return [];
     const page = await deps.revenueTransactions(siteId, range, {
       limit: MARKER_PAGE_LIMIT,
       signal,
@@ -150,4 +165,62 @@ export async function loadChartMarkers(
     loadSales(siteId, role, range, deps, signal),
   ]);
   return { mentions, sales };
+}
+
+/** How long one connection read answers for, per site. */
+const REVENUE_STATE_TTL_MS = 60_000;
+
+/**
+ * One connection read per site, shared by every chart layer that needs the
+ * revenue gate (the sale markers and the revenue bars), instead of one read
+ * per layer on every range change.
+ *
+ * The read is sent without a caller's abort signal: it is shared, and one
+ * caller leaving must not cancel it for the other. A failed read is not kept,
+ * and an answer expires after a minute, so a provider connected in another
+ * tab or on the integrations page shows up on the next range change rather
+ * than on the next page load.
+ */
+export function sharedRevenueState(
+  read: ChartMarkerDeps["revenueState"],
+  options: { ttlMs?: number; now?: () => number } = {}
+): ChartMarkerDeps["revenueState"] {
+  const ttlMs = options.ttlMs ?? REVENUE_STATE_TTL_MS;
+  const now = options.now ?? Date.now;
+  const cache = new Map<string, { at: number; pending: Promise<RevenueConnectionState> }>();
+  return (siteId) => {
+    const cached = cache.get(siteId);
+    if (cached && now() - cached.at < ttlMs) return cached.pending;
+    const pending = read(siteId, {}).catch((raised: unknown) => {
+      if (cache.get(siteId)?.pending === pending) cache.delete(siteId);
+      throw raised;
+    });
+    cache.set(siteId, { at: now(), pending });
+    return pending;
+  };
+}
+
+/**
+ * Everything the overview chart's legend can hide: the two marker kinds and
+ * the revenue bars. One list in one stored value, so the bars joined without
+ * a new key.
+ */
+export type OverviewChartLayer = "sale" | "mention" | "revenue";
+
+/**
+ * The legend's stored value, a JSON array of hidden layers. A value saved
+ * before the revenue layer existed (`["sale"]`) reads as it was; entries this
+ * build does not know are dropped, and anything unreadable hides nothing.
+ */
+export function parseHiddenLayers(raw: string): OverviewChartLayer[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (kind): kind is OverviewChartLayer =>
+        kind === "sale" || kind === "mention" || kind === "revenue"
+    );
+  } catch {
+    return [];
+  }
 }

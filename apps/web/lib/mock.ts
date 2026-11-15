@@ -31,6 +31,8 @@ import type {
   SiteSummary,
   Mention,
   RevenueTransaction,
+  RevenueTimeseriesPoint,
+  RevenueTimeseriesResponse,
   SiteMentionSettings,
 } from "@/lib/api";
 
@@ -668,6 +670,56 @@ export const MOCK_SALES: RevenueTransaction[] = [
     net: { amount_minor: 4_340, currency: "EUR" },
     reporting: null,
   }),
-  mockSale(6, 14, 8, 4_900, { purchase_kind: "renewal" }),
+  // Partly refunded later: still a sale, worth its gross less the refund.
+  mockSale(6, 14, 8, 4_900, {
+    purchase_kind: "renewal",
+    status: "partially_refunded",
+    refund: { amount_minor: 2_000, currency: "USD" },
+    net: { amount_minor: 4_900 - 172 - 2_000, currency: "USD" },
+    reporting: { amount_minor: 4_900 - 172 - 2_000, currency: "USD" },
+  }),
   mockSale(7, 4, 12, 4_900),
 ];
+
+/**
+ * The chart's revenue bars, derived from `MOCK_SALES` so a bar and the sale
+ * markers under it always agree: one point per UTC day that had a sale, in the
+ * reporting currency (USD). The unconverted EUR sale adds nothing to the money
+ * and counts in `unconverted_count`, and the partly refunded renewal carries
+ * its refund, so mock mode shows the refund outline and the footnote.
+ */
+export const MOCK_REVENUE_TIMESERIES: RevenueTimeseriesResponse = {
+  meta: { ...MOCK_ANALYTICS_META, resolution: "day" },
+  series: (() => {
+    const byDay = new Map<string, RevenueTimeseriesPoint>();
+    for (const sale of [...MOCK_SALES].reverse()) {
+      const day = `${sale.occurred_at.slice(0, 10)}T00:00:00.000Z`;
+      const point = byDay.get(day) ?? {
+        bucket: day,
+        currency: "USD",
+        charge_gross_minor: 0,
+        refund_minor: 0,
+        dispute_withdrawn_minor: 0,
+        dispute_reinstated_minor: 0,
+        fee_minor: 0,
+        net_minor: 0,
+        charge_count: 0,
+        refund_count: 0,
+        dispute_count: 0,
+        unconverted_count: 0,
+      };
+      if (sale.reporting === null) {
+        point.unconverted_count += 1;
+      } else {
+        point.charge_gross_minor += sale.gross.amount_minor;
+        point.refund_minor += sale.refund.amount_minor;
+        point.refund_count += sale.refund.amount_minor > 0 ? 1 : 0;
+        point.fee_minor += sale.fee.amount_minor;
+        point.net_minor += sale.reporting.amount_minor;
+        point.charge_count += 1;
+      }
+      byDay.set(day, point);
+    }
+    return [...byDay.values()];
+  })(),
+};

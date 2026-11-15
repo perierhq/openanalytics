@@ -66,6 +66,8 @@ export interface AreaChartProps {
   style?: CSSProperties;
   /** Fires when the internal chart phase changes (e.g. OG capture readiness). */
   onPhaseChange?: (phase: ChartPhase) => void;
+  /** Fade the series right of the hovered bucket to this opacity while scrubbing. */
+  scrubDimOpacity?: number;
   /** Child components (Area, Grid, ChartTooltip, etc.) */
   children: ReactNode;
 }
@@ -134,6 +136,7 @@ interface ChartInnerProps {
   children: ReactNode;
   containerRef: React.RefObject<HTMLDivElement | null>;
   onPhaseChange: (phase: ChartPhase) => void;
+  scrubDimOpacity?: number;
 }
 
 function ChartInner({
@@ -157,6 +160,7 @@ function ChartInner({
   children,
   containerRef,
   onPhaseChange,
+  scrubDimOpacity,
 }: ChartInnerProps) {
   const lines = useMemo(() => extractAreaConfigs(children), [children]);
 
@@ -175,6 +179,7 @@ function ChartInner({
       margin={margin}
       onPhaseChange={onPhaseChange}
       revealSignature={revealSignature}
+      scrubDimOpacity={scrubDimOpacity}
       tweenYDomainOnXDomainChange={tweenYDomainOnXDomainChange}
       width={width}
       xDataKey={xDataKey}
@@ -209,6 +214,7 @@ export function AreaChart({
   tweenYDomainOnXDomainChange = false,
   style,
   onPhaseChange,
+  scrubDimOpacity,
   children,
 }: AreaChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -252,6 +258,7 @@ export function AreaChart({
             margin={margin}
             onPhaseChange={handlePhaseChange}
             revealSignature={revealSignature}
+            scrubDimOpacity={scrubDimOpacity}
             tweenYDomainOnXDomainChange={tweenYDomainOnXDomainChange}
             width={width}
             xDataKey={xDataKey}

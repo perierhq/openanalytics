@@ -7,6 +7,7 @@ import { useChart, useChartStable } from "./chart-context";
 import { shortDateFmt } from "./chart-formatters";
 import { DEFAULT_Y_DOMAIN_TWEEN_MS } from "./chart-phase";
 import { LINE_LOADING_PULSE_EASE } from "./line-loading-timing";
+import { clampLabelX, thinAxisLabels } from "./x-axis-thinning";
 
 const X_AXIS_POSITION_TWEEN_MS = DEFAULT_Y_DOMAIN_TWEEN_MS;
 
@@ -61,10 +62,7 @@ function XAxisLabel({
 }: XAxisLabelProps) {
   // Keep the first/last labels inside the plot even when the chart itself is
   // flush with the card edges (zero side margins).
-  const clampedX =
-    clampWidth > edgePad * 2
-      ? Math.min(Math.max(x, edgePad), clampWidth - edgePad)
-      : x;
+  const clampedX = clampLabelX(x, clampWidth, edgePad);
   const fadeBuffer = 20;
   const fadeRadius = tickerHalfWidth + fadeBuffer;
 
@@ -693,10 +691,16 @@ const XAxisInner = memo(function XAxisInner({
   // is the full ticker half-width so a clamped label sits entirely inside.
   const clampWidth = container.clientWidth;
   const edgePad = tickerHalfWidth;
+  // Ticks are picked by time; on a narrow plot two can land on each other
+  // once clamped, so the ones that would collide are skipped.
+  const visibleLabels = useMemo(
+    () => thinAxisLabels(labelsToShow, { clampWidth, edgePad }),
+    [labelsToShow, clampWidth, edgePad]
+  );
 
   return createPortal(
     <div className="pointer-events-none absolute inset-0">
-      {labelsToShow.map((item) => (
+      {visibleLabels.map((item) => (
         <XAxisLabel
           animatePosition={xDomain == null}
           clampWidth={clampWidth}

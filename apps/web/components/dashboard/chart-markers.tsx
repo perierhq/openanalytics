@@ -6,6 +6,11 @@ import {
   EventMarkers,
   type EventMarkerKind,
 } from "@/components/charts/event-markers";
+import {
+  MentionGlyph,
+  RevenueGlyph,
+  SaleGlyph,
+} from "@/components/dashboard/chart-marker-glyphs";
 import { useSiteSummary } from "@/components/dashboard/site-summary-context";
 import { useApiResource } from "@/hooks/use-api-resource";
 import {
@@ -19,10 +24,13 @@ import {
 } from "@/lib/api";
 import {
   loadChartMarkers,
+  parseHiddenLayers,
   saleAmount,
   saleTotals,
+  sharedRevenueState,
   type ChartMarkerData,
   type ChartMarkerDeps,
+  type OverviewChartLayer,
 } from "@/lib/chart-markers";
 import { formatMoney } from "@/lib/currencies";
 import type { EventMarkerBucket, EventMarkerItem } from "@/lib/event-markers";
@@ -48,39 +56,10 @@ type OverviewMarkerPayload =
 type OverviewMarkerItem = EventMarkerItem<OverviewMarkerKind, OverviewMarkerPayload>;
 
 /* ------------------------------------------------------------------ */
-/* Glyphs                                                              */
+/* Kinds                                                               */
 /* ------------------------------------------------------------------ */
 
-/**
- * Two shapes as well as two colours, so the kinds tell apart without colour
- * vision: a sale is a diamond in the success green the app uses for money that
- * landed, a mention a round dot in ink. The white ring lifts both off the
- * area fill behind them.
- */
-function SaleGlyph({ muted = false }: { muted?: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "block size-1.5 rotate-45 rounded-xs ring-1 ring-white",
-        muted ? "bg-success/30" : "bg-success"
-      )}
-    />
-  );
-}
-
-function MentionGlyph({ muted = false }: { muted?: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "block size-2 rounded-full ring-1 ring-white",
-        muted ? "bg-foreground/25" : "bg-foreground/75"
-      )}
-    />
-  );
-}
-
+// The glyphs live in `chart-marker-glyphs.tsx`, shared with the day tooltip.
 const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
@@ -96,19 +75,27 @@ const KINDS: Record<OverviewMarkerKind, EventMarkerKind> = {
   },
 };
 
+export type { OverviewChartLayer };
+
 const LEGEND: Array<{
-  kind: OverviewMarkerKind;
+  kind: OverviewChartLayer;
   label: string;
-  Glyph: typeof SaleGlyph;
+  Glyph: (props: { muted?: boolean }) => React.ReactElement;
 }> = [
   { kind: "sale", label: "Sales", Glyph: SaleGlyph },
   { kind: "mention", label: "Mentions", Glyph: MentionGlyph },
+  { kind: "revenue", label: "Revenue", Glyph: RevenueGlyph },
 ];
 
 /* ------------------------------------------------------------------ */
 /* The remembered choice                                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The hidden layers, as a JSON array. `"revenue"` joined the two marker kinds
+ * in the same `v1` array: an existing choice keeps working as it was, and a
+ * build that predates the bars drops the entry it does not know.
+ */
 const HIDDEN_KEY = "oa:chart-markers:v1";
 const listeners = new Set<() => void>();
 /** Fallback for a browser that refuses storage. */
@@ -122,7 +109,7 @@ function readHidden(): string {
   }
 }
 
-function writeHidden(hidden: OverviewMarkerKind[]): void {
+function writeHidden(hidden: OverviewChartLayer[]): void {
   try {
     window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
   } catch {
@@ -144,31 +131,19 @@ const subscribeHidden = (listener: () => void) => {
   };
 };
 
-function parseHidden(raw: string): OverviewMarkerKind[] {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (kind): kind is OverviewMarkerKind => kind === "sale" || kind === "mention"
-    );
-  } catch {
-    return [];
-  }
-}
-
-/** Which kinds the reader has hidden, remembered per browser like the interval. */
-function useHiddenKinds(): [
-  OverviewMarkerKind[],
-  (kind: OverviewMarkerKind) => void,
+/** Which layers the reader has hidden, remembered per browser like the interval. */
+export function useHiddenChartLayers(): [
+  OverviewChartLayer[],
+  (kind: OverviewChartLayer) => void,
 ] {
   const raw = React.useSyncExternalStore(
     subscribeHidden,
     () => memory ?? readHidden(),
     () => "[]"
   );
-  const hidden = React.useMemo(() => parseHidden(raw), [raw]);
+  const hidden = React.useMemo(() => parseHiddenLayers(raw), [raw]);
   const toggle = React.useCallback(
-    (kind: OverviewMarkerKind) => {
+    (kind: OverviewChartLayer) => {
       writeHidden(
         hidden.includes(kind)
           ? hidden.filter((entry) => entry !== kind)
@@ -184,9 +159,17 @@ function useHiddenKinds(): [
 /* The reads                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The connection read both revenue layers gate on: the sale markers here and
+ * the revenue bars in `chart-revenue.tsx`, one read per site between them.
+ */
+export const liveRevenueState = sharedRevenueState((siteId, options) =>
+  revenue.state(siteId, options)
+);
+
 const LIVE_DEPS: ChartMarkerDeps = {
   listMentions: (siteId, range, options) => mentions.list(siteId, range, options),
-  revenueState: (siteId, options) => revenue.state(siteId, options),
+  revenueState: liveRevenueState,
   revenueTransactions: (siteId, range, options) =>
     revenue.transactions(siteId, range, options),
 };
@@ -259,19 +242,24 @@ export function useOverviewMarkers(
 
 export function OverviewMarkersLegend({
   items,
+  revenue = false,
   className,
 }: {
   items: readonly OverviewMarkerItem[];
+  /** The chart has revenue bars to hide. */
+  revenue?: boolean;
   className?: string;
 }) {
-  const [hidden, toggle] = useHiddenKinds();
+  const [hidden, toggle] = useHiddenChartLayers();
   const present = LEGEND.filter((entry) =>
-    items.some((item) => item.kind === entry.kind)
+    entry.kind === "revenue"
+      ? revenue
+      : items.some((item) => item.kind === entry.kind)
   );
   if (present.length === 0) return null;
   return (
     <div
-      aria-label="Chart markers"
+      aria-label="Chart layers"
       className={cn("flex select-none items-center gap-1", className)}
       role="group"
     >
@@ -318,7 +306,7 @@ export function OverviewMarkers({
   /** "14:15" — a single item's time, in the chart's zone. */
   timeLabel: (date: Date) => string;
 }) {
-  const [hidden] = useHiddenKinds();
+  const [hidden] = useHiddenChartLayers();
   const visible = React.useMemo(
     () => items.filter((item) => !hidden.includes(item.kind)),
     [items, hidden]

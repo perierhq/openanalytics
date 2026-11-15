@@ -2,7 +2,7 @@
 
 import { scaleLinear, scaleTime } from "@visx/scale";
 import { bisector, extent } from "d3-array";
-import type { Transition } from "motion/react";
+import { motion, type Transition } from "motion/react";
 import {
   Children,
   cloneElement,
@@ -12,6 +12,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useState,
 } from "react";
@@ -170,6 +171,13 @@ export interface TimeSeriesChartInnerProps {
   /** Tween y-domain when the visible x-range changes during the ready phase. */
   tweenYDomainOnXDomainChange?: boolean;
   onPhaseChange?: (phase: ChartPhase) => void;
+  /**
+   * Scrubbing feedback: while hovering, the series to the right of the hovered
+   * bucket fade to this opacity (0–1), so the cursor reads as "up to here".
+   * Applies to the series layers only — grid, axes and post-overlay markers
+   * stay as they are. Omit to keep the kit's whole-series hover dim.
+   */
+  scrubDimOpacity?: number;
 }
 
 export function TimeSeriesChartInner(props: TimeSeriesChartInnerProps) {
@@ -178,6 +186,49 @@ export function TimeSeriesChartInner(props: TimeSeriesChartInnerProps) {
     return null;
   }
   return <TimeSeriesChartCore {...props} />;
+}
+
+/**
+ * The scrub dim's black rect inside the series mask: everything right of
+ * `cut` fades to `dimOpacity`. When the cursor leaves (`cut` turns null) the
+ * rect keeps the last cut while it fades out, so it does not snap sideways.
+ * That last cut is state carried over from the previous render (a guarded set
+ * during render), kept here so a hover move re-renders this rect, not the
+ * whole chart.
+ */
+function ScrubDimRect({
+  cut,
+  initialCut,
+  right,
+  height,
+  y,
+  dimOpacity,
+}: {
+  cut: number | null;
+  initialCut: number;
+  right: number;
+  height: number;
+  y: number;
+  dimOpacity: number;
+}) {
+  const [lastCut, setLastCut] = useState(initialCut);
+  if (cut !== null && cut !== lastCut) {
+    setLastCut(cut);
+  }
+  const x = cut ?? lastCut;
+  return (
+    // Opacity only: a fade reads the same with reduced motion.
+    <motion.rect
+      animate={{ opacity: cut !== null ? 1 - dimOpacity : 0 }}
+      fill="black"
+      height={height}
+      initial={false}
+      transition={{ duration: 0.15, ease: "easeOut" }}
+      width={Math.max(0, right - x)}
+      x={x}
+      y={y}
+    />
+  );
 }
 
 const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
@@ -211,6 +262,7 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
   xDomainSlotCount,
   tweenYDomainOnXDomainChange = false,
   onPhaseChange,
+  scrubDimOpacity,
 }: TimeSeriesChartInnerProps) {
   const staticPreview = useStaticChartPreview();
   const innerWidth = width - margin.left - margin.right;
@@ -432,6 +484,20 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
     yScales,
   });
 
+  // Scrub dim: a mask over the series that fades everything past the hovered
+  // bucket's right edge (halfway to the next point). The last cut is kept
+  // while the dim fades out, so leaving the chart does not snap it sideways.
+  const scrubMaskId = `chart-scrub-mask-${useId().replace(/:/g, "")}`;
+  const scrubActive =
+    scrubDimOpacity != null &&
+    canInteract &&
+    tooltipData !== null &&
+    selection?.active !== true;
+  const scrubCut =
+    scrubActive && tooltipData
+      ? Math.min(innerWidth, tooltipData.x + columnWidth / 2)
+      : null;
+
   const defsChildren: ReactElement[] = [];
   const clipExcludedChildren: ReactElement[] = [];
   const underlayChildren: ReactElement[] = [];
@@ -652,6 +718,12 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
     plotData.length,
   ]);
 
+  const seriesLayers = useClipReveal ? (
+    <g clipPath={`url(#${clipPathId})`}>{preOverlayChildren}</g>
+  ) : (
+    preOverlayChildren
+  );
+
   return (
     <ReferenceAreaRegistrationContext.Provider
       value={referenceAreaRegistration}
@@ -675,6 +747,32 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
                 targetWidth={innerWidth}
               />
             ) : null}
+            {scrubDimOpacity != null ? (
+              <mask
+                height={height}
+                id={scrubMaskId}
+                maskUnits="userSpaceOnUse"
+                width={width}
+                x={-margin.left}
+                y={-margin.top}
+              >
+                <rect
+                  fill="white"
+                  height={height}
+                  width={width}
+                  x={-margin.left}
+                  y={-margin.top}
+                />
+                <ScrubDimRect
+                  cut={scrubCut}
+                  dimOpacity={scrubDimOpacity}
+                  height={height}
+                  initialCut={innerWidth}
+                  right={width - margin.left}
+                  y={-margin.top}
+                />
+              </mask>
+            ) : null}
           </defs>
 
           <rect fill="transparent" height={height} width={width} x={0} y={0} />
@@ -694,10 +792,10 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
 
             {clipExcludedChildren}
             {underlayChildren}
-            {useClipReveal ? (
-              <g clipPath={`url(#${clipPathId})`}>{preOverlayChildren}</g>
+            {scrubDimOpacity != null ? (
+              <g mask={`url(#${scrubMaskId})`}>{seriesLayers}</g>
             ) : (
-              preOverlayChildren
+              seriesLayers
             )}
             {postOverlayChildren}
           </g>

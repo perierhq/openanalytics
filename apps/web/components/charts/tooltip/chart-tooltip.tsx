@@ -47,6 +47,12 @@ export interface ChartTooltipProps {
   /** Formats the tooltip title for line/area charts. Default: "Sun, Jul 27"
    * (`weekdayDateFmt`) — pass a time-carrying formatter for sub-day buckets. */
   titleFormat?: (date: Date) => string;
+  /**
+   * Formats the date pill's label per bucket instead of the axis labels
+   * ("Yesterday", "3 hours ago"). The pill then shows one label at a time
+   * rather than the month/day ticker, which assumes "Mon DD" labels.
+   */
+  datePillFormat?: (date: Date) => string;
   /** Custom content renderer for the tooltip box */
   content?: (props: {
     point: Record<string, unknown>;
@@ -109,6 +115,7 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
   dotStrokeWidth,
   indicatorColor: indicatorColorProp,
   titleFormat,
+  datePillFormat,
   content,
   rows: rowsRenderer,
   dotColor: dotColorProp,
@@ -126,6 +133,7 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
   backgroundColor,
 }: ChartTooltipInnerProps) {
   const {
+    data,
     tooltipData,
     width,
     height,
@@ -144,6 +152,13 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
   const { tooltipSpring } = useChartConfig();
 
   const isHorizontal = orientation === "horizontal";
+  const pillLabels = useMemo(
+    () =>
+      datePillFormat
+        ? data.map((d) => datePillFormat(xAccessor(d)))
+        : dateLabels,
+    [data, dateLabels, datePillFormat, xAccessor]
+  );
   const discreteInteraction = dateLabels.length > 60;
 
   const resolvedDotSize = useMemo(() => {
@@ -349,9 +364,10 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
       {/* Date/Category Ticker - only show for vertical charts */}
       <DatePillTracker
         currentIndex={tooltipData?.index ?? 0}
+        compact={datePillFormat !== undefined}
         discreteInteraction={discreteInteraction}
         enabled={showDatePill && !isHorizontal}
-        labels={dateLabels}
+        labels={pillLabels}
         springConfig={springConfig}
         visible={visible}
         xWithMargin={xWithMargin}
@@ -389,6 +405,8 @@ interface DatePillTrackerProps {
   xWithMargin: number;
   discreteInteraction: boolean;
   springConfig?: SpringConfig;
+  /** One label at a time instead of the month/day ticker. */
+  compact?: boolean;
 }
 
 // Inner-only-on-visible so `useSpring` initializes at the real cursor x
@@ -407,12 +425,13 @@ function DatePillTrackerInner({
   discreteInteraction,
   springConfig,
   visible,
+  compact = false,
 }: DatePillTrackerProps) {
   const { tooltipSpring } = useChartConfig();
   const { width } = useChart();
   // Keep the date pill fully inside the plot at the first/last point, so its
   // date isn't clipped when the chart runs edge-to-edge (zero side margins).
-  const pillHalfWidth = 44;
+  const pillHalfWidth = compact ? 56 : 44;
   const clampedX =
     width > pillHalfWidth * 2
       ? Math.min(Math.max(xWithMargin, pillHalfWidth), width - pillHalfWidth)
@@ -439,6 +458,7 @@ function DatePillTrackerInner({
       }}
     >
       <DateTicker
+        compact={compact}
         currentIndex={currentIndex}
         labels={labels}
         visible={visible}

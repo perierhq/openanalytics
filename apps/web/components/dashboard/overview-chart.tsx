@@ -23,8 +23,19 @@ import {
 import {
   OverviewMarkers,
   OverviewMarkersLegend,
+  useHiddenChartLayers,
   useOverviewMarkers,
 } from "@/components/dashboard/chart-markers";
+import {
+  RevenueAxis,
+  RevenueBars,
+  useOverviewRevenue,
+} from "@/components/dashboard/chart-revenue";
+import {
+  OverviewTooltipContent,
+  PAGEVIEWS_COLOR,
+  VISITORS_COLOR,
+} from "@/components/dashboard/overview-chart-tooltip";
 import { Area, AreaChart } from "@/components/charts/area-chart";
 import { Background } from "@/components/charts/background";
 import { ChartTooltip } from "@/components/charts/tooltip";
@@ -38,6 +49,14 @@ import {
   type AnalyticsTimeseriesResponse,
   type PublicTimeseriesResponse,
 } from "@/lib/api";
+import {
+  bucketRevenue,
+  revenueLayers,
+  type ChartGrain,
+} from "@/lib/chart-revenue";
+import { chartWindow } from "@/lib/chart-window";
+import { bucketMarkers } from "@/lib/event-markers";
+import { relativeBucketLabel } from "@/lib/relative-bucket-label";
 
 /**
  * Both callers' series in one type: the dashboard's read and the share
@@ -47,6 +66,12 @@ import {
 type ChartTimeseriesResponse =
   | AnalyticsTimeseriesResponse
   | PublicTimeseriesResponse;
+
+/** The series and the browser's clock at the moment it arrived. */
+type StampedSeries = {
+  series: ChartTimeseriesResponse;
+  receivedAtMs: number;
+};
 
 /**
  * The meta's freshness, if this meta is the kind that has one. A plain
@@ -119,9 +144,11 @@ const MOCK_RESPONSE: AnalyticsTimeseriesResponse = {
   comparison: null,
 };
 
-// Our palette: visitors in the brand primary, pageviews a quiet slate underlay.
-const VISITORS = "#296FF0";
-const PAGEVIEWS = "#94a3b8";
+const VISITORS = VISITORS_COLOR;
+const PAGEVIEWS = PAGEVIEWS_COLOR;
+
+/** Scrubbing: the series right of the hovered bucket fade to this. */
+const SCRUB_DIM_OPACITY = 0.3;
 
 const PLOT_HEIGHT = "h-[344px] w-full sm:h-[376px]";
 
@@ -383,9 +410,17 @@ export function OverviewChart({
     [slug, range, interval, rangePending, filtersParam]
   );
 
-  const resource = useApiResource<ChartTimeseriesResponse>(
-    loadOverride ?? loadFromSlug
+  // Stamped with the browser's clock when it lands: a share board's meta has
+  // no `as_of`, and its relative labels need a "now" that render never reads.
+  const loadSeries = loadOverride ?? loadFromSlug;
+  const loadStamped = React.useCallback(
+    async (signal: AbortSignal): Promise<StampedSeries> => ({
+      series: await loadSeries(signal),
+      receivedAtMs: Date.now(),
+    }),
+    [loadSeries]
   );
+  const resource = useApiResource<StampedSeries>(loadStamped);
 
   // Sales and mentions on the timeline: the dashboard's chart only. A share
   // board has no member and no business showing either.
@@ -394,20 +429,25 @@ export function OverviewChart({
     rangePending || loadOverride !== undefined
   );
 
-  if (resource.status === "error") {
-    if (foldOnError) return null;
-    return (
-      <div className={`flex items-center justify-center ${PLOT_HEIGHT}`}>
-        {resource.error.kind === "filtered_range" ? (
-          <FilteredRangePanel />
-        ) : (
-          <ApiErrorPanel error={resource.error} onRetry={resource.retry} />
-        )}
-      </div>
-    );
-  }
+  // Revenue bars, the same way and for the same members as the sale markers.
+  // Asked at the grain the chart asks for, so the read runs beside the
+  // traffic read instead of after it; mock mode plots a fixed daily series.
+  const askedGrain: ChartGrain = LIVE_API
+    ? resolutionForInterval(
+        interval,
+        Date.parse(range.to) - Date.parse(range.from)
+      )
+    : "day";
+  const revenuePoints = useOverviewRevenue(
+    range,
+    askedGrain,
+    rangePending || loadOverride !== undefined
+  );
+  const [hiddenLayers] = useHiddenChartLayers();
 
-  const response = resource.status === "ready" ? resource.data : null;
+  const response = resource.status === "ready" ? resource.data.series : null;
+  const receivedAtMs =
+    resource.status === "ready" ? resource.data.receivedAtMs : Number.NaN;
   const fromMs = Date.parse(range.from);
   const toMs = Date.parse(range.to);
   const askedResolution = resolutionForInterval(interval, toMs - fromMs);
@@ -426,6 +466,48 @@ export function OverviewChart({
    */
   const resolution =
     response?.meta.resolution ?? (LIVE_API ? askedResolution : "day");
+  // Where the buckets end and what "now" is, from the meta: the zero-fill,
+  // the revenue and marker layers and the relative pill all read this one.
+  const plotWindow = React.useMemo(
+    () =>
+      response
+        ? chartWindow({
+            asOf: freshnessOf(response.meta)?.as_of,
+            effectiveTo: response.meta.effective_range.to,
+            toMs,
+            nowMs: receivedAtMs,
+          })
+        : null,
+    [response, receivedAtMs, toMs]
+  );
+
+  // "Yesterday", "3 hours ago": relative to the moment the data was read at,
+  // in the request's zone, for the pill that follows the cursor.
+  const readAtMs = plotWindow?.readAtMs ?? Number.NaN;
+  const pillGrain: ChartGrain =
+    resolution === "minute" || resolution === "hour" || resolution === "week"
+      ? resolution
+      : "day";
+  const formatPill = React.useCallback(
+    (date: Date) =>
+      relativeBucketLabel(date.getTime(), readAtMs, pillGrain, range.timezone),
+    [readAtMs, pillGrain, range.timezone]
+  );
+  const datePillFormat = Number.isNaN(readAtMs) ? undefined : formatPill;
+
+  if (resource.status === "error") {
+    if (foldOnError) return null;
+    return (
+      <div className={`flex items-center justify-center ${PLOT_HEIGHT}`}>
+        {resource.error.kind === "filtered_range" ? (
+          <FilteredRangePanel />
+        ) : (
+          <ApiErrorPanel error={resource.error} onRetry={resource.retry} />
+        )}
+      </div>
+    );
+  }
+
   // `minute` joins `hour` as a sub-day view: both label the axis with clock
   // times and share every layout rule. They differ only in stride, which is
   // what `bucketMs` carries. Neither board asks for minute — it only arrives
@@ -485,13 +567,8 @@ export function OverviewChart({
   // for day views, daily for week/month views — capped at the server's
   // `as_of` so the future stays absent. A young site's long ranges read as
   // flat zero until the day the tracker went live, then the real line.
-  if (response) {
-    // The public meta has no `freshness` at all (D-213); the effective
-    // range's end is then the only honest cap for the zero-fill.
-    const asOfMs = Date.parse(
-      freshnessOf(response.meta)?.as_of ?? response.meta.effective_range.to
-    );
-    const untilMs = Number.isNaN(asOfMs) ? toMs : Math.min(toMs, asOfMs);
+  if (plotWindow) {
+    const { untilMs } = plotWindow;
     const hadSignal = data.some(
       (point) => point.visitors > 0 || point.pageviews > 0
     );
@@ -538,6 +615,33 @@ export function OverviewChart({
   // `to`, which would conjure one bucket more than the day has.
   const domainEndMs = Math.floor((toMs - 1) / bucketMs) * bucketMs;
 
+  // Markers and revenue share the chart's own buckets and end where they do:
+  // a sale after the last traffic bucket is dropped, not folded into it.
+  // (Mock mode's `as_of` ends its fixed June series, so this holds there too.)
+  const layerEndMs = plotWindow?.layerEndMs ?? toMs;
+  const bucketStarts = data.map((point) => point.date.getTime());
+  const revenueModel = bucketRevenue(
+    bucketStarts,
+    layerEndMs,
+    resolution === "minute" ? null : revenuePoints
+  );
+  const {
+    bars: showRevenue,
+    barsVisible: revenueVisible,
+    tooltip: revenueInTooltip,
+  } = revenueLayers(revenueModel, {
+    enabled: loadOverride === undefined && response !== null,
+    hidden: hiddenLayers.includes("revenue"),
+  });
+  const markerCounts = new Map(
+    bucketMarkers(
+      bucketStarts,
+      layerEndMs,
+      markers.filter((item) => !hiddenLayers.includes(item.kind)),
+      ["sale", "mention"]
+    ).map((bucket) => [bucket.startMs, bucket.counts])
+  );
+
   // Clock axes tick on round hours — every third on desktop, every sixth on
   // a phone: the library's interpolated ticks land on times like 20:20,
   // which no clock axis should ever say. The tooltip still narrates every
@@ -569,6 +673,7 @@ export function OverviewChart({
         <OverviewMarkersLegend
           className="absolute left-3 top-0 z-10"
           items={markers}
+          revenue={showRevenue}
         />
       ) : null}
       {response ? (
@@ -596,6 +701,7 @@ export function OverviewChart({
       // spill past the card even though the chart itself is flush.
       margin={{ top: 12, right: 0, bottom: 24, left: 0 }}
       className={PLOT_HEIGHT}
+      scrubDimOpacity={SCRUB_DIM_OPACITY}
       xLabelFormat={xLabelFormat}
       xDomain={
         subDayView
@@ -604,14 +710,24 @@ export function OverviewChart({
       }
     >
       <Background pattern="dots" opacity={0.4} />
+      {/* Behind the traffic: the bars come first among the series layers,
+          and their axis sits outside the reveal clip like the x-axis. */}
+      {showRevenue ? (
+        <RevenueAxis model={revenueModel} visible={revenueVisible} />
+      ) : null}
+      {showRevenue ? (
+        <RevenueBars model={revenueModel} visible={revenueVisible} />
+      ) : null}
       <Area
         dataKey="pageviews"
         fill={PAGEVIEWS}
         fillOpacity={0.08}
         strokeWidth={1.5}
         strokeOpacity={0.45}
-        // stronger dim so the hovered series' shimmer reads clearly
-        dimOpacity={0.28}
+        // No whole-series dim on hover: scrubbing dims only what lies right
+        // of the cursor (`scrubDimOpacity`), and the highlight still traces
+        // the hovered stretch.
+        dimOpacity={1}
         fadeEdges
         loadingStyle="sweep"
         // a thin, soft-grey loading line instead of a bold black one
@@ -625,7 +741,7 @@ export function OverviewChart({
         fillOpacity={0.14}
         strokeWidth={2}
         strokeOpacity={0.4}
-        dimOpacity={0.28}
+        dimOpacity={1}
         fadeEdges
         loadingStyle="sweep"
         loadingStrokeWidth={0.6}
@@ -633,15 +749,35 @@ export function OverviewChart({
         loadingStrokeOpacity={0.35}
       />
       <XAxis tickDates={tickDates} />
-      <ChartTooltip titleFormat={titleFormat} />
+      <ChartTooltip
+        content={({ point }) => {
+          const date = point.date as Date;
+          const visitors = Number(point.visitors) || 0;
+          const counts = markerCounts.get(date.getTime());
+          return (
+            <OverviewTooltipContent
+              // Revenue is site-wide; a filter narrows only the traffic.
+              filtered={filtersParam !== undefined}
+              mentions={counts?.mention ?? 0}
+              pageviews={Number(point.pageviews) || 0}
+              revenue={
+                revenueInTooltip
+                  ? (revenueModel.buckets.get(date.getTime()) ?? null)
+                  : null
+              }
+              sales={counts?.sale ?? 0}
+              title={titleFormat(date)}
+              visitors={visitors}
+            />
+          );
+        }}
+        datePillFormat={datePillFormat}
+        titleFormat={titleFormat}
+      />
       {loadOverride === undefined && response ? (
         <OverviewMarkers
           bucketLabel={titleFormat}
-          // Mock mode plots a fixed June series whatever the picker says, so
-          // its markers end where that series does.
-          endMs={
-            LIVE_API ? toMs : Date.parse(MOCK_RESPONSE.meta.effective_range.to)
-          }
+          endMs={layerEndMs}
           items={markers}
           slug={slug}
           timeLabel={weekView ? fmt.timeTitle.format : fmt.time.format}
