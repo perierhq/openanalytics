@@ -594,7 +594,7 @@ const mcpTools: McpToolDefinition[] = [
     needsSite: true,
     scope: 'revenue:read',
   },
-  // Perier fork, DataFast gaps 3 and 4: two more owner-only aggregates on the
+  // Perier fork, revenue by source and events before purchase: two more owner-only aggregates on the
   // same route subtree, with no customer, order or visitor id in either.
   {
     name: 'revenue_by_source',

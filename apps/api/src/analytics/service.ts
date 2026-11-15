@@ -263,14 +263,14 @@ export interface RevenueJourneyRequest extends RevenueRequest {
   readonly objectId: string
 }
 
-/** Revenue by first/last-touch dimension (Perier fork, DataFast gap 3). */
+/** Revenue by first/last-touch dimension (Perier fork). */
 export interface RevenueAttributionRequest extends RevenueRequest {
   readonly touch: Schemas['RevenueAttributionTouch']
   readonly dimension: Schemas['RevenueAttributionDimension']
   readonly limit: number
 }
 
-/** Custom events before a purchase (Perier fork, DataFast gap 4). */
+/** Custom events before a purchase (Perier fork). */
 export interface RevenueEventsBeforePurchaseRequest extends RevenueRequest {
   readonly windowMs: number
   readonly limit: number
@@ -1365,7 +1365,7 @@ export class AnalyticsService {
   }
 
   /**
-   * One custom event's property breakdown (DataFast gap 6; migration 0030):
+   * One custom event's property breakdown (migration 0030):
    * per key, the top `limit` values by events and an `other` row for the rest.
    *
    * Live only. An imported provider day carries event counts, never their
@@ -2114,7 +2114,7 @@ export class AnalyticsService {
   }
 
   // -------------------------------------------------------------------------
-  // Subscription lifecycle (Perier fork, DataFast gap 7). Kept in one block so
+  // Subscription lifecycle (Perier fork). Kept in one block so
   // neighbouring gaps can rebase around it; the row mapping is in
   // `subscriptions.ts`.
   // -------------------------------------------------------------------------
@@ -2418,7 +2418,7 @@ export class AnalyticsService {
 
   // ---- Revenue by source / entry page, events before purchase -----------
   //
-  // Perier fork, DataFast gaps 3 and 4. Kept together and apart from the four
+  // Perier fork: revenue by source and events before purchase. Kept together and apart from the four
   // CP5 reads above so the fork's rebases touch one block.
 
   /**

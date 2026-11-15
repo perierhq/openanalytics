@@ -190,7 +190,7 @@ describe('the tool roster is pinned by name, not derived', () => {
     // surface advertised 28. The person-only analytics reads (`custom_events`,
     // `performance`, `funnel_results`, `recent_visitors`, `visitor`) make it 33,
     // the Perier fork's revenue aggregates (`revenue_by_source`,
-    // `events_before_purchase`) and `custom_event_properties` (DataFast gap 6)
+    // `events_before_purchase`) and `custom_event_properties`
     // 36, and its subscription reads (`subscription_summary`,
     // `subscription_timeseries`, gap 7) 38.
     expect(MCP_TOOLS).toHaveLength(38)

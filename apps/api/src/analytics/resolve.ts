@@ -394,7 +394,7 @@ export function customEventSamplesOperationFor(sourceRollup: RollupResolution): 
 
 /**
  * The custom-event property breakdown operation for a resolved aggregate grain
- * (DataFast gap 6; ClickHouse migration 0030). Not a report, for the reason
+ * (ClickHouse migration 0030). Not a report, for the reason
  * `customEventSamplesOperationFor` gives: it takes neither the zone nor the
  * import parameters, and an imported day carries no properties to break down.
  */

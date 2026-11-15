@@ -229,7 +229,7 @@ describe('the staging vocabulary and the deletion registry (D9)', () => {
     // eight `*_1h` view targets, `session_rollups_1h` and `revenue_1h` —
     // taking ClickHouse 44 -> 34 and the total 72 -> 62. Nothing had written
     // them since 0027, and the 15m backfill's gate reads `events_raw` now.
-    // ClickHouse migration 0030 (DataFast gap 6) books the two custom-event
+    // ClickHouse migration 0030 books the two custom-event
     // property breakdowns, and 0031 (gap 7) the subscription lifecycle and
     // invoice tables, taking ClickHouse 34 -> 38.
     expect(DELETION_CLICKHOUSE_TARGETS).toHaveLength(38)

@@ -22,7 +22,7 @@ import { formatMoney } from "@/lib/currencies";
 import { resolveReferrer } from "@/lib/referrers";
 
 /**
- * Revenue by source / entry page (Perier fork, DataFast gap 3).
+ * Revenue by source / entry page (Perier fork).
  *
  * One row per value of the chosen touch's dimension, from
  * `GET /v1/sites/{site_id}/revenue/attribution`: the money the attribution

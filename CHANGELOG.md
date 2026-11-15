@@ -12,7 +12,7 @@ Releases before 0.6.0 have their notes on the
 
 The perierhq fork's first release on its own version line, tagged `v0.9.0` and published to
 `ghcr.io/perierhq/openanalytics`. It is 0.8.1-perier.1 plus the fork's
-DataFast gap work: revenue by source and entry page, events before purchase,
+Revenue analytics work: revenue by source and entry page, events before purchase,
 custom-event property breakdowns, funnel step kinds with revenue per step, and
 subscription MRR and churn.
 

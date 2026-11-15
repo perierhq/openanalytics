@@ -1017,7 +1017,7 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
     )
   })
 
-  // One custom event's property values (DataFast gap 6). Person-only, like
+  // One custom event's property values. Person-only, like
   // the custom-events report it breaks down.
   reads.get('/custom-events/properties', async (c) => {
     const query = c.req.query()
@@ -1256,7 +1256,7 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
     )
   })
 
-  // Perier fork, DataFast gaps 3 and 4. Aggregates only — a dimension value or
+  // Perier fork: revenue by source and events before purchase. Aggregates only — a dimension value or
   // an event name with counts, never a customer, order or visitor id — so they
   // travel here on the same footing as `summary` and `timeseries` (ADR-0049).
   revenue.get('/attribution', async (c) => {

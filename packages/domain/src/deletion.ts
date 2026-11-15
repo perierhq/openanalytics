@@ -176,7 +176,7 @@ export const DELETION_CLICKHOUSE_TARGETS = [
   // purged. Listed as literals, per this list's standing rule.
   'session_rollups_15m',
   'revenue_15m',
-  // The custom-event property breakdowns (DataFast gap 6; ClickHouse
+  // The custom-event property breakdowns (ClickHouse
   // migration 0030).
   //
   // Site-scoped view targets like the rest of the family, so the existing
@@ -481,11 +481,11 @@ export interface DeletionTargetName {
  *   now. They leave this list in the same release that drops them: a target
  *   naming a table that no longer exists would fail every deletion, and a
  *   dropped table listed a release late would leave nothing to purge anyway;
- * - ClickHouse migration 0030 (Perier fork, DataFast gap 6) added the
+ * - ClickHouse migration 0030 (Perier fork) added the
  *   custom-event property breakdowns, `custom_event_properties_15m` and
  *   `custom_event_properties_1d` — so 34 became **36** and the site total 62
  *   became **64** (63 became **65** on hosted);
- * - the Perier fork's subscription lifecycle (DataFast gap 7) added
+ * - the Perier fork's subscription lifecycle added
  *   `revenue_subscriptions`, `revenue_subscription_changes` and
  *   `revenue_invoices` (Postgres migration 0047) and `subscription_lifecycle`
  *   and `subscription_invoices` (ClickHouse migration 0031), so the site total

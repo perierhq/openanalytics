@@ -1063,7 +1063,7 @@ const customEventSampleOperations: readonly QueryOperation[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// Custom-event property breakdowns (DataFast gap 6; ClickHouse migration 0030).
+// Custom-event property breakdowns (ClickHouse migration 0030).
 //
 // For one event name: per property key, the top `limit` values by events with
 // their unique visitors, and one `is_other` row per key that folds every value
@@ -3022,7 +3022,7 @@ const revenueOperations: readonly QueryOperation[] = [
 
 // ---------------------------------------------------------------------------
 // Revenue by source, campaign and entry page, and the custom events that came
-// before a purchase (Perier fork, DataFast gaps 3 and 4).
+// before a purchase (Perier fork).
 //
 // Both families read the money FACTS and the attribution rows through the same
 // argMax-per-object rule the transactions list uses, never `FINAL`, and both
@@ -3475,7 +3475,7 @@ const revenueAttributionOperations: readonly QueryOperation[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// Subscription lifecycle and purchase kinds (Perier fork, DataFast gap 7;
+// Subscription lifecycle and purchase kinds (Perier fork;
 // ClickHouse 0031).
 //
 // Three reads, kept in this block so neighbouring gaps can rebase around it:

@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * Revenue by source / entry page and the events before a purchase (Perier
- * fork, DataFast gaps 3 and 4), through the real app and its middleware.
+ * fork), through the real app and its middleware.
  *
  * - **Owner-only on both surfaces.** The session routes sit behind
  *   `requireCapability('revenue:read')`; the `/v1/read/revenue` twins behind the
