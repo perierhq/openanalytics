@@ -372,6 +372,13 @@ export const DELETION_POSTGRES_TARGETS = [
   'revenue_subscriptions',
   'revenue_subscription_changes',
   'revenue_invoices',
+  // X mentions (migration 0048): the per-site watch settings and the stored
+  // posts. Each references only `sites` (and the settings row `users`, outward),
+  // so there is no ordering constraint. Named rather than left to the `sites`
+  // cascade, for this list's standing rule: the target row records how many
+  // rows *this name* removed.
+  'site_mention_settings',
+  'mentions',
 ] as const
 export type DeletionPostgresTarget = (typeof DELETION_POSTGRES_TARGETS)[number]
 
@@ -399,8 +406,8 @@ export interface DeletionTargetName {
 }
 
 /**
- * The full snapshot a site deletion writes: 35 ClickHouse + 5 Redis + 23
- * Postgres + 1 object target, in that order. **64**, and the number changes on
+ * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 27
+ * Postgres + 1 object target, in that order. **71**, and the number changes on
  * purpose as stores are added — the assertions that name it are the contract.
  *
  * How it got here, kept because each step is a decision somebody can check:
@@ -490,7 +497,11 @@ export interface DeletionTargetName {
  *   `revenue_invoices` (Postgres migration 0047) and `subscription_lifecycle`
  *   and `subscription_invoices` (ClickHouse migration 0031), so the site total
  *   64 became **69** (Postgres 22 → 25, ClickHouse 36 → 38; 65 became **70**
- *   on hosted).
+ *   on hosted);
+ * - X mentions added `site_mention_settings` and `mentions` (Postgres
+ *   migration 0048), so Postgres 25 became **27** and the site total 69
+ *   became **71** (70 became **72** on hosted). ClickHouse, Redis and the
+ *   object store did not move: a mention is a Postgres row and nothing else.
  *
  * `currency_rates` (migration 0034) is deliberately **not** here and never will
  * be. It is global reference data — one row per `(rate_date, currency)`, with no

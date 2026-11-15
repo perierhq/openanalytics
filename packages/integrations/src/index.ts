@@ -243,3 +243,17 @@ export {
   type StripeSignatureFailure,
   type StripeSignatureResult,
 } from './stripe-signature.ts'
+
+/**
+ * X mentions search (migration 0048). An fxtwitter-compatible service at the
+ * operator's `MENTIONS_X_API_URL`; no auth, no SDK, typed outcomes only.
+ */
+export {
+  FXTWITTER_SEARCH_COUNT,
+  createFxTwitterClient,
+  type FxTwitterClient,
+  type FxTwitterClientConfig,
+  type FxTwitterSearchOptions,
+  type FxTwitterSearchPage,
+  type FxTwitterSearchResult,
+} from './fxtwitter.ts'

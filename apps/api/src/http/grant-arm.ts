@@ -84,6 +84,11 @@ const allowlist: GrantAllowRow[] = [
   { method: 'PATCH', path: '/v1/sites/:site/funnels/:funnel', scope: 'funnels:write' },
   { method: 'DELETE', path: '/v1/sites/:site/funnels/:funnel', scope: 'funnels:write' },
 
+  // Mentions — the list only (the `list_mentions` tool). The settings routes
+  // have no row: what this install sends to a third-party search service is
+  // not something a grant may change.
+  { method: 'GET', path: '/v1/sites/:site/mentions', scope: 'analytics:read' },
+
   // Event definitions — create / draft / publish / rollback (publish is
   // reversible because rollback exists); no DELETE.
   { method: 'GET', path: '/v1/sites/:site/event-definitions', scope: 'analytics:read' },

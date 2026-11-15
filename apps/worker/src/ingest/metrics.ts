@@ -474,4 +474,15 @@ export const WORKER_METRICS = {
    * Distinct from a stale backup: this says the watcher is blind, not that the
    * backup is old. */
   clickhouseBackupCheckFailed: 'clickhouse_backup_check_failed',
+
+  // ---------------------------------------------------------------------------
+  // X mentions (migration 0048).
+  // ---------------------------------------------------------------------------
+  /** One per site poll, by `status`: `ok`, `unavailable`, `invalid_response`,
+   * or `error` (a database failure inside the poll). A sustained
+   * `unavailable` means the search service at MENTIONS_X_API_URL is down;
+   * `invalid_response` means its answers stopped parsing. */
+  mentionsPoll: 'worker_mentions_poll',
+  /** Mention rows written (new and refreshed) by the poller. */
+  mentionsUpserted: 'worker_mentions_upserted',
 } as const

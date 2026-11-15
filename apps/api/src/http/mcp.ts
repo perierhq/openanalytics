@@ -746,6 +746,35 @@ const mcpTools: McpToolDefinition[] = [
     needsSite: false,
     scope: 'analytics:read',
   },
+  {
+    name: 'list_mentions',
+    title: 'List Mentions',
+    description:
+      'Public posts on X that mention one site, newest first, found by the mention poller for sites whose owner turned watching on. Each post carries its text, author handle and follower count, its like/repost/reply/quote/view counts as of `refreshed_at`, the term that found it (`matched_term`: the site domain or an extra search term), and `links_to_site` — true when the post links to the site rather than only naming it. Filter by `posted_at` in the half-open range [from, to). Page with the response’s `next_cursor` while `has_more` is true. An empty list can also mean watching is off for the site.',
+    path: '/sites/{site_id}/mentions',
+    params: [
+      { name: 'from', description: 'Range start, ISO-8601 UTC (inclusive).', required: true },
+      { name: 'to', description: 'Range end, ISO-8601 UTC (exclusive).', required: true },
+      {
+        name: 'cursor',
+        description: 'The `next_cursor` from a previous page. Omit for the first page.',
+        required: false,
+      },
+      {
+        name: 'limit',
+        description: 'How many posts to return, 1 to 200. Defaults to 50.',
+        required: false,
+      },
+      {
+        name: 'platform',
+        description: 'Only posts from this platform. `x` is the only one today.',
+        required: false,
+      },
+    ],
+    needsSite: false,
+    scope: 'analytics:read',
+    annotations: READ_ONLY,
+  },
 
   // --- Writes (ADR-0048 D3): narrow, additive, reversible. A client that is
   // not read-only prompts the human for confirmation before each of these.

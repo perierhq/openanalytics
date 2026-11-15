@@ -487,6 +487,17 @@ export const policySchema = z
      * weekend cost one request and write nothing new.
      */
     REVENUE_CURRENCY_REFRESH_HOURS: z.coerce.number().int().min(1).max(168).default(6),
+
+    /**
+     * How long a site waits between two X mention polls (migration 0048).
+     *
+     * An hour by default: mentions are not realtime data, and the search
+     * service is a shared public one with no published rate limit, so the
+     * poller stays polite. Fifteen minutes is the floor for the same reason;
+     * a day is the ceiling because a slower poll misses posts that fall off
+     * the first result pages.
+     */
+    MENTIONS_POLL_MINUTES: z.coerce.number().int().min(15).max(1440).default(60),
   })
   .superRefine((policy, ctx) => {
     const latenessDays = policy.EVENT_MAX_LATENESS_HOURS / 24

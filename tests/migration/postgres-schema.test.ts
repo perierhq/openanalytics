@@ -213,6 +213,16 @@ const EXPECTED_CONSTRAINTS = [
   'widgets_row_limit_check',
   'widgets_title_length_check',
   'widgets_allowed_origins_check',
+  // X mentions (migration 0048): at most five terms and a known poll error on
+  // the settings; one row per post per site, a known platform, bounded text
+  // and https-only links on the posts.
+  'site_mention_settings_terms_count_check',
+  'site_mention_settings_last_error_check',
+  'mentions_platform_check',
+  'mentions_text_length_check',
+  'mentions_url_check',
+  'mentions_author_url_check',
+  'mentions_site_platform_post_key',
 ]
 
 const declaredTables = schemaTableColumns()

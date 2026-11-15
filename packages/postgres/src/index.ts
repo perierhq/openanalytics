@@ -457,6 +457,25 @@ export {
 } from './repositories/funnels.ts'
 
 export {
+  dbErrorFacts,
+  existingMentionPostIds,
+  listMentions,
+  listSitesDueForMentionPoll,
+  readMentionSettings,
+  recordMentionPoll,
+  upsertMentionSettings,
+  upsertMentions,
+  type DbErrorFacts,
+  type ListMentionsInput,
+  type MentionPollTarget,
+  type MentionRecord,
+  type MentionSettingsRecord,
+  type MentionUpsertRow,
+  type StoredMentionSettings,
+  type UpsertMentionSettingsInput,
+} from './repositories/mentions.ts'
+
+export {
   countWidgets,
   createWidget,
   deleteWidget,
