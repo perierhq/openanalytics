@@ -4271,6 +4271,97 @@ export interface paths {
         patch: operations["updateSiteWidget"];
         trace?: never;
     };
+    "/v1/sites/{site_id}/mentions/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Whether the site watches X for mentions, and for which terms. Readable by every member.
+         * @description A site that has never written these has no settings row, and this
+         *     endpoint answers with the defaults (`x_enabled: false`, no terms) rather
+         *     than a 404.
+         *
+         *     `domain` is the site's own domain. It is always searched once watching is
+         *     on, so it is reported here and never stored as a term.
+         *
+         *     `last_polled_at` and `last_error` describe the most recent poll, so the
+         *     settings screen can say plainly when a search last ran and why it failed.
+         */
+        get: operations["getSiteMentionSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Turn mention watching on or off, and set the extra search terms (owner or admin).
+         * @description Every field is optional and absent means "leave it alone"; an empty body
+         *     is a `400`, matching `PATCH /v1/sites/{site_id}/ingest-settings`.
+         *
+         *     Turning `x_enabled` on sends the site's domain and its terms to the
+         *     configured X search service (`MENTIONS_X_API_URL`, fxtwitter by default)
+         *     on every poll. Nothing about the site's visitors is sent. It is off by
+         *     default for that reason.
+         *
+         *     `terms` replaces the whole list. Terms are trimmed, compared
+         *     case-insensitively for duplicates, and a term equal to the site's
+         *     domain is dropped, since the domain is always searched.
+         */
+        patch: operations["updateSiteMentionSettings"];
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/mentions": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /**
+                 * @description An opaque cursor from a previous response's `next_cursor`. Omit it for
+                 *     the first page. Its encoding is a server implementation detail; a
+                 *     malformed value is `VALIDATION_FAILED`, never a silent restart.
+                 */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1–200. Defaults to 50. */
+                limit?: components["parameters"]["PageLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Public posts that mention the site, newest first. Readable by every member.
+         * @description Posts found by the mention poller whose `posted_at` falls in the
+         *     half-open range `[from, to)`. Cursor-paginated with the same contract
+         *     as `GET /v1/sites/{site_id}/revenue/transactions`: keyset on
+         *     `(posted_at, id)` descending, `has_more` exact because the server
+         *     over-fetches by one, and a malformed cursor is `VALIDATION_FAILED`.
+         *
+         *     `links_to_site` is true when the post contains a link to the site's
+         *     domain or one of its subdomains, as opposed to only naming one of the
+         *     terms. Counts (`likes`, `reposts`, ...) are as of `refreshed_at`, the
+         *     last time a poll saw the post.
+         *
+         *     Mentions are kept when watching is turned off; only deleting the site
+         *     removes them.
+         */
+        get: operations["listSiteMentions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/funnels": {
         parameters: {
             query?: never;
@@ -9765,6 +9856,70 @@ export interface components {
              *     callers without `revenue:read`.
              */
             revenue_events?: components["schemas"]["RevenueJourneyEntry"][];
+        };
+        /**
+         * @description Where a mention was posted. `x` only for now; the column and this enum
+         *     exist so other platforms can be added without a new resource.
+         * @enum {string}
+         */
+        MentionPlatform: "x";
+        SiteMentionSettings: {
+            /** @description The site's domain. Always searched while watching is on; never stored as a term. */
+            domain: string;
+            /** @description Whether the poller searches X for this site. */
+            x_enabled: boolean;
+            /** @description Extra search terms besides the domain, such as the product name. */
+            terms: string[];
+            /** @description When the last poll for this site finished, or null if it never ran. */
+            last_polled_at: components["schemas"]["UtcInstant"] | null;
+            /**
+             * @description Why the last poll failed, or null when it succeeded or never ran.
+             *     `unavailable` means the search service did not answer or returned
+             *     an error status; `invalid_response` means it answered with something
+             *     that could not be read.
+             */
+            last_error: ("unavailable" | "invalid_response") | null;
+        };
+        UpdateSiteMentionSettingsRequest: {
+            x_enabled?: boolean;
+            terms?: string[];
+        };
+        MentionAuthor: {
+            /** @description The account's handle, without the leading `@`. */
+            handle: string;
+            name: string;
+            followers: number | null;
+            /** Format: uri */
+            url: string;
+        };
+        Mention: {
+            /** Format: uuid */
+            id: string;
+            platform: components["schemas"]["MentionPlatform"];
+            /** @description The platform's own post id. */
+            post_id: string;
+            /** Format: uri */
+            url: string;
+            /** @description The post text with shortened links expanded, cut at 1000 characters. */
+            text: string;
+            author: components["schemas"]["MentionAuthor"];
+            posted_at: components["schemas"]["UtcInstant"];
+            /** @description The search term (the domain or one of the extra terms) that first found this post. */
+            matched_term: string;
+            links_to_site: boolean;
+            likes: number | null;
+            reposts: number | null;
+            replies: number | null;
+            quotes: number | null;
+            views: number | null;
+            first_seen_at: components["schemas"]["UtcInstant"];
+            refreshed_at: components["schemas"]["UtcInstant"];
+        };
+        MentionsResponse: {
+            items: components["schemas"]["Mention"][];
+            /** @description Pass as `cursor` for the next page, or null on the last one. */
+            next_cursor: string | null;
+            has_more: boolean;
         };
         /**
          * @description A site's tracker/ingest settings — the stored values `GET
@@ -15508,6 +15663,102 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+        };
+    };
+    getSiteMentionSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current settings, or the defaults when no row exists. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteMentionSettings"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    updateSiteMentionSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSiteMentionSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The settings as stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteMentionSettings"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    listSiteMentions: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /**
+                 * @description An opaque cursor from a previous response's `next_cursor`. Omit it for
+                 *     the first page. Its encoding is a server implementation detail; a
+                 *     malformed value is `VALIDATION_FAILED`, never a silent restart.
+                 */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1–200. Defaults to 50. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Only posts from this platform. Absent means every platform. */
+                platform?: components["schemas"]["MentionPlatform"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of mentions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentionsResponse"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
         };
     };
     listSiteFunnels: {
