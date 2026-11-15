@@ -185,6 +185,13 @@ nothing to do by hand.
   stops it for the whole install, and `MENTIONS_POLL_MINUTES` (default 60) sets
   how often each site is searched.
 
+- **Sales and mentions on the overview chart.** Days with sales or mentions get
+  a marker under the chart; opening one lists that day's sales (owners only,
+  since revenue is owner-only) and posts. A legend above the chart hides
+  either kind. The new Mentions tab lists every post in the period, and the
+  Integrations settings turn watching on and set the terms. Author pictures
+  are not loaded from X, so viewing the dashboard sends nothing to X.
+
 - **Postgres on Neon.** `infra/selfhost/NEON.md` walks a new install, and
   moving an existing one, onto [Neon](https://neon.com);
   `docker-compose.neon.yml` takes the bundled `postgres` service out of the

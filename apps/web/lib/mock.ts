@@ -29,6 +29,9 @@ import type {
   SiteMember,
   SiteListItem,
   SiteSummary,
+  Mention,
+  RevenueTransaction,
+  SiteMentionSettings,
 } from "@/lib/api";
 
 /**
@@ -529,3 +532,142 @@ export const MOCK_IMPORT_PROVIDERS: ImportProvider[] = [
 export const MOCK_IMPORT_RUNS: ImportRun[] = [];
 
 export const MOCK_EXPORTS: ExportRun[] = [];
+
+/* Mentions and sales ------------------------------------------------------ */
+
+/**
+ * Watching on, one extra term, checked twelve minutes ago. Built per domain so
+ * the copy names the site being looked at.
+ */
+export function mockMentionSettings(domain: string): SiteMentionSettings {
+  return {
+    domain,
+    x_enabled: true,
+    terms: ["OpenAnalytics"],
+    last_polled_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+    last_error: null,
+  };
+}
+
+/** Same days as the overview chart's mock series (2026-06-20, thirty days). */
+const mockDay = (day: number, hour: number) =>
+  new Date(Date.UTC(2026, 5, 20 + day, hour, 14)).toISOString();
+
+const mockMention = (
+  index: number,
+  day: number,
+  hour: number,
+  author: { handle: string; name: string; followers: number | null },
+  text: string,
+  extra: Partial<Mention> = {}
+): Mention => {
+  const postId = `18100000000000${String(index).padStart(5, "0")}`;
+  return {
+    id: `019f8740-2b3c-7a10-9c1d-${String(index).padStart(12, "0")}`,
+    platform: "x",
+    post_id: postId,
+    url: `https://x.com/${author.handle}/status/${postId}`,
+    text,
+    author: { ...author, url: `https://x.com/${author.handle}` },
+    posted_at: mockDay(day, hour),
+    matched_term: "getopen.so",
+    links_to_site: true,
+    likes: 12,
+    reposts: 2,
+    replies: 3,
+    quotes: null,
+    views: 2_400,
+    first_seen_at: mockDay(day, hour + 1),
+    refreshed_at: mockDay(day, hour + 2),
+    ...extra,
+  };
+};
+
+/** Newest first, the API's order. Day 21 is the traffic spike in the mock series. */
+export const MOCK_MENTIONS: Mention[] = [
+  mockMention(
+    1,
+    27,
+    16,
+    { handle: "marta_builds", name: "Marta Kowalska", followers: 8_900 },
+    "Moved our docs site off the big analytics suite and onto getopen.so this week. Same numbers, a tenth of the script, and I can finally read the dashboard."
+  ),
+  mockMention(
+    2,
+    22,
+    9,
+    { handle: "indiehackr", name: "Theo", followers: 512 },
+    "Is anyone self-hosting OpenAnalytics behind Cloudflare? Wondering how the collector handles the proxy headers.",
+    { matched_term: "OpenAnalytics", links_to_site: false, likes: 3, reposts: null, views: null }
+  ),
+  mockMention(
+    3,
+    21,
+    18,
+    { handle: "sarahdev", name: "Sarah Chen", followers: 41_200 },
+    "Privacy-first analytics that doesn't feel like a compromise: https://getopen.so — the realtime globe is a nice touch.",
+    { likes: 318, reposts: 64, replies: 27, views: 52_000 }
+  ),
+  mockMention(
+    4,
+    21,
+    11,
+    { handle: "q_ops", name: "", followers: null },
+    "getopen.so on the front page today, congrats to the team",
+    { likes: null, reposts: null, replies: null, views: null }
+  ),
+  mockMention(
+    5,
+    9,
+    14,
+    { handle: "nadia", name: "Nadia Haddad", followers: 2_300 },
+    "Our pricing page conversion story, told by getopen.so funnels. Thread below.",
+    { likes: 41, replies: 6, views: 7_800 }
+  ),
+];
+
+const mockSale = (
+  index: number,
+  day: number,
+  hour: number,
+  grossMinor: number,
+  extra: Partial<RevenueTransaction> = {}
+): RevenueTransaction => {
+  const fee = Math.round(grossMinor * 0.029) + 30;
+  return {
+    object_id: `ch_mock_${index}`,
+    provider: "stripe",
+    object_kind: "charge",
+    occurred_at: mockDay(day, hour),
+    status: "succeeded",
+    livemode: true,
+    gross: { amount_minor: grossMinor, currency: "USD" },
+    refund: { amount_minor: 0, currency: "USD" },
+    fee: { amount_minor: fee, currency: "USD" },
+    net: { amount_minor: grossMinor - fee, currency: "USD" },
+    reporting: { amount_minor: grossMinor - fee, currency: "USD" },
+    conversion: null,
+    parent_object_id: null,
+    order_id: null,
+    product_name: "Pro",
+    matched_via: "conversion_event",
+    confidence: "exact",
+    purchase_kind: "new",
+    ...extra,
+  };
+};
+
+/** Charges for the chart's sale markers, newest first. One is unconverted EUR. */
+export const MOCK_SALES: RevenueTransaction[] = [
+  mockSale(1, 28, 10, 4_900, { purchase_kind: "renewal" }),
+  mockSale(2, 22, 13, 19_900, { product_name: "Team" }),
+  mockSale(3, 21, 19, 4_900),
+  mockSale(4, 21, 17, 4_900),
+  mockSale(5, 21, 15, 4_500, {
+    gross: { amount_minor: 4_500, currency: "EUR" },
+    net: { amount_minor: 4_340, currency: "EUR" },
+    reporting: null,
+  }),
+  mockSale(6, 14, 8, 4_900, { purchase_kind: "renewal" }),
+  mockSale(7, 4, 12, 4_900),
+];
