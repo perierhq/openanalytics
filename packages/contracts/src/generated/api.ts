@@ -4315,6 +4315,37 @@ export interface paths {
         patch: operations["updateSiteMentionSettings"];
         trace?: never;
     };
+    "/v1/sites/{site_id}/mentions/avatars/{platform}/{handle}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+                platform: components["schemas"]["MentionPlatform"];
+                handle: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A mention author's stored profile picture. Readable by every member.
+         * @description The small copy of the author's picture the mention poller stored for
+         *     this site. Served from this API so a dashboard viewer's browser never
+         *     requests anything from the platform. `404` when the site has no
+         *     picture for that author.
+         *
+         *     The body is the image bytes (`image/jpeg`, `image/png` or
+         *     `image/webp`, at most 32 KB) with `Cache-Control: private, max-age=86400`
+         *     and `X-Content-Type-Options: nosniff`.
+         */
+        get: operations["getSiteMentionAvatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/mentions": {
         parameters: {
             query: {
@@ -9891,6 +9922,14 @@ export interface components {
             followers: number | null;
             /** Format: uri */
             url: string;
+            /**
+             * @description Path of the author's profile picture on this API
+             *     (`/v1/sites/{site_id}/mentions/avatars/{platform}/{handle}`), or null
+             *     when no picture has been stored yet. The picture is downloaded by the
+             *     worker and served from here, so showing it never contacts the
+             *     platform from the viewer's browser.
+             */
+            avatar_url: string | null;
         };
         Mention: {
             /** Format: uuid */
@@ -15715,6 +15754,35 @@ export interface operations {
                 };
             };
             400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    getSiteMentionAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+                platform: components["schemas"]["MentionPlatform"];
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The picture. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "image/webp": string;
+                };
+            };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["SiteNotFound"];
