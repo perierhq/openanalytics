@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { Mention } from "@/lib/api";
 import { revenueTooltipModel, type RevenueBucket } from "@/lib/chart-revenue";
 import { MentionGlyph, SaleGlyph } from "./chart-marker-glyphs";
+import { UserAvatar } from "@/components/ui/user-avatar";
 import { MentionAvatar } from "./mention-avatar";
 
 /**
@@ -19,7 +20,7 @@ export const PAGEVIEWS_COLOR = "#94a3b8";
 
 const intFmt = new Intl.NumberFormat("en-US");
 
-/** Faces before the mention count; the count says how many there are. */
+/** Faces before a sale or mention count; the count says how many there are. */
 const TOOLTIP_FACES = 3;
 
 const plural = (count: number, one: string, many: string) =>
@@ -36,9 +37,15 @@ export type OverviewTooltipContentProps = {
   sales: number;
   mentions: number;
   /**
+   * The bucket's buyers' anonymous ids, distinct, newest sale first; the
+   * first three are drawn as small faces before the count, the same faces the
+   * realtime views draw (see `lib/marker-faces.ts`). Sales that matched no
+   * visitor have none.
+   */
+  saleVisitors?: readonly string[];
+  /**
    * Who wrote the bucket's mentions, ranked, pictures only; the first three
-   * are drawn as small faces before the count. Sales have no faces: a
-   * transaction carries no visitor seed (see `lib/marker-faces.ts`).
+   * are drawn as small faces before the count.
    */
   mentionAuthors?: ReadonlyArray<Pick<Mention["author"], "handle" | "name" | "avatar_url">>;
   /** A dashboard filter narrows the traffic; revenue stays site-wide. */
@@ -80,6 +87,7 @@ export function OverviewTooltipContent({
   revenue,
   sales,
   mentions,
+  saleVisitors = [],
   mentionAuthors = [],
   filtered = false,
 }: OverviewTooltipContentProps) {
@@ -119,6 +127,15 @@ export function OverviewTooltipContent({
                 <span className="flex size-2 items-center justify-center">
                   <SaleGlyph tone="dark" />
                 </span>
+                {saleVisitors.length > 0 ? (
+                  <span className="flex -space-x-1">
+                    {saleVisitors.slice(0, TOOLTIP_FACES).map((visitor) => (
+                      <span className="flex rounded-full ring-1 ring-black/50" key={visitor}>
+                        <UserAvatar seed={visitor} size={16} />
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
                 {plural(sales, "sale", "sales")}
               </p>
             ) : null}

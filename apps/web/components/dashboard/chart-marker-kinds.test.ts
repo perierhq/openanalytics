@@ -28,21 +28,46 @@ const mentionItem = (id: number, handle: string, followers: number): OverviewMar
   }
 }
 
-const saleItem: OverviewMarkerItem = {
-  id: "ch_1",
-  kind: "sale",
-  at: Date.parse("2026-07-11T10:00:00.000Z"),
-  payload: { kind: "sale", sale: { object_id: "ch_1" } as RevenueTransaction },
+const saleItem = (id: number, visitor: string | null): OverviewMarkerItem => {
+  const sale = {
+    object_id: `ch_${id}`,
+    occurred_at: `2026-07-11T1${id}:00:00.000Z`,
+    visitor,
+  } as RevenueTransaction
+  return {
+    id: sale.object_id,
+    kind: "sale",
+    at: Date.parse(sale.occurred_at),
+    payload: { kind: "sale", sale },
+  }
 }
 
 describe("the overview chart's marker kinds", () => {
-  it("keeps the diamond for sales: a transaction carries no visitor seed for a face", () => {
-    expect(OVERVIEW_MARKER_KINDS.sale.face).toBeUndefined()
+  it("stacks sales first, nearest the axis, so a buyer's face sits under a mention's", () => {
+    expect(Object.keys(OVERVIEW_MARKER_KINDS)).toEqual(["sale", "mention"])
+  })
+
+  it("gives a sale its buyer's face, in the green ring with a diamond", () => {
+    const face = OVERVIEW_MARKER_KINDS.sale.face
+    expect(face).toBeDefined()
+    const out = markup(face?.([saleItem(2, "anon_b"), saleItem(1, null)]))
+    // The face (before hydration, its placeholder disc), the ring, the badge.
+    expect(out).toContain("width:20px;height:20px")
+    expect(out).toContain("ring-success")
+    expect(out).toContain(renderToStaticMarkup(createElement(SaleGlyph)))
+    // "+N" counts the bucket's other sales, faceless ones included.
+    expect(out).toContain("+1")
+  })
+
+  it("draws no face for a sale that matched no visitor, so the diamond stays", () => {
+    expect(OVERVIEW_MARKER_KINDS.sale.face?.([saleItem(1, null), saleItem(2, null)])).toBeNull()
     expect(markup(OVERVIEW_MARKER_KINDS.sale.glyph)).toContain(
       renderToStaticMarkup(createElement(SaleGlyph))
     )
-    // Not even a face made up from the transaction id.
-    expect(saleItem.payload.kind).toBe("sale")
+  })
+
+  it("has no count for a single sale", () => {
+    expect(markup(OVERVIEW_MARKER_KINDS.sale.face?.([saleItem(1, "anon_a")]))).not.toContain("+")
   })
 
   it("shows the top author's picture and counts the rest for mentions", () => {

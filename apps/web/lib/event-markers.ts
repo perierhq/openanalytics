@@ -126,3 +126,38 @@ export const FACE_MIN_COLUMN = 24;
 export function markerFaceMode(bucketCount: number, columnWidth: number): boolean {
   return bucketCount <= FACE_BUCKET_LIMIT && columnWidth >= FACE_MIN_COLUMN;
 }
+
+/** A kind's mark in a bucket: its face, or its small glyph. */
+export type MarkerSlot = "face" | "glyph";
+
+export const MARKER_GLYPH = 8;
+export const MARKER_FACE = 20;
+/** Space between two marks in a bucket's stack. */
+export const MARKER_GAP = 3;
+/**
+ * Two faces in one bucket (a buyer and a mention's author) sit 2px apart,
+ * one above the other, rather than overlap: overlapped, the upper face hid
+ * most of the lower one and their "+N" badges collided. 2px rather than the
+ * glyph gap keeps them reading as one bucket and the stack short.
+ */
+export const MARKER_FACE_GAP = 2;
+
+/**
+ * A bucket's stack, bottom first: the offset before each mark (0 for the
+ * first) and the stack's height.
+ */
+export function markerStack(slots: readonly MarkerSlot[]): {
+  offsets: number[];
+  height: number;
+} {
+  const offsets = slots.map((slot, index) => {
+    if (index === 0) return 0;
+    return slot === "face" && slots[index - 1] === "face" ? MARKER_FACE_GAP : MARKER_GAP;
+  });
+  const height = slots.reduce(
+    (total, slot, index) =>
+      total + (slot === "face" ? MARKER_FACE : MARKER_GLYPH) + (offsets[index] ?? 0),
+    0
+  );
+  return { offsets, height };
+}

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest"
 
-import type { Mention } from "./api"
+import type { Mention, RevenueTransaction } from "./api"
 import {
   FACE_BUCKET_LIMIT,
   markerFaceMode,
   mentionFace,
   rankMentionAuthors,
+  rankSaleVisitors,
+  saleFace,
   topMentionAuthor,
 } from "./marker-faces"
 
@@ -91,5 +93,37 @@ describe("whose face a bucket shows", () => {
       { limit: 3, withPicture: true }
     )
     expect(ranked.map((author) => author.handle)).toEqual(["b", "c", "a"])
+  })
+})
+
+/** A bucket's sales arrive newest first, as the marker layer hands them over. */
+const sale = (objectId: string, visitor: string | null): RevenueTransaction =>
+  ({ object_id: objectId, visitor }) as RevenueTransaction
+
+describe("whose face a bucket's sales show", () => {
+  it("shows the newest buyer with a visitor id and counts every other sale", () => {
+    const sales = [sale("ch_3", null), sale("ch_2", "anon_b"), sale("ch_1", "anon_a")]
+    expect(saleFace(sales)).toEqual({ visitor: "anon_b", more: 2 })
+    expect(saleFace([sale("ch_1", "anon_a")])).toEqual({ visitor: "anon_a", more: 0 })
+  })
+
+  it("has no face when no sale matched a visitor", () => {
+    expect(saleFace([sale("ch_1", null), sale("ch_2", null)])).toBeNull()
+    expect(saleFace([])).toBeNull()
+  })
+
+  it("ranks distinct buyers for the tooltip, newest first, at most three", () => {
+    const ranked = rankSaleVisitors(
+      [
+        sale("ch_6", "anon_a"),
+        sale("ch_5", null),
+        sale("ch_4", "anon_a"),
+        sale("ch_3", "anon_b"),
+        sale("ch_2", "anon_c"),
+        sale("ch_1", "anon_d"),
+      ],
+      { limit: 3 }
+    )
+    expect(ranked).toEqual(["anon_a", "anon_b", "anon_c"])
   })
 })

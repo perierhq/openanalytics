@@ -328,4 +328,18 @@ describe('subscription lifecycle (Perier gap 7)', () => {
     expect(field).toContain("$ref: '#/components/schemas/SubscriptionPurchaseKind'")
     expect(field).toContain("type: 'null'")
   })
+
+  it('gives a transaction a nullable, required visitor that is never the identify() hash', async () => {
+    const text = await spec()
+    const tx = schemaBlock(text, 'RevenueTransaction')
+    const required = tx.slice(tx.indexOf('required:'), tx.indexOf('properties:'))
+    expect(required).toMatch(/\bvisitor,/u)
+    const field = tx.slice(tx.indexOf('        visitor:'))
+    expect(field).toContain('- type: string')
+    expect(field).toContain("type: 'null'")
+    expect(field.replace(/\s+/gu, ' ')).toContain(
+      'It rotates daily; two charges share it only when they share a last-touch session.',
+    )
+    expect(field).toContain('Never the identify() hash.')
+  })
 })

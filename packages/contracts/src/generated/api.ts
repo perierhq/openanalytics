@@ -9348,6 +9348,14 @@ export interface components {
              *     Null on a refund or a dispute, which have no purchase of their own.
              */
             purchase_kind: components["schemas"]["SubscriptionPurchaseKind"] | null;
+            /**
+             * @description The anonymous id the buyer had in the purchase's last-touch session,
+             *     the same id the visitor surfaces show, for drawing the same
+             *     generated face. It rotates daily; two charges share it only when
+             *     they share a last-touch session. Null when the charge matched no
+             *     visitor. Never the identify() hash.
+             */
+            visitor: string | null;
         };
         /**
          * @description Which exact signal matched this transaction to a visitor (ADR-0033, D6),

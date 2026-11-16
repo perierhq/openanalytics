@@ -56,7 +56,7 @@ import {
 } from "@/lib/chart-revenue";
 import { chartWindow } from "@/lib/chart-window";
 import { bucketMarkers } from "@/lib/event-markers";
-import { rankMentionAuthors } from "@/lib/marker-faces";
+import { rankMentionAuthors, rankSaleVisitors } from "@/lib/marker-faces";
 import { relativeBucketLabel } from "@/lib/relative-bucket-label";
 
 /**
@@ -644,6 +644,14 @@ export function OverviewChart({
       bucket.startMs,
       {
         counts: bucket.counts,
+        // The tooltip's small buyer faces: distinct anonymous ids, newest sale
+        // first, like the marker's own face.
+        saleVisitors: rankSaleVisitors(
+          (bucket.byKind.sale ?? []).flatMap((item) =>
+            item.payload.kind === "sale" ? [item.payload.sale] : []
+          ),
+          { limit: 3 }
+        ),
         // The tooltip's small faces: distinct authors with a picture, ranked
         // like the marker's own face.
         mentionAuthors: rankMentionAuthors(
@@ -775,6 +783,7 @@ export function OverviewChart({
               filtered={filtersParam !== undefined}
               mentionAuthors={bucket?.mentionAuthors}
               mentions={counts?.mention ?? 0}
+              saleVisitors={bucket?.saleVisitors}
               pageviews={Number(point.pageviews) || 0}
               revenue={
                 revenueInTooltip

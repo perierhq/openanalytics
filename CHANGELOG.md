@@ -199,7 +199,14 @@ authors, and changes nothing that exists; nothing to do by hand.
   since revenue is owner-only) and posts. A legend above the chart hides
   either kind. The new Mentions tab lists every post in the period, and the
   Integrations settings turn watching on and set the terms. Author pictures
-  are not loaded from X, so viewing the dashboard sends nothing to X.
+  are not loaded from X, so viewing the dashboard sends nothing to X. Sales
+  show the buyer's generated face, the same one the realtime views use. For
+  that, each item of `GET /v1/sites/{site_id}/revenue/transactions` has a new
+  `visitor` field: the anonymous id the buyer had in the purchase's last-touch
+  session, the same id the visitor surfaces show, for drawing the same
+  generated face. It rotates daily; two charges share it only when they share
+  a last-touch session. Null when the charge matched no visitor. Never the
+  `identify()` hash.
 
 - **Postgres on Neon.** `infra/selfhost/NEON.md` walks a new install, and
   moving an existing one, onto [Neon](https://neon.com);

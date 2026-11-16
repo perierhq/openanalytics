@@ -126,4 +126,16 @@ describe("the overview chart's day tooltip", () => {
   it("has no faces without authors", () => {
     expect(render({ mentions: 2 })).not.toContain("<img")
   })
+
+  it("puts up to three buyer faces before the sale count", () => {
+    const html = render({ sales: 3, saleVisitors: ["anon_a", "anon_b", "anon_c", "anon_d"] })
+    // Before hydration each face is its 16px placeholder disc.
+    const faces = html.match(/width:16px;height:16px/g) ?? []
+    expect(faces.length).toBe(3)
+    expect(html.lastIndexOf("width:16px;height:16px")).toBeLessThan(html.indexOf("3 sales"))
+  })
+
+  it("has no buyer faces when no sale matched a visitor", () => {
+    expect(render({ sales: 2 })).not.toContain("width:16px;height:16px")
+  })
 })

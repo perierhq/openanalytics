@@ -9,9 +9,13 @@ import {
 } from "@/components/ui/popover";
 import {
   bucketMarkers,
+  MARKER_FACE,
+  MARKER_GLYPH,
   markerFaceMode,
+  markerStack,
   type EventMarkerBucket,
   type EventMarkerItem,
+  type MarkerSlot,
 } from "@/lib/event-markers";
 import { cn } from "@/lib/utils";
 import { useChartHover, useChartStable } from "./chart-context";
@@ -31,11 +35,14 @@ import { useChartHover, useChartStable } from "./chart-context";
  * here", and the popover says how much.
  *
  * **Faces when there's room.** A kind may bring a `face`: who is behind the
- * bucket's items (a mention's author), about 20px. With at most 45 buckets,
- * each wide enough for one (`markerFaceMode`), the face stands in for the
- * glyph; otherwise every kind keeps its glyph. A face keeps its kind readable
- * without colour on its own (its ring and badge), and the button's label,
- * hit area and focus ring are the same either way.
+ * bucket's items (a mention's author, a sale's buyer), about 20px. With at
+ * most 45 buckets, each wide enough for one (`markerFaceMode`), the face
+ * stands in for the glyph; otherwise every kind keeps its glyph. A kind may
+ * have no face for one bucket's items (sales that matched no visitor), and
+ * that bucket keeps the glyph. Two faces in one bucket overlap by 6px, the
+ * lower one first. A face keeps its kind readable without colour on its own
+ * (its ring and badge), and the button's label, hit area and focus ring are
+ * the same either way.
  *
  * **HTML, not SVG.** The chart's `<svg>` is `aria-hidden`, so a marker drawn
  * inside it could be neither focused nor read. The markers portal into the
@@ -50,10 +57,11 @@ export type EventMarkerKind<P = unknown> = {
   glyph: ReactNode;
   /**
    * The bucket's items of this kind (newest first) as a face, 20px, drawn
-   * instead of the glyph when the chart has room. Decorative: the marker's
-   * label already says what is there.
+   * instead of the glyph when the chart has room, or `null` when these items
+   * have no face and the glyph should stay. Decorative: the marker's label
+   * already says what is there.
    */
-  face?: (items: readonly EventMarkerItem<string, P>[]) => ReactNode;
+  face?: (items: readonly EventMarkerItem<string, P>[]) => ReactNode | null;
 };
 
 export interface EventMarkersProps<K extends string, P> {
@@ -67,9 +75,6 @@ export interface EventMarkersProps<K extends string, P> {
   renderContent: (bucket: EventMarkerBucket<K, P>) => ReactNode;
 }
 
-const GLYPH = 8;
-const FACE = 20;
-const GLYPH_GAP = 3;
 /** Clear of the plot's bottom edge, so the glyphs sit above the axis rule. */
 const BOTTOM_INSET = 6;
 
@@ -147,11 +152,10 @@ function EventMarkersLayer<K extends string, P>({
   };
 
   const faces = markerFaceMode(data.length, columnWidth);
-  const drawsFace = (kind: K) => faces && kinds[kind].face !== undefined;
   // Wide enough to aim at, never wider than a bucket, so neighbours don't
   // overlap; face mode only runs on columns wide enough for this width.
   const hitWidth = Math.max(
-    (faces ? FACE : GLYPH) + 4,
+    (faces ? MARKER_FACE : MARKER_GLYPH) + 4,
     Math.min(24, columnWidth || 24)
   );
   const bottom = margin.top + innerHeight - BOTTOM_INSET;
@@ -160,13 +164,13 @@ function EventMarkersLayer<K extends string, P>({
     <div className="pointer-events-none absolute inset-0 z-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200">
       {buckets.map((bucket) => {
         const start = new Date(bucket.startMs);
-        const stackHeight =
-          bucket.kinds.reduce(
-            (total, kind) => total + (drawsFace(kind) ? FACE : GLYPH),
-            0
-          ) +
-          (bucket.kinds.length - 1) * GLYPH_GAP;
-        const hitHeight = stackHeight + 8;
+        // Each kind's face for this bucket, or null for its glyph.
+        const marks = bucket.kinds.map((kind) => {
+          const face = faces ? (kinds[kind].face?.(bucket.byKind[kind] ?? []) ?? null) : null;
+          return { kind, face, slot: (face === null ? "glyph" : "face") as MarkerSlot };
+        });
+        const stack = markerStack(marks.map((mark) => mark.slot));
+        const hitHeight = stack.height + 8;
         // The plot runs edge to edge, so the first and last buckets sit on the
         // card's edge; the centre is clamped to keep the whole mark visible.
         const centre = Math.min(
@@ -194,22 +198,21 @@ function EventMarkersLayer<K extends string, P>({
                 top: bottom - hitHeight + 4,
                 width: hitWidth,
                 height: hitHeight,
-                gap: GLYPH_GAP,
               }}
             >
-              {bucket.kinds.map((kind) => {
-                const face = drawsFace(kind);
-                const size = face ? FACE : GLYPH;
+              {marks.map((mark, index) => {
+                const size = mark.slot === "face" ? MARKER_FACE : MARKER_GLYPH;
                 return (
                   <span
                     aria-hidden="true"
                     className="flex shrink-0 items-center justify-center"
-                    key={kind}
-                    style={{ width: size, height: size }}
+                    key={mark.kind}
+                    // The stack is column-reverse: a mark's offset from the
+                    // one below it is its bottom margin (2px between two
+                    // faces, so neither hides the other).
+                    style={{ width: size, height: size, marginBottom: stack.offsets[index] }}
                   >
-                    {face
-                      ? kinds[kind].face?.(bucket.byKind[kind] ?? [])
-                      : kinds[kind].glyph}
+                    {mark.face ?? kinds[mark.kind].glyph}
                   </span>
                 );
               })}

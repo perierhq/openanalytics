@@ -224,6 +224,7 @@ function transactionRow(objectId: string, occurredAt: string): Record<string, un
     confidence: 'exact',
     identity_scope: 'identified',
     purchase_kind: 'renewal',
+    visitor: 'anon_day_1',
   }
 }
 
@@ -1009,5 +1010,27 @@ describe('subscriptions (Perier gap 7)', () => {
     const response = await get(`/v1/sites/${SITE}/revenue/transactions?${RANGE}`)
     const body = (await response.json()) as { items: { purchase_kind: string | null }[] }
     expect(body.items.map((item) => item.purchase_kind)).toEqual(['renewal', null])
+  })
+
+  it('gives a sale its buyer’s rotating anonymous id, and null when it matched nobody', async () => {
+    world.transactionRows = [
+      transactionRow('ch_2', '2026-07-20 10:00:00.000'),
+      { ...transactionRow('ch_1', '2026-07-20 09:00:00.000'), visitor: '' },
+      {
+        ...transactionRow('ch_0', '2026-07-20 08:00:00.000'),
+        matched_via: '',
+        confidence: '',
+        identity_scope: '',
+        visitor: '',
+      },
+    ]
+    const response = await get(`/v1/sites/${SITE}/revenue/transactions?${RANGE}`)
+    const body = (await response.json()) as { items: Record<string, unknown>[] }
+    expect(body.items.map((item) => item['visitor'])).toEqual(['anon_day_1', null, null])
+    // The id is the only identity on the row: no pseudonym rides along.
+    for (const item of body.items) {
+      expect(item).not.toHaveProperty('user_id')
+      expect(item).not.toHaveProperty('visitor_id')
+    }
   })
 })

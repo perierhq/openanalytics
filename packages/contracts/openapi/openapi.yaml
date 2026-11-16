@@ -11841,6 +11841,7 @@ components:
           matched_via,
           confidence,
           purchase_kind,
+          visitor,
         ]
       properties:
         object_id:
@@ -11936,6 +11937,16 @@ components:
             Null on a refund or a dispute, which have no purchase of their own.
           oneOf:
             - $ref: '#/components/schemas/SubscriptionPurchaseKind'
+            - type: 'null'
+        visitor:
+          description: |
+            The anonymous id the buyer had in the purchase's last-touch session,
+            the same id the visitor surfaces show, for drawing the same
+            generated face. It rotates daily; two charges share it only when
+            they share a last-touch session. Null when the charge matched no
+            visitor. Never the identify() hash.
+          oneOf:
+            - type: string
             - type: 'null'
 
     RevenueMatchedVia:

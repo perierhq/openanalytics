@@ -30,6 +30,7 @@ import type {
   SiteListItem,
   SiteSummary,
   Mention,
+  RecentVisitor,
   RevenueTransaction,
   RevenueTimeseriesPoint,
   RevenueTimeseriesResponse,
@@ -667,6 +668,37 @@ export const MOCK_MENTIONS: Mention[] = [
   ),
 ];
 
+/**
+ * Design-mode "Paying visitors" rows, in the wire's own shape: two believable
+ * payers. Their ids are the anonymous ids the realtime surfaces key a visitor
+ * on, and the chart's mock sales reuse them, so a payer wears the same face
+ * on the revenue card and on the chart.
+ */
+export const MOCK_PAYING_VISITORS: RecentVisitor[] = [
+  {
+    visitor: "v_mock_payer_one",
+    country: "DE",
+    device_type: "desktop",
+    browser: "chrome",
+    os: "macos",
+    first_seen: "2026-08-09T08:05:00.000Z",
+    last_seen: "2026-08-09T08:41:00.000Z",
+    pageviews: 6,
+    revenue: { amount_minor: 2900, currency: "USD", transaction_count: 1 },
+  },
+  {
+    visitor: "v_mock_payer_two",
+    country: "US",
+    device_type: "mobile",
+    browser: "safari",
+    os: "ios",
+    first_seen: "2026-08-09T06:12:00.000Z",
+    last_seen: "2026-08-09T06:19:00.000Z",
+    pageviews: 0,
+    revenue: { amount_minor: 900, currency: "USD", transaction_count: 1 },
+  },
+];
+
 const mockSale = (
   index: number,
   day: number,
@@ -694,20 +726,27 @@ const mockSale = (
     matched_via: "conversion_event",
     confidence: "exact",
     purchase_kind: "new",
+    visitor: null,
     ...extra,
   };
 };
 
-/** Charges for the chart's sale markers, newest first. One is unconverted EUR. */
+/**
+ * Charges for the chart's sale markers, newest first. One is unconverted EUR.
+ * Each carries its buyer's anonymous id for that day: the two paying visitors'
+ * where they fit, a buyer of their own otherwise, and one that matched no
+ * visitor and keeps the diamond.
+ */
 export const MOCK_SALES: RevenueTransaction[] = [
-  mockSale(1, 28, 10, 4_900, { purchase_kind: "renewal" }),
-  mockSale(2, 22, 13, 19_900, { product_name: "Team" }),
-  mockSale(3, 21, 19, 4_900),
-  mockSale(4, 21, 17, 4_900),
+  mockSale(1, 28, 10, 4_900, { purchase_kind: "renewal", visitor: "v_mock_payer_one" }),
+  mockSale(2, 22, 13, 19_900, { product_name: "Team", visitor: "v_mock_payer_two" }),
+  mockSale(3, 21, 19, 4_900, { visitor: "v_mock_buyer_june21_a" }),
+  mockSale(4, 21, 17, 4_900, { visitor: "v_mock_buyer_june21_b" }),
   mockSale(5, 21, 15, 4_500, {
     gross: { amount_minor: 4_500, currency: "EUR" },
     net: { amount_minor: 4_340, currency: "EUR" },
     reporting: null,
+    visitor: "v_mock_buyer_june21_c",
   }),
   // Partly refunded later: still a sale, worth its gross less the refund.
   mockSale(6, 14, 8, 4_900, {
@@ -716,8 +755,11 @@ export const MOCK_SALES: RevenueTransaction[] = [
     refund: { amount_minor: 2_000, currency: "USD" },
     net: { amount_minor: 4_900 - 172 - 2_000, currency: "USD" },
     reporting: { amount_minor: 4_900 - 172 - 2_000, currency: "USD" },
+    visitor: "v_mock_buyer_june14",
   }),
-  mockSale(7, 4, 12, 4_900),
+  // Matched no visitor: nothing a match would fill in (no signal, no
+  // confidence, no buyer id), so no face and the diamond stays.
+  mockSale(7, 4, 12, 4_900, { matched_via: "none", confidence: "none", visitor: null }),
 ];
 
 /**

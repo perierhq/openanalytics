@@ -425,6 +425,41 @@ describe('operation registry', () => {
     expect(finalized?.sql).not.toMatch(/FINAL/i)
   })
 
+  it('gives a transaction its buyer’s rotating anonymous id, never the identify() hash', () => {
+    const sql = findOperation('analytics.revenue_transactions')!.sql
+    // One output identity, the same id the realtime surfaces key a visitor on.
+    expect(sql).toMatch(/ AS visitor,?\n/)
+    // An anonymous buyer's attribution key IS their rotating id; an identified
+    // buyer's is the stable hash, so theirs comes from the last-touch session.
+    expect(sql).toContain(
+      "if(att.identity_scope = 'anonymous_day' AND att.user_id = '', att.visitor_id, lts.anonymous_id) AS visitor",
+    )
+    // The session's current version, retraction applied after the version pick.
+    expect(sql).toContain('argMax(sfv.anonymous_id, sfv.version) AS anonymous_id')
+    expect(sql).toContain('HAVING argMax(sfv.retracted, sfv.version) = 0')
+    // Found by its key, so a last touch older than the range still resolves.
+    expect(sql).toContain('AND sfv.session_id IN (')
+    // Page first: the keyset order and cap sit on the transactions subquery,
+    // so attribution and sessions are read only for the rows on this page.
+    expect(sql).toMatch(
+      /ORDER BY occurred_at DESC, object_id DESC\n\s+LIMIT \{limit:UInt32\}\n\) AS cur\n/,
+    )
+    expect(sql).toContain('AND ra.object_id IN (SELECT pg.object_id FROM (')
+    expect(sql).toContain('AND ra_lt.object_id IN (SELECT pg.object_id FROM (')
+    // Partitions are pruned: a last touch is at most the 30-day window (plus a
+    // day of slack) before the range, and never after it.
+    expect(sql).toContain(
+      "AND sfv.session_start >= toDateTime64({from:String}, 3, 'UTC') - INTERVAL 31 DAY",
+    )
+    expect(sql).toContain("AND sfv.session_start < toDateTime64({to:String}, 3, 'UTC')")
+    // Neither pseudonym leaves the statement as a column of its own: the outer
+    // projection is the only two-space-indented one.
+    expect(sql).not.toMatch(/^ {2}\S.* AS (user_id|visitor_id),?$/m)
+    // Keyset and cap unchanged.
+    expect(sql).toContain('ORDER BY cur.occurred_at DESC, cur.object_id DESC')
+    expect(sql).toContain('LIMIT {limit:UInt32}')
+  })
+
   it('binds a bounded, deterministic funnel and pads unused step slots', () => {
     const funnel = findOperation('analytics.funnel_visitor')
     const bound = funnel?.bindParams({

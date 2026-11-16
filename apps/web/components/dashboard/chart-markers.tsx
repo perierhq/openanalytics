@@ -16,6 +16,7 @@ import {
   type OverviewMarkerPayload,
 } from "@/components/dashboard/chart-marker-kinds";
 import { MentionAvatar } from "@/components/dashboard/mention-avatar";
+import { UserAvatar } from "@/components/ui/user-avatar";
 import { useSiteSummary } from "@/components/dashboard/site-summary-context";
 import { useApiResource } from "@/hooks/use-api-resource";
 import {
@@ -354,12 +355,17 @@ function BucketPopover({
               </span>
             </span>
           </p>
-          <ul className="flex flex-col gap-1 pl-4">
+          <ul className="flex flex-col gap-1.5 pl-4">
             {sales.slice(0, PREVIEW).map((sale) => {
               const amount = saleAmount(sale);
               const kind = sale.purchase_kind ? PURCHASE_LABEL[sale.purchase_kind] : undefined;
               return (
-                <li className="flex items-baseline gap-2 text-xs" key={sale.object_id}>
+                <li className="flex items-center gap-2 text-xs leading-5" key={sale.object_id}>
+                  {/* The buyer's face, the same one the realtime views draw;
+                      a sale that matched no visitor keeps the diamond. */}
+                  <span className="flex size-5 shrink-0 items-center justify-center">
+                    {sale.visitor ? <UserAvatar seed={sale.visitor} size={20} /> : <SaleGlyph />}
+                  </span>
                   <span className="font-medium tabular-nums">
                     {formatMoney(amount.amount_minor, amount.currency)}
                   </span>

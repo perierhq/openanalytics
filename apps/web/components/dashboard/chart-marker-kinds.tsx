@@ -1,19 +1,22 @@
 import type { EventMarkerKind } from "@/components/charts/event-markers";
 import { MentionGlyph, SaleGlyph } from "@/components/dashboard/chart-marker-glyphs";
 import { MentionAvatar } from "@/components/dashboard/mention-avatar";
+import { UserAvatar } from "@/components/ui/user-avatar";
 import type { Mention, RevenueTransaction } from "@/lib/api";
 import type { EventMarkerItem } from "@/lib/event-markers";
-import { mentionFace } from "@/lib/marker-faces";
+import { mentionFace, type SaleFace, saleFace } from "@/lib/marker-faces";
 
 /**
- * The overview chart's two marker kinds: their words, their glyphs and, for
- * mentions, their face. Shared by the marker layer (`chart-markers.tsx`) and
- * its tests.
+ * The overview chart's two marker kinds: their words, their glyphs and their
+ * faces. Shared by the marker layer (`chart-markers.tsx`) and its tests.
  *
- * **Sales have no face.** The dashboard draws a visitor's face from their
- * visitor seed (`UserAvatar`), and a revenue transaction carries none; a face
- * made up from the transaction id would not be the same buyer's face anywhere
- * else, so a sale stays a diamond at every density.
+ * **A sale wears its buyer's face** when it matched a visitor: `UserAvatar`
+ * seeded with the transaction's `visitor`, the same seed the realtime views
+ * use, so it is the same face (see `lib/marker-faces.ts`). A sale that matched
+ * nobody has no face, and its bucket keeps the diamond.
+ *
+ * A face's "+N" sits on its right edge, centred on that face, so when a
+ * bucket stacks a buyer and an author the two badges never touch.
  */
 
 export type OverviewMarkerKind = "sale" | "mention";
@@ -45,7 +48,32 @@ function MentionMarkerFace({ mentions }: { mentions: readonly Mention[] }) {
         size={20}
       />
       {face.more > 0 ? (
-        <span className="absolute -right-2 -bottom-1 h-3.5 min-w-3.5 rounded-full bg-white px-0.75 text-center text-[9px] font-medium leading-3.5 tabular-nums text-foreground/80 ring-1 ring-black/15">
+        <span className="absolute top-1/2 -right-2 h-3.5 min-w-3.5 -translate-y-1/2 rounded-full bg-white px-0.75 text-center text-[9px] font-medium leading-3.5 tabular-nums text-foreground/80 ring-1 ring-black/15">
+          +{face.more}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/**
+ * A bucket's sales as their newest buyer's face, in the sale green with a
+ * small diamond so the kind reads without colour, and "+N" for the other
+ * sales. Only drawn when a sale matched a visitor (`saleFace` is not null);
+ * otherwise the layer draws the glyph.
+ */
+function SaleMarkerFace({ face }: { face: SaleFace }) {
+  return (
+    <span className="relative flex">
+      {/* The green line on the face and the same white halo a mention has. */}
+      <span className="flex rounded-full shadow-[0_0_0_3px_white] ring-[1.5px] ring-success">
+        <UserAvatar seed={face.visitor} size={20} />
+      </span>
+      <span className="absolute -bottom-0.5 -left-0.5 flex">
+        <SaleGlyph />
+      </span>
+      {face.more > 0 ? (
+        <span className="absolute top-1/2 -right-2 h-3.5 min-w-3.5 -translate-y-1/2 rounded-full bg-white px-0.75 text-center text-[9px] font-medium leading-3.5 tabular-nums text-foreground/80 ring-1 ring-black/15">
           +{face.more}
         </span>
       ) : null}
@@ -61,6 +89,12 @@ export const OVERVIEW_MARKER_KINDS: Record<
   sale: {
     describe: (count) => plural(count, "sale", "sales"),
     glyph: <SaleGlyph />,
+    face: (items) => {
+      const face = saleFace(
+        items.flatMap((item) => (item.payload.kind === "sale" ? [item.payload.sale] : []))
+      );
+      return face ? <SaleMarkerFace face={face} /> : null;
+    },
   },
   mention: {
     describe: (count) => plural(count, "mention", "mentions"),
