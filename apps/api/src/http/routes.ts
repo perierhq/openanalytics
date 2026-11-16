@@ -71,6 +71,7 @@ import type { AnalyticsService } from '../analytics/service.ts'
 import { createAnalyticsRoutes } from './analytics.ts'
 import { createEventDefinitionRoutes } from './event-definitions.ts'
 import { createFunnelRoutes } from './funnels.ts'
+import { createMentionRoutes } from './mentions.ts'
 import { createWidgetRoutes } from './widgets.ts'
 import { createExportRoutes } from './exports.ts'
 import { createImportCatalogRoutes, createImportRoutes } from './imports.ts'
@@ -591,6 +592,11 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
   // saving a definition is a Postgres write and needs no query gateway, so the
   // funnels screen keeps working on a deployment that has no gateway configured.
   authed.route('/', createFunnelRoutes({ db }))
+
+  // X mentions (migration 0048): settings and the stored posts. Unconditional
+  // like funnels: it is Postgres only, and the poller that fills it runs in the
+  // worker.
+  authed.route('/', createMentionRoutes({ db }))
 
   // Embeddable widget configuration (ADR-0045, D13). Unconditional for the same
   // reason funnels is: a widget is stored configuration and needs no gateway,

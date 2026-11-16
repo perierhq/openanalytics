@@ -73,6 +73,12 @@ tags:
       Status and download are separate operations on purpose - polling the first
       costs nothing, and only the second is audited. Mounted only where object
       storage is configured.
+  - name: mentions
+    description: |
+      Public posts that mention a site, found by a worker that searches X
+      through a configurable search service (fxtwitter by default). Off per site
+      until an owner or admin turns it on, because it sends the site's domain
+      and search terms to that service.
   - name: revenue
     description: |
       Connecting a site to a payment provider so the dashboard can report real
@@ -4156,6 +4162,129 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /v1/sites/{site_id}/mentions/settings:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: getSiteMentionSettings
+      tags: [mentions]
+      summary: Whether the site watches X for mentions, and for which terms. Readable by every member.
+      description: |
+        A site that has never written these has no settings row, and this
+        endpoint answers with the defaults (`x_enabled: false`, no terms) rather
+        than a 404.
+
+        `domain` is the site's own domain. It is always searched once watching is
+        on, so it is reported here and never stored as a term.
+
+        `last_polled_at` and `last_error` describe the most recent poll, so the
+        settings screen can say plainly when a search last ran and why it failed.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Current settings, or the defaults when no row exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SiteMentionSettings'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+    patch:
+      operationId: updateSiteMentionSettings
+      tags: [mentions]
+      summary: Turn mention watching on or off, and set the extra search terms (owner or admin).
+      description: |
+        Every field is optional and absent means "leave it alone"; an empty body
+        is a `400`, matching `PATCH /v1/sites/{site_id}/ingest-settings`.
+
+        Turning `x_enabled` on sends the site's domain and its terms to the
+        configured X search service (`MENTIONS_X_API_URL`, fxtwitter by default)
+        on every poll. Nothing about the site's visitors is sent. It is off by
+        default for that reason.
+
+        `terms` replaces the whole list. Terms are trimmed, compared
+        case-insensitively for duplicates, and a term equal to the site's
+        domain is dropped, since the domain is always searched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSiteMentionSettingsRequest'
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The settings as stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SiteMentionSettings'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+  /v1/sites/{site_id}/mentions:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/PageLimit'
+    get:
+      operationId: listSiteMentions
+      tags: [mentions]
+      summary: Public posts that mention the site, newest first. Readable by every member.
+      description: |
+        Posts found by the mention poller whose `posted_at` falls in the
+        half-open range `[from, to)`. Cursor-paginated with the same contract
+        as `GET /v1/sites/{site_id}/revenue/transactions`: keyset on
+        `(posted_at, id)` descending, `has_more` exact because the server
+        over-fetches by one, and a malformed cursor is `VALIDATION_FAILED`.
+
+        `links_to_site` is true when the post contains a link to the site's
+        domain or one of its subdomains, as opposed to only naming one of the
+        terms. Counts (`likes`, `reposts`, ...) are as of `refreshed_at`, the
+        last time a poll saw the post.
+
+        Mentions are kept when watching is turned off; only deleting the site
+        removes them.
+      parameters:
+        - name: platform
+          in: query
+          required: false
+          description: Only posts from this platform. Absent means every platform.
+          schema:
+            $ref: '#/components/schemas/MentionPlatform'
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session (the `list_mentions` MCP tool).
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: One page of mentions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MentionsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
   /v1/sites/{site_id}/funnels:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -12568,6 +12697,162 @@ components:
             visible session, which is the window rule, not a bug. Served under
             the same conditions as `revenue`; absent — not empty — for
             callers without `revenue:read`.
+
+    MentionPlatform:
+      type: string
+      enum: [x]
+      description: |
+        Where a mention was posted. `x` only for now; the column and this enum
+        exist so other platforms can be added without a new resource.
+
+    SiteMentionSettings:
+      type: object
+      additionalProperties: false
+      required: [domain, x_enabled, terms, last_polled_at, last_error]
+      properties:
+        domain:
+          type: string
+          description: The site's domain. Always searched while watching is on; never stored as a term.
+        x_enabled:
+          type: boolean
+          description: Whether the poller searches X for this site.
+        terms:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            minLength: 2
+            maxLength: 64
+          description: Extra search terms besides the domain, such as the product name.
+        last_polled_at:
+          description: When the last poll for this site finished, or null if it never ran.
+          oneOf:
+            - $ref: '#/components/schemas/UtcInstant'
+            - type: 'null'
+        last_error:
+          description: |
+            Why the last poll failed, or null when it succeeded or never ran.
+            `unavailable` means the search service did not answer or returned
+            an error status; `invalid_response` means it answered with something
+            that could not be read.
+          oneOf:
+            - type: string
+              enum: [unavailable, invalid_response]
+            - type: 'null'
+
+    UpdateSiteMentionSettingsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        x_enabled:
+          type: boolean
+        terms:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            minLength: 2
+            maxLength: 64
+
+    MentionAuthor:
+      type: object
+      additionalProperties: false
+      required: [handle, name, followers, url]
+      properties:
+        handle:
+          type: string
+          description: The account's handle, without the leading `@`.
+        name:
+          type: string
+        followers:
+          type: [integer, 'null']
+          minimum: 0
+        url:
+          type: string
+          format: uri
+
+    Mention:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - platform
+        - post_id
+        - url
+        - text
+        - author
+        - posted_at
+        - matched_term
+        - links_to_site
+        - likes
+        - reposts
+        - replies
+        - quotes
+        - views
+        - first_seen_at
+        - refreshed_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: '#/components/schemas/MentionPlatform'
+        post_id:
+          type: string
+          description: The platform's own post id.
+        url:
+          type: string
+          format: uri
+        text:
+          type: string
+          maxLength: 1000
+          description: The post text with shortened links expanded, cut at 1000 characters.
+        author:
+          $ref: '#/components/schemas/MentionAuthor'
+        posted_at:
+          $ref: '#/components/schemas/UtcInstant'
+        matched_term:
+          type: string
+          description: The search term (the domain or one of the extra terms) that first found this post.
+        links_to_site:
+          type: boolean
+        likes:
+          type: [integer, 'null']
+          minimum: 0
+        reposts:
+          type: [integer, 'null']
+          minimum: 0
+        replies:
+          type: [integer, 'null']
+          minimum: 0
+        quotes:
+          type: [integer, 'null']
+          minimum: 0
+        views:
+          type: [integer, 'null']
+          minimum: 0
+        first_seen_at:
+          $ref: '#/components/schemas/UtcInstant'
+        refreshed_at:
+          $ref: '#/components/schemas/UtcInstant'
+
+    MentionsResponse:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Mention'
+        next_cursor:
+          description: Pass as `cursor` for the next page, or null on the last one.
+          oneOf:
+            - type: string
+            - type: 'null'
+        has_more:
+          type: boolean
 
     SiteIngestSettings:
       type: object

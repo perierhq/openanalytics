@@ -169,7 +169,28 @@ upstream.
 the bucket and its CORS rule as `SELF-HOSTING.md`, "Object storage", shows.
 Everyone else has nothing to do.
 
+Postgres migration 0048 adds two tables for X mentions and changes nothing
+that exists. It runs with the usual `pnpm run migrate:postgres`; there is
+nothing to do by hand.
+
 ### Added
+
+- **X mentions.** An owner or admin can turn on mention watching for a site.
+  The worker then searches X for the site's domain and up to five extra terms
+  through an fxtwitter-compatible service, and stores the public posts it finds
+  (`GET /v1/sites/{site_id}/mentions`, and the `list_mentions` MCP tool). It is
+  off for every site until someone turns it on, because it sends the domain and
+  the terms to that service; nothing about visitors is sent.
+  `MENTIONS_X_API_URL` points it at your own fxtwitter, `MENTIONS_ENABLED=false`
+  stops it for the whole install, and `MENTIONS_POLL_MINUTES` (default 60) sets
+  how often each site is searched.
+
+- **Sales and mentions on the overview chart.** Days with sales or mentions get
+  a marker under the chart; opening one lists that day's sales (owners only,
+  since revenue is owner-only) and posts. A legend above the chart hides
+  either kind. The new Mentions tab lists every post in the period, and the
+  Integrations settings turn watching on and set the terms. Author pictures
+  are not loaded from X, so viewing the dashboard sends nothing to X.
 
 - **Postgres on Neon.** `infra/selfhost/NEON.md` walks a new install, and
   moving an existing one, onto [Neon](https://neon.com);

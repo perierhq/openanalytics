@@ -826,3 +826,28 @@ export {
   startOfUtcIsoWeek,
   type SiteCardWindow,
 } from './site-cards.ts'
+
+/**
+ * X mentions (migration 0048): the fxtwitter search parser, the link-to-site
+ * rule, the settings patch normalizer and the query builder the poller uses.
+ */
+export {
+  MENTION_AUTHOR_NAME_MAX_LENGTH,
+  MENTION_PLATFORMS,
+  MENTION_POLL_ERRORS,
+  MENTION_TERMS_MAX,
+  MENTION_TERM_MAX_LENGTH,
+  MENTION_TERM_MIN_LENGTH,
+  MENTION_TEXT_MAX_LENGTH,
+  linksToSite,
+  mentionQueries,
+  normalizeMentionSettingsPatch,
+  parseFxTwitterSearch,
+  type FxTwitterSearchParse,
+  type MentionPlatform,
+  type MentionPollError,
+  type MentionSettingsIssue,
+  type MentionSettingsPatch,
+  type MentionSettingsPatchResult,
+  type ParsedPost,
+} from './mentions.ts'

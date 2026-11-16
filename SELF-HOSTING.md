@@ -915,6 +915,7 @@ they do in the dashboard. The read tools:
 | `funnel_results`                                                                                   | `analytics:read` | A stored funnel by id, or ad-hoc steps: counts and conversion per step |
 | `recent_visitors`, `visitor`                                                                       | `analytics:read` | Visitors of the last 1–24 hours, and one visitor's page trail          |
 | `list_funnels`, `list_event_definitions`, `list_widgets`, `share_settings`                         | `analytics:read` | A site's saved funnels, event definitions, widgets and share settings  |
+| `list_mentions`                                                                                    | `analytics:read` | Public X posts that mention a site, newest first                       |
 | `revenue_summary`, `revenue_timeseries`                                                            | `revenue:read`   | Revenue totals and buckets. Owners only                                |
 | `revenue_by_source`, `events_before_purchase`                                                      | `revenue:read`   | Revenue by source or entry page; events before buying. Owners only     |
 | `subscription_summary`, `subscription_timeseries`                                                  | `revenue:read`   | MRR, churn, trials and new vs renewal charges. Owners only             |
@@ -930,6 +931,30 @@ be undone.
 reaches: an OAuth token or a dashboard session. A private API key gets `403`
 there. The visitor reads show a visitor's revenue only to an owner whose
 grant includes `revenue:read`, and never list individual payments.
+
+### X mentions
+
+A site's owner or admin can turn on mention watching in the site's settings.
+For each such site the worker searches X through an fxtwitter-compatible search
+service and stores the public posts it finds, so the dashboard can list them.
+
+What it sends, and where: the site's domain (its first domain, alphabetically)
+and up to five extra search terms the owner typed, to `MENTIONS_X_API_URL`.
+Nothing about the site's visitors is sent. Requests go out without credentials
+and with a `User-Agent` naming OpenAnalytics. Watching is off for every site
+until someone turns it on.
+
+| Variable                | Where  | Default                     | What it does                                                                                     |
+| ----------------------- | ------ | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `MENTIONS_X_API_URL`    | worker | `https://api.fxtwitter.com` | The search service. Point it at your own fxtwitter to keep the searches off the public instance. |
+| `MENTIONS_ENABLED`      | worker | `true`                      | `false` stops the poller for every site, whatever the site settings say.                         |
+| `MENTIONS_POLL_MINUTES` | policy | `60`                        | How often each site is searched, 15 to 1440 minutes.                                             |
+
+To turn it off for the whole install, set `MENTIONS_ENABLED=false` in
+`env/worker.env` and restart the worker. Posts already found stay in the
+dashboard until the site is deleted. The metric `worker_mentions_poll{status}`
+tells you whether searches are working; a site's settings screen also shows
+when its last search ran and why it failed.
 
 ### Health
 

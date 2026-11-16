@@ -166,6 +166,10 @@ const HINTS = {
     'Set this and the magic link can be delivered — the whole of what a fresh install needs to let anyone in.',
   SMTP_SECURE:
     "`true` for implicit TLS on port 465; leave empty for 587, which upgrades with STARTTLS. Only the literals 'true' and 'false' are accepted.",
+  MENTIONS_X_API_URL:
+    'An fxtwitter-compatible search service. Point it at your own fxtwitter to keep the searches off the public instance.',
+  MENTIONS_ENABLED:
+    "`false` stops the mentions poller for every site. Only the literals 'true' and 'false' are accepted.",
   SMTP_PASS: 'Worker only — the api refuses to start if it is given this.',
   SMTP_FROM:
     'Overrides EMAIL_FROM for SMTP, for relays that refuse a From other than the authenticated mailbox.',
@@ -395,6 +399,16 @@ const SECTIONS = [
       'because the mark names a product and this build does not know yours.',
     ],
     keys: ['WIDGET_WATERMARK_URL'],
+  },
+  {
+    title: 'X mentions (optional)',
+    blurb: [
+      'The worker searches X for sites whose owner turned mention watching on.',
+      'It sends each such site’s domain and search terms to MENTIONS_X_API_URL',
+      'and nothing about any visitor. MENTIONS_ENABLED=false stops it for every',
+      'site; MENTIONS_POLL_MINUTES (policy, below) sets how often a site is polled.',
+    ],
+    keys: ['MENTIONS_X_API_URL', 'MENTIONS_ENABLED'],
   },
   {
     title: 'AI assistant (optional)',

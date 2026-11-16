@@ -23,6 +23,7 @@ import { exportRuns } from '../schema/exports.ts'
 import { importRuns, importUploads } from '../schema/imports.ts'
 import { ingestBatchItems, ingestBatchSites } from '../schema/ingest-batches.ts'
 import { siteIngestSettings } from '../schema/ingest.ts'
+import { mentions, siteMentionSettings } from '../schema/mentions.ts'
 import {
   deletionRequests,
   deletionTargets,
@@ -814,6 +815,19 @@ export async function purgeSitePostgres(
         .delete(revenueInvoices)
         .where(eq(revenueInvoices.siteId, input.siteId))
         .returning({ id: revenueInvoices.id }),
+    )
+    // X mentions (migration 0048). Both reference only `sites`, so the order is
+    // free; counted rather than left to the cascade, for the reason above.
+    await removeFrom('site_mention_settings', () =>
+      tx
+        .delete(siteMentionSettings)
+        .where(eq(siteMentionSettings.siteId, input.siteId))
+        // The site id is this table's primary key; aliased to `id` for the
+        // uniform shape `removeFrom` counts through.
+        .returning({ id: siteMentionSettings.siteId }),
+    )
+    await removeFrom('mentions', () =>
+      tx.delete(mentions).where(eq(mentions.siteId, input.siteId)).returning({ id: mentions.id }),
     )
     // The attribution job's control row (ADR-0033, D6/D8; migration 0036).
     //

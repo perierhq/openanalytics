@@ -18,6 +18,7 @@ import {
 import {
   CredentialKeyringError,
   createCredentialVault,
+  createFxTwitterClient,
   createS3ObjectStorage,
   createPolarRevenueAdapter,
   createStripeRevenueAdapter,
@@ -40,6 +41,7 @@ import { startRevenueProjection } from './revenue/project.ts'
 import { startLifecycleProjection } from './revenue/project-lifecycle.ts'
 import { startRevenueReconcile } from './revenue/reconcile.ts'
 import { consumerNameFor, startIngest } from './ingest/index.ts'
+import { startMentionsPoller } from './mentions/poll.ts'
 
 /**
  * Worker entrypoint.
@@ -609,6 +611,27 @@ if (env.DATABASE_URL) {
     logger.warn('backup_watch_not_started', { reason: 'OBJECT_STORAGE_* missing' })
   }
 
+  // The X mentions poller (migration 0048). It needs only the database and the
+  // search service; sites opt in one by one, and MENTIONS_ENABLED=false is the
+  // operator's switch to stop it for every site.
+  const mentionsPoller = env.MENTIONS_ENABLED
+    ? startMentionsPoller({
+        db,
+        logger,
+        metrics: serviceMetrics.metrics,
+        client: createFxTwitterClient({
+          baseUrl: env.MENTIONS_X_API_URL,
+          version: env.SERVICE_VERSION,
+        }),
+        pollMinutes: env.MENTIONS_POLL_MINUTES,
+      })
+    : null
+  if (mentionsPoller) {
+    logger.info('mentions_poller_started', { poll_minutes: env.MENTIONS_POLL_MINUTES })
+  } else {
+    logger.info('mentions_poller_not_started', { reason: 'MENTIONS_ENABLED=false' })
+  }
+
   // Batch ingest is the worker's other half (docs snapshot 02 §7.5). It needs
   // the queue and ClickHouse as well as the database, and returns null without
   // them rather than starting a consumer that could take delivery of events it
@@ -650,6 +673,9 @@ if (env.DATABASE_URL) {
     for (const registered of registeredDrains) await registered.stop()
     await outbox.stop()
     await revocationDrain?.stop()
+    // Independent of every job above; it only reads settings and writes
+    // mention rows, so it stops wherever it is, before the pool closes.
+    await mentionsPoller?.stop()
     // Observes only; nothing waits on it, so it stops wherever it is.
     await backupWatch?.stop()
     // After every job, so the last tick's counters make the final push.

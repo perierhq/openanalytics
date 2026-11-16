@@ -4,6 +4,7 @@ import {
   AiChat02Icon,
   ArrowLeft01Icon,
   ArrowRight02Icon,
+  AtIcon,
   Cancel01Icon,
   InternetIcon,
   Location01Icon,
@@ -83,6 +84,9 @@ const TABS: Tab[] = [
   // anyone holding the URL; restoring the tab is uncommenting one line
   // (the icon was DollarCircleIcon, re-import it with the line):
   // { segment: "/revenue", label: "Revenue", icon: DollarCircleIcon },
+  // Beside Funnels: both read the site's own traffic story, and mentions are
+  // the outside half of it (who is talking about the site, and when).
+  { segment: "/mentions", label: "Mentions", icon: AtIcon },
   { segment: "/globe", label: "Live Globe", icon: InternetIcon },
   { segment: "/settings", label: "Settings", icon: Settings01Icon },
 ];
@@ -106,7 +110,7 @@ const MENU_LINKS: { label: string; icon: IconComponent; tab: string }[] = [
 const MENU_ITEM_CLASS =
   "flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-full px-[9px] py-[7px] text-[13px] font-medium text-white/80 outline-none transition-colors hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/40 sm:px-3";
 
-/** Tooltip anchors: the five tabs, then the chat and more buttons. */
+/** Tooltip anchors: the tabs, then the chat and more buttons. */
 const TOOLTIP_LABELS = [...TABS.map((tab) => tab.label), "AI Chat", "More"];
 const CHAT_INDEX = TABS.length;
 const MORE_INDEX = TABS.length + 1;

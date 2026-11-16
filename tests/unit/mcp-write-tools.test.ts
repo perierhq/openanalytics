@@ -156,6 +156,7 @@ const EXPECTED_READ_TOOLS = [
   'list_event_definitions',
   'list_widgets',
   'share_settings',
+  'list_mentions',
 ] as const
 
 const EXPECTED_WRITE_TOOLS = [
@@ -192,9 +193,10 @@ describe('the tool roster is pinned by name, not derived', () => {
     // the Perier fork's revenue aggregates (`revenue_by_source`,
     // `events_before_purchase`) and `custom_event_properties`
     // 36, and its subscription reads (`subscription_summary`,
-    // `subscription_timeseries`, gap 7) 38.
-    expect(MCP_TOOLS).toHaveLength(38)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(38)
+    // `subscription_timeseries`, gap 7) 38, and `list_mentions` (the X mentions
+    // list) 39.
+    expect(MCP_TOOLS).toHaveLength(39)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(39)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [

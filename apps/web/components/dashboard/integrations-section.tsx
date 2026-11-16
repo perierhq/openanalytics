@@ -6,6 +6,7 @@ import { CircleDashedIcon } from "@/components/icons/hugeicons";
 import { Badge } from "@/components/ui/badge";
 import { ApiErrorPanel } from "@/components/dashboard/api-error";
 import { FlowDialog } from "@/components/dashboard/flow-dialog";
+import { MentionsPanel } from "@/components/dashboard/mention-settings";
 import {
   ProviderMark,
   ProviderRowsSkeleton,
@@ -285,6 +286,9 @@ export function IntegrationsSection({ site }: { site: SiteSummary }) {
         revealed={revealed}
         siteId={site.site_id}
       />
+      {/* Its own read and its own skeleton: the block waits on nothing the
+          revenue panels hold, and the Mentions tab deep-links to it. */}
+      <MentionsPanel site={site} />
       <AlertsPanel revealed={revealed} />
     </>
   );

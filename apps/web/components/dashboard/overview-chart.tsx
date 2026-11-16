@@ -20,6 +20,11 @@ import {
   posterKey,
   publishPosterSeries,
 } from "@/components/dashboard/overview-poster-store";
+import {
+  OverviewMarkers,
+  OverviewMarkersLegend,
+  useOverviewMarkers,
+} from "@/components/dashboard/chart-markers";
 import { Area, AreaChart } from "@/components/charts/area-chart";
 import { Background } from "@/components/charts/background";
 import { ChartTooltip } from "@/components/charts/tooltip";
@@ -382,6 +387,13 @@ export function OverviewChart({
     loadOverride ?? loadFromSlug
   );
 
+  // Sales and mentions on the timeline: the dashboard's chart only. A share
+  // board has no member and no business showing either.
+  const markers = useOverviewMarkers(
+    range,
+    rangePending || loadOverride !== undefined
+  );
+
   if (resource.status === "error") {
     if (foldOnError) return null;
     return (
@@ -551,6 +563,14 @@ export function OverviewChart({
       ) : null}
       {/* Above the plot rather than inside it: the chart fills its card
           edge-to-edge, and a chip laid over the series would sit on data. */}
+      {/* Top-left, mirroring the provenance chips: the legend only exists
+          when the range has markers, and hides either kind for this browser. */}
+      {loadOverride === undefined && response ? (
+        <OverviewMarkersLegend
+          className="absolute left-3 top-0 z-10"
+          items={markers}
+        />
+      ) : null}
       {response ? (
         <ProvenanceChips
           className="absolute right-0 top-0 z-10"
@@ -614,6 +634,19 @@ export function OverviewChart({
       />
       <XAxis tickDates={tickDates} />
       <ChartTooltip titleFormat={titleFormat} />
+      {loadOverride === undefined && response ? (
+        <OverviewMarkers
+          bucketLabel={titleFormat}
+          // Mock mode plots a fixed June series whatever the picker says, so
+          // its markers end where that series does.
+          endMs={
+            LIVE_API ? toMs : Date.parse(MOCK_RESPONSE.meta.effective_range.to)
+          }
+          items={markers}
+          slug={slug}
+          timeLabel={weekView ? fmt.timeTitle.format : fmt.time.format}
+        />
+      ) : null}
       </AreaChart>
     </div>
   );

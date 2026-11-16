@@ -483,6 +483,24 @@ const serviceSchemas = {
     // because M10 gave it a mail it composes itself — the G-005 rapid-burn notice
     // is rendered where the usage totals are, not in the api (ADR-0030, D1).
     PRODUCT_NAME: z.string().min(1).default('Open Analytics'),
+    /**
+     * The X search service the mentions poller calls (migration 0048). An
+     * fxtwitter-compatible `/2/search` endpoint; point it at a self-hosted
+     * fxtwitter to keep the searches off the public instance. What is sent is
+     * each opted-in site's domain and search terms, never anything about a
+     * visitor.
+     */
+    MENTIONS_X_API_URL: z.string().url().default('https://api.fxtwitter.com'),
+    /**
+     * The operator's kill switch for the mentions poller. Sites still opt in
+     * one by one; `false` stops the loop for every site on this install. The
+     * two-literal enum for the reason SMTP_SECURE gives: `Boolean('false')` is
+     * `true`.
+     */
+    MENTIONS_ENABLED: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
   }),
 
   'query-gateway': baseSchema.extend({

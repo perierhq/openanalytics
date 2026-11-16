@@ -233,6 +233,14 @@ export type RevenueAttributionTouch = Schemas["RevenueAttributionTouch"];
 export type RevenueAttributionDimension = Schemas["RevenueAttributionDimension"];
 export type RevenueAttributionRow = Schemas["RevenueAttributionRow"];
 export type RevenueAttributionResponse = Schemas["RevenueAttributionResponse"];
+export type Money = Schemas["Money"];
+export type SiteMentionSettings = Schemas["SiteMentionSettings"];
+export type UpdateSiteMentionSettings =
+  Schemas["UpdateSiteMentionSettingsRequest"];
+export type Mention = Schemas["Mention"];
+export type MentionAuthor = Schemas["MentionAuthor"];
+export type MentionsResponse = Schemas["MentionsResponse"];
+
 /** Revenue charts take hour or day only — not the traffic chart's picker. */
 export type RevenueResolution = "hour" | "day";
 
@@ -1295,6 +1303,60 @@ export const publicDashboard = {
  * config for about thirty seconds, and any screen that writes this should say
  * so rather than let somebody test it on their own site and conclude it broke.
  */
+/**
+ * Whether a site watches X for posts that mention it, and for which extra
+ * terms. Readable by every member; `update` is owner or admin, and a viewer's
+ * `PATCH` is a `403`, so the settings block disables its controls for them
+ * rather than letting the first click find out.
+ *
+ * A `PATCH` like the ingest settings: send only the field the control owns.
+ */
+export const mentionSettings = {
+  get: (siteId: string, options?: RequestOptions) =>
+    api.get<SiteMentionSettings>(
+      `/v1/sites/${encodeURIComponent(siteId)}/mentions/settings`,
+      options
+    ),
+  update: (siteId: string, body: UpdateSiteMentionSettings) =>
+    send<SiteMentionSettings>(
+      "PATCH",
+      `/v1/sites/${encodeURIComponent(siteId)}/mentions/settings`,
+      { body }
+    ),
+};
+
+/**
+ * Public posts that mention the site, newest first, by `posted_at` inside the
+ * half-open range. No `timezone`: the list is instants, not buckets.
+ *
+ * Cursor-paginated the same way as the revenue transactions: the cursor is
+ * opaque, passed back verbatim, and a malformed one is `VALIDATION_FAILED`.
+ */
+export const mentions = {
+  list: (
+    siteId: string,
+    range: Pick<AnalyticsRange, "from" | "to">,
+    options?: RequestOptions & {
+      cursor?: string;
+      limit?: number;
+      platform?: Mention["platform"];
+    }
+  ) => {
+    const { cursor, limit, platform, ...rest } = options ?? {};
+    const query = new URLSearchParams({
+      from: range.from,
+      to: range.to,
+      ...(cursor ? { cursor } : {}),
+      ...(limit ? { limit: String(limit) } : {}),
+      ...(platform ? { platform } : {}),
+    });
+    return api.get<MentionsResponse>(
+      `/v1/sites/${encodeURIComponent(siteId)}/mentions?${query}`,
+      rest
+    );
+  },
+};
+
 export const ingestSettings = {
   get: (siteId: string, options?: RequestOptions) =>
     api.get<SiteIngestSettings>(
