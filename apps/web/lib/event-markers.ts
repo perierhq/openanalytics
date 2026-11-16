@@ -33,7 +33,7 @@ export type EventMarkerBucket<K extends string = string, P = unknown> = {
 };
 
 /** Last index whose start is ≤ `at`, or -1. `starts` must be ascending. */
-function bucketIndexOf(starts: readonly number[], at: number): number {
+export function bucketIndexOf(starts: readonly number[], at: number): number {
   let low = 0;
   let high = starts.length - 1;
   let found = -1;

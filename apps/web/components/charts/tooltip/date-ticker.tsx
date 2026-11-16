@@ -11,16 +11,21 @@ export interface DateTickerProps {
   currentIndex: number;
   labels: string[];
   visible: boolean;
+  /** Always the single-label pill, for labels that are not "Mon DD". */
+  compact?: boolean;
 }
 
 const DateTickerCompact = memo(function DateTickerCompact({
   currentIndex,
   labels,
-}: Omit<DateTickerProps, "visible">) {
+}: Omit<DateTickerProps, "visible" | "compact">) {
   const label = labels[currentIndex] ?? labels[0] ?? "";
 
   return (
-    <div className="overflow-hidden rounded-full bg-zinc-900 px-4 py-1 text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
+    <div
+      aria-hidden="true"
+      className="overflow-hidden rounded-full bg-zinc-900 px-4 py-1 text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900"
+    >
       <div className="flex h-6 items-center justify-center">
         <span className="whitespace-nowrap font-medium text-sm">{label}</span>
       </div>
@@ -31,7 +36,7 @@ const DateTickerCompact = memo(function DateTickerCompact({
 const DateTickerInner = memo(function DateTickerInner({
   currentIndex,
   labels,
-}: Omit<DateTickerProps, "visible">) {
+}: Omit<DateTickerProps, "visible" | "compact">) {
   // Parse labels into month and day parts
   const parsedLabels = useMemo(() => {
     return labels.map((label, index) => {
@@ -93,7 +98,10 @@ const DateTickerInner = memo(function DateTickerInner({
   }
 
   return (
-    <div className="overflow-hidden rounded-full bg-zinc-900 px-4 py-1 text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
+    <div
+      aria-hidden="true"
+      className="overflow-hidden rounded-full bg-zinc-900 px-4 py-1 text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900"
+    >
       <div className="relative h-6 overflow-hidden">
         <div className="flex items-center justify-center gap-1">
           {/* Month stack */}
@@ -133,12 +141,17 @@ const DateTickerInner = memo(function DateTickerInner({
   );
 });
 
-export function DateTicker({ currentIndex, labels, visible }: DateTickerProps) {
+export function DateTicker({
+  currentIndex,
+  labels,
+  visible,
+  compact = false,
+}: DateTickerProps) {
   if (!visible || labels.length === 0) {
     return null;
   }
 
-  if (labels.length > COMPACT_TICKER_THRESHOLD) {
+  if (compact || labels.length > COMPACT_TICKER_THRESHOLD) {
     return <DateTickerCompact currentIndex={currentIndex} labels={labels} />;
   }
 

@@ -99,9 +99,18 @@ export function isUnderlayComponent(child: ReactElement): boolean {
   return UNDERLAY_COMPONENT_NAMES.has(componentName);
 }
 
-/** Grid and axes stay visible during series clip reveal (e.g. loading → ready). */
+/** Grid and axes stay visible during series clip reveal (e.g. loading → ready).
+ * A component outside the kit opts in with a static `__isClipExcluded = true`
+ * (a chart's own axis), rather than by borrowing a kit component's name. */
 export function isClipExcludedComponent(child: ReactElement): boolean {
-  const childType = child.type as { displayName?: string; name?: string };
+  const childType = child.type as {
+    displayName?: string;
+    name?: string;
+    __isClipExcluded?: boolean;
+  };
+  if (childType.__isClipExcluded) {
+    return true;
+  }
   const componentName =
     typeof child.type === "function"
       ? childType.displayName || childType.name || ""

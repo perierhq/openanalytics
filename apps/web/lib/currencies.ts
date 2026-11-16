@@ -137,3 +137,23 @@ export function formatMoney(
   const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
   return format.format(minor / 10 ** digits);
 }
+
+/**
+ * Money for an axis label: "$1.2K", "€300", "¥12K". Same minor-unit scaling as
+ * `formatMoney`, compact notation, at most one fraction digit.
+ */
+export function formatMoneyCompact(
+  minor: number,
+  currency: string,
+  locale?: string
+): string {
+  const digits =
+    new Intl.NumberFormat(locale, { currency, style: "currency" }).resolvedOptions()
+      .maximumFractionDigits ?? 2;
+  return new Intl.NumberFormat(locale, {
+    currency,
+    style: "currency",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(minor / 10 ** digits);
+}

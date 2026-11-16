@@ -5,10 +5,13 @@ import {
   canReadRevenue,
   isSale,
   loadChartMarkers,
+  parseHiddenLayers,
   saleAmount,
+  sharedRevenueState,
   saleTotals,
   type ChartMarkerDeps,
 } from "./chart-markers"
+import { loadChartRevenue } from "./chart-revenue"
 
 const RANGE = {
   from: "2026-06-20T00:00:00.000Z",
@@ -147,5 +150,69 @@ describe("what counts as a sale", () => {
         tx({ reporting: null, net: money(1000, "GBP") }),
       ])
     ).toEqual([money(6000, "USD"), money(1000, "GBP")])
+  })
+})
+
+describe("one connection read per site", () => {
+  it("serves the marker and revenue loaders from one revenue.state read", async () => {
+    const read = vi.fn(async () => ACTIVE)
+    const revenueState = sharedRevenueState(read)
+    const d = deps(ACTIVE, { transactions: [tx()] })
+    await Promise.all([
+      loadChartMarkers({ siteId: "s", role: "owner", range: RANGE }, { ...d, revenueState }),
+      loadChartRevenue(
+        { siteId: "s", role: "owner", range: RANGE, grain: "day" },
+        { revenueState, revenueTimeseries: async () => ({ series: [] }) }
+      ),
+    ])
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledWith("s", {})
+  })
+
+  it("reads each site on its own", async () => {
+    const read = vi.fn(async () => ACTIVE)
+    const revenueState = sharedRevenueState(read)
+    await revenueState("a", {})
+    await revenueState("b", {})
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not keep a failed read", async () => {
+    const read = vi
+      .fn<() => Promise<RevenueConnectionState>>()
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValue(ACTIVE)
+    const revenueState = sharedRevenueState(read)
+    await expect(revenueState("s", {})).rejects.toThrow("503")
+    await expect(revenueState("s", {})).resolves.toEqual(ACTIVE)
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it("reads again once the answer is a minute old, so a new connection shows up", async () => {
+    let now = 0
+    const read = vi.fn(async () => ACTIVE)
+    const revenueState = sharedRevenueState(read, { ttlMs: 60_000, now: () => now })
+    await revenueState("s", {})
+    now = 59_999
+    await revenueState("s", {})
+    expect(read).toHaveBeenCalledTimes(1)
+    now = 60_000
+    await revenueState("s", {})
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe("the remembered legend choice", () => {
+  it("reads a choice saved before the revenue layer existed", () => {
+    expect(parseHiddenLayers('["sale"]')).toEqual(["sale"])
+  })
+
+  it("keeps the layers it knows and drops the rest", () => {
+    expect(parseHiddenLayers('["revenue","x"]')).toEqual(["revenue"])
+  })
+
+  it("treats a broken value as nothing hidden", () => {
+    expect(parseHiddenLayers("{not json")).toEqual([])
+    expect(parseHiddenLayers('{"sale":true}')).toEqual([])
   })
 })
