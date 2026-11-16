@@ -10,7 +10,7 @@ import { findOperation } from '../../apps/query-gateway/src/operations.ts'
 
 /**
  * Revenue by source / entry page and the events before a purchase, against a
- * live, migrated ClickHouse (Perier fork, DataFast gaps 3 and 4).
+ * live, migrated ClickHouse (Perier fork: revenue by source and events before purchase).
  *
  * What only a real server can answer:
  *

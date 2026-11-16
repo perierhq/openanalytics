@@ -129,7 +129,7 @@ describe('operation registry', () => {
       // bucket cannot carry a currency dimension without breaking its own unit
       // of replacement.
       // Revenue by first/last-touch dimension and its visitors denominator
-      // (Perier fork, DataFast gap 3): aggregates only, one operation per
+      // (Perier fork): aggregates only, one operation per
       // (touch, dimension) because a column is never a bound parameter.
       'analytics.revenue_attribution_first_entry_page',
       'analytics.revenue_attribution_first_referrer_domain',
@@ -208,7 +208,7 @@ describe('operation registry', () => {
       // subquery (ADR-0036 CP7): the identify() hashes an anonymous id paired
       // inside the window, which only events_raw can answer.
       'analytics.visitor_revenue_entries',
-      // Perier fork, DataFast gap 4: the custom events a buyer's identity fired
+      // Perier fork: the custom events a buyer's identity fired
       // before their first charge. Range capped at 92 days, look-back window at
       // 30, custom events only, one row per event name.
       'analytics.revenue_events_before_purchase',

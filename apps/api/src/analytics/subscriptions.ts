@@ -2,7 +2,7 @@ import type { components } from '@openanalytics/contracts'
 import { zonedDayStart } from '@openanalytics/domain'
 
 /**
- * Subscription lifecycle reads (Perier fork, DataFast gap 7): the pure half.
+ * Subscription lifecycle reads (Perier fork): the pure half.
  *
  * The service runs the three gateway operations of ClickHouse 0031
  * (`subscription_lifecycle_totals`, `subscription_timeseries_day`,

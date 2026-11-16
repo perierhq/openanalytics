@@ -631,7 +631,7 @@ describeIfPostgres('event definitions', () => {
     })
   })
 
-  describe('the property allowlist a breakdown reads (DataFast gap 6)', () => {
+  describe('the property allowlist a breakdown reads', () => {
     it('is the published version’s declared keys, else the newest, else none', async () => {
       const siteId = await makeSite()
       expect(await getEventPropertyAllowlist(db, { siteId, eventName: 'nobody' })).toBeNull()

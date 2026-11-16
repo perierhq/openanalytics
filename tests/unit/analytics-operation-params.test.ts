@@ -45,7 +45,7 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
   // without the bound one journey load scans every partition the site has ever
   // had, because the sort key leads on site and object id rather than on time.
   'analytics.revenue_order_objects': { object_id: 'ch_1' },
-  // Perier fork, DataFast gaps 3 and 4. The visitors denominator is bound to
+  // Perier fork: revenue by source and events before purchase. The visitors denominator is bound to
   // the dimension values the revenue read returned; the events-before-purchase
   // read takes its look-back window.
   ...Object.fromEntries(
@@ -55,7 +55,7 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
     ]),
   ),
   'analytics.revenue_events_before_purchase': { window_ms: 86_400_000 },
-  // One event's property breakdown (DataFast gap 6): the event and the
+  // One event's property breakdown: the event and the
   // allowlist the api read from Postgres.
   'analytics.custom_event_properties_hour': { event_name: 'e', all_keys: true, keys: [] },
   'analytics.custom_event_properties_day': { event_name: 'e', all_keys: false, keys: ['plan'] },

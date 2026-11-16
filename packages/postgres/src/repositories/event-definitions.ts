@@ -653,7 +653,7 @@ export async function listEventDisplayNames(
 }
 
 /**
- * The property keys a breakdown of one event may show (DataFast gap 6).
+ * The property keys a breakdown of one event may show.
  *
  * The keys the event's definition declares in `property_schema`, read from the
  * same version `listEventDisplayNames` reads: the published one, else the

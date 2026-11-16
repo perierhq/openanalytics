@@ -208,7 +208,7 @@ export function createRevenueAnalyticsRoutes(deps: {
     requireAnalyticsAccess(db),
     requireCapability('revenue:read'),
   )
-  // Perier fork, DataFast gaps 3 and 4: two aggregate reads, same stack.
+  // Perier fork: two aggregate reads, same stack.
   for (const path of ['attribution', 'events-before-purchase']) {
     app.use(
       `${base}/${path}`,
@@ -348,8 +348,8 @@ export function createRevenueAnalyticsRoutes(deps: {
 }
 
 // ---------------------------------------------------------------------------
-// Revenue by source / entry page and events before purchase (Perier fork,
-// DataFast gaps 3 and 4). Exported because `/v1/read/revenue` parses the same
+// Revenue by source / entry page and events before purchase (Perier fork).
+// Exported because `/v1/read/revenue` parses the same
 // parameters, and two parsers is how the two surfaces stop agreeing.
 // ---------------------------------------------------------------------------
 

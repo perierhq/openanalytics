@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createClient, type ClickHouseClient } from '@clickhouse/client'
 
 /**
- * The subscription lifecycle store (Perier fork, DataFast gap 7; migration
+ * The subscription lifecycle store (Perier fork; migration
  * 0031).
  *
  * Insert-only for the worker, exactly like `revenue-events.ts`: the projection

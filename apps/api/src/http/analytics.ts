@@ -391,8 +391,7 @@ export function parseCustomEventPropertiesQuery(query: Record<string, string | u
 }
 
 /**
- * One custom event's property breakdown, under its definition's allowlist
- * (DataFast gap 6).
+ * One custom event's property breakdown, under its definition's allowlist.
  *
  * The allowlist is read here, at read time, rather than at ingest: the rollup
  * keeps every sanitized key, and a definition that declares its properties
@@ -530,7 +529,7 @@ export function createAnalyticsRoutes(deps: {
       }),
     )
   })
-  // One custom event's property values (DataFast gap 6).
+  // One custom event's property values.
   app.get(`${base}/custom-events/properties`, async (c) => {
     const { siteId } = c.get('membership')
     const query = c.req.query()

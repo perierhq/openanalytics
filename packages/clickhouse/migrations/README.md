@@ -377,7 +377,7 @@ whose raw events were purged by hand after they were rolled up — the hosted
 deployment's 2026-08-25 cleanup, the reason `--accept-site` exists; the `_1d`
 twins keep those days.
 
-### 0030 — custom-event property breakdowns (Perier fork, DataFast gap 6)
+### 0030 — custom-event property breakdowns (Perier fork)
 
 | Version | Subject                                                                           |
 | ------- | --------------------------------------------------------------------------------- |
@@ -400,7 +400,7 @@ so it costs nothing until an operator runs it.
 Rollback: drop the two views, then the two tables, and take the two names out
 of `DELETION_CLICKHOUSE_TARGETS` in the same release.
 
-### 0031 — subscription lifecycle (Perier fork, DataFast gap 7)
+### 0031 — subscription lifecycle (Perier fork)
 
 | Version | Subject                                                                                               |
 | ------- | ----------------------------------------------------------------------------------------------------- |

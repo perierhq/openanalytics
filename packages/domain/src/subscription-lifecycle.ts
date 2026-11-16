@@ -1,5 +1,5 @@
 /**
- * Subscription lifecycle and new-vs-renewal revenue (Perier fork, DataFast gap 7).
+ * Subscription lifecycle and new-vs-renewal revenue (Perier fork).
  *
  * Pure. No I/O, no clock, no secret — the same split as `revenue-ingest.ts` and
  * `revenue-attribution.ts`: the adapter normalizes, the repository stores, the
