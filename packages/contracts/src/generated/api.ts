@@ -15783,9 +15783,21 @@ export interface operations {
                     "image/webp": string;
                 };
             };
+            400: components["responses"]["ValidationFailed"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
-            404: components["responses"]["SiteNotFound"];
+            /**
+             * @description No such site is visible to the caller (`SITE_NOT_FOUND`), or the site
+             *     has no picture stored for that author (`NOT_FOUND`).
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listSiteMentions: {

@@ -4278,12 +4278,20 @@ paths:
               schema:
                 type: string
                 format: binary
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/SiteNotFound'
+          description: |
+            No such site is visible to the caller (`SITE_NOT_FOUND`), or the site
+            has no picture stored for that author (`NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/sites/{site_id}/mentions:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
