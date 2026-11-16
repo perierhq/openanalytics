@@ -253,12 +253,12 @@ describeIfPostgres('site deletion', () => {
       // again (migration 0022 drops it), the first shrink: **62**.
       // Still no `stripe` row: a site deletion cancels no subscription, because
       // the site is one of several a payer may fund.
-      // 71, not 72 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031 and the two mentions tables of Postgres 0048): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(71)
+      // 72, not 73 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031, the two mentions tables of Postgres 0048 and the mention avatars table of Postgres 0049): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(72)
       const byStore = (store: string) => targets.filter((t) => t.store === store).length
       expect(byStore('clickhouse')).toBe(38)
       expect(byStore('redis')).toBe(5)
-      expect(byStore('postgres')).toBe(27)
+      expect(byStore('postgres')).toBe(28)
       expect(byStore('stripe')).toBe(0)
       expect(byStore('object')).toBe(1)
 

@@ -5,6 +5,7 @@ import {
   mentionQueries,
   normalizeMentionSettingsPatch,
   parseFxTwitterSearch,
+  sniffMentionAvatarType,
 } from '@openanalytics/domain'
 import { describe, expect, it } from 'vitest'
 import { fxSearchBody, fxStatus, fxStatusWithId } from '../support/fxtwitter-fixtures.ts'
@@ -42,19 +43,75 @@ describe('parseFxTwitterSearch', () => {
           views: 23,
           postedAt: new Date(1794229118 * 1000),
           linkHosts: ['conductor.build'],
+          authorAvatarSourceUrl: 'https://pbs.twimg.com/profile_images/1/avatar.jpg',
         },
       ],
     })
   })
 
-  it('never carries the avatar, the language or the raw facets', () => {
+  it('never carries the language or the raw facets', () => {
     const parsed = parseFxTwitterSearch(fxSearchBody([fxStatus]))
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     const post = parsed.posts[0] as unknown as Record<string, unknown>
-    expect(JSON.stringify(post)).not.toContain('pbs.twimg.com')
     expect(post).not.toHaveProperty('lang')
     expect(post).not.toHaveProperty('raw_text')
+    expect(post).not.toHaveProperty('avatar_url')
+  })
+
+  it('keeps the avatar source only when it is https on pbs.twimg.com exactly', () => {
+    const avatarOf = (avatarUrl: unknown) => {
+      const parsed = parseFxTwitterSearch(
+        fxSearchBody([{ ...fxStatus, author: { ...fxStatus.author, avatar_url: avatarUrl } }]),
+      )
+      if (!parsed.ok) throw new Error('fixture did not parse')
+      return parsed.posts[0]?.authorAvatarSourceUrl
+    }
+    expect(avatarOf('https://pbs.twimg.com/profile_images/1/a.jpg')).toBe(
+      'https://pbs.twimg.com/profile_images/1/a.jpg',
+    )
+    for (const refused of [
+      'http://pbs.twimg.com/profile_images/1/a.jpg',
+      'https://abs.twimg.com/profile_images/1/a.jpg',
+      'https://pbs.twimg.com.evil.com/profile_images/1/a.jpg',
+      'https://evil.com/pbs.twimg.com/a.jpg',
+      'https://user:pw@pbs.twimg.com/profile_images/1/a.jpg',
+      'https://pbs.twimg.com:8443/profile_images/1/a.jpg',
+      'javascript:alert(1)//pbs.twimg.com/a.jpg',
+      'data:image/png;base64,AAAA',
+      '//pbs.twimg.com/profile_images/1/a.jpg',
+      '/profile_images/1/a.jpg',
+      'not a url',
+      '',
+      42,
+      null,
+      undefined,
+    ]) {
+      expect(avatarOf(refused), String(refused)).toBeNull()
+    }
+    // A missing avatar never costs the post.
+    const { avatar_url: _dropped, ...authorWithout } = fxStatus.author
+    const parsed = parseFxTwitterSearch(fxSearchBody([{ ...fxStatus, author: authorWithout }]))
+    expect(parsed.ok && parsed.posts[0]?.authorAvatarSourceUrl).toBeNull()
+  })
+
+  it('asks for the 48 px variant of a sized avatar and leaves an unsized one alone', () => {
+    const avatarOf = (avatarUrl: string) => {
+      const parsed = parseFxTwitterSearch(
+        fxSearchBody([{ ...fxStatus, author: { ...fxStatus.author, avatar_url: avatarUrl } }]),
+      )
+      if (!parsed.ok) throw new Error('fixture did not parse')
+      return parsed.posts[0]?.authorAvatarSourceUrl
+    }
+    const base = 'https://pbs.twimg.com/profile_images/1234/AbC_d'
+    expect(avatarOf(`${base}_200x200.jpg`)).toBe(`${base}_normal.jpg`)
+    expect(avatarOf(`${base}_400x400.png`)).toBe(`${base}_normal.png`)
+    expect(avatarOf(`${base}_bigger.jpeg`)).toBe(`${base}_normal.jpeg`)
+    expect(avatarOf(`${base}_normal.webp`)).toBe(`${base}_normal.webp`)
+    expect(avatarOf(`${base}.jpg`)).toBe(`${base}.jpg`)
+    expect(avatarOf('https://pbs.twimg.com/profile_images/1/avatar.jpg')).toBe(
+      'https://pbs.twimg.com/profile_images/1/avatar.jpg',
+    )
   })
 
   it('skips results that are not statuses or lack an identity', () => {
@@ -309,6 +366,29 @@ describe('normalizeMentionSettingsPatch', () => {
       ok: true,
       value: { terms: ['Conductor'] },
     })
+  })
+})
+
+describe('sniffMentionAvatarType', () => {
+  const bytes = (...values: number[]) => new Uint8Array(values)
+  const ascii = (text: string) => new TextEncoder().encode(text)
+
+  it('reads JPEG, PNG and WebP from their magic bytes', () => {
+    expect(sniffMentionAvatarType(bytes(0xff, 0xd8, 0xff, 0xe0, 0, 0))).toBe('image/jpeg')
+    expect(
+      sniffMentionAvatarType(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0)),
+    ).toBe('image/png')
+    const webp = new Uint8Array([...ascii('RIFF'), 1, 2, 3, 4, ...ascii('WEBPVP8 ')])
+    expect(sniffMentionAvatarType(webp)).toBe('image/webp')
+  })
+
+  it('refuses everything else, however it starts', () => {
+    expect(sniffMentionAvatarType(new Uint8Array())).toBeNull()
+    expect(sniffMentionAvatarType(bytes(0xff, 0xd8))).toBeNull()
+    expect(sniffMentionAvatarType(ascii('<!doctype html><svg/>'))).toBeNull()
+    expect(sniffMentionAvatarType(ascii('GIF89a......'))).toBeNull()
+    expect(sniffMentionAvatarType(ascii('RIFF....WAVEfmt '))).toBeNull()
+    expect(sniffMentionAvatarType(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a))).toBeNull()
   })
 })
 

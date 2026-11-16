@@ -11,7 +11,7 @@ const mention = (overrides: Partial<Mention> = {}): Mention => ({
   post_id: "1800000000000000001",
   url: "https://x.com/ada/status/1800000000000000001",
   text: "Trying getopen.so for analytics",
-  author: { handle: "ada", name: "Ada Lovelace", followers: 1200, url: "https://x.com/ada" },
+  author: { handle: "ada", name: "Ada Lovelace", followers: 1200, url: "https://x.com/ada", avatar_url: null },
   posted_at: "2026-07-01T10:00:00.000Z",
   matched_term: "getopen.so",
   links_to_site: true,
@@ -52,7 +52,7 @@ describe("a mention row", () => {
         views: null,
         links_to_site: false,
         matched_term: "OpenAnalytics",
-        author: { handle: "ada", name: "Ada", followers: null, url: "https://x.com/ada" },
+        author: { handle: "ada", name: "Ada", followers: null, url: "https://x.com/ada", avatar_url: null },
       })
     )
     expect(html).not.toContain("Links to your site")
@@ -72,5 +72,16 @@ describe("a mention row", () => {
     expect(html).not.toContain("<img")
     expect(html).not.toContain("twimg")
     expect(html).toContain(">AL<")
+  })
+
+  it("shows the author's stored picture from our API when there is one", () => {
+    const path = "/v1/sites/site_1/mentions/avatars/x/ada"
+    const html = render(
+      mention({
+        author: { handle: "ada", name: "Ada Lovelace", followers: 1200, url: "https://x.com/ada", avatar_url: path },
+      })
+    )
+    expect(html).toContain(`src="${path}"`)
+    expect(html).not.toContain("twimg")
   })
 })

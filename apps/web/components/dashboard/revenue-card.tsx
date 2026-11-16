@@ -33,7 +33,7 @@ import {
   type RevenueTotals,
 } from "@/lib/api";
 import { formatMoney } from "@/lib/currencies";
-import { MOCK_REVENUE_SUMMARY } from "@/lib/mock";
+import { MOCK_PAYING_VISITORS, MOCK_REVENUE_SUMMARY } from "@/lib/mock";
 
 /**
  * Revenue on the overview grid (M12, ADR-0033; frontend_tasks §23).
@@ -344,32 +344,6 @@ function PayingVisitorsModal({
     </SeeAllModal>
   );
 }
-
-/** Design-mode rows, in the wire's own shape: two believable payers. */
-const MOCK_PAYING_VISITORS: RecentVisitor[] = [
-  {
-    visitor: "v_mock_payer_one",
-    country: "DE",
-    device_type: "desktop",
-    browser: "chrome",
-    os: "macos",
-    first_seen: "2026-08-09T08:05:00.000Z",
-    last_seen: "2026-08-09T08:41:00.000Z",
-    pageviews: 6,
-    revenue: { amount_minor: 2900, currency: "USD", transaction_count: 1 },
-  },
-  {
-    visitor: "v_mock_payer_two",
-    country: "US",
-    device_type: "mobile",
-    browser: "safari",
-    os: "ios",
-    first_seen: "2026-08-09T06:12:00.000Z",
-    last_seen: "2026-08-09T06:19:00.000Z",
-    pageviews: 0,
-    revenue: { amount_minor: 900, currency: "USD", transaction_count: 1 },
-  },
-];
 
 /** The not-connected state: a door to integrations, never a `0`. */
 function ConnectDoor({ slug }: { slug: string }) {

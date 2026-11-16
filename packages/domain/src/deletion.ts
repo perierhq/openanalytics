@@ -379,6 +379,9 @@ export const DELETION_POSTGRES_TARGETS = [
   // rows *this name* removed.
   'site_mention_settings',
   'mentions',
+  // The authors' pictures (migration 0049). References only `sites`; named for
+  // the same standing rule.
+  'mention_avatars',
 ] as const
 export type DeletionPostgresTarget = (typeof DELETION_POSTGRES_TARGETS)[number]
 
@@ -406,8 +409,8 @@ export interface DeletionTargetName {
 }
 
 /**
- * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 27
- * Postgres + 1 object target, in that order. **71**, and the number changes on
+ * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 28
+ * Postgres + 1 object target, in that order. **72**, and the number changes on
  * purpose as stores are added — the assertions that name it are the contract.
  *
  * How it got here, kept because each step is a decision somebody can check:
@@ -501,7 +504,11 @@ export interface DeletionTargetName {
  * - X mentions added `site_mention_settings` and `mentions` (Postgres
  *   migration 0048), so Postgres 25 became **27** and the site total 69
  *   became **71** (70 became **72** on hosted). ClickHouse, Redis and the
- *   object store did not move: a mention is a Postgres row and nothing else.
+ *   object store did not move: a mention is a Postgres row and nothing else;
+ * - the mention authors' pictures added `mention_avatars` (Postgres migration
+ *   0049), so Postgres 27 became **28** and the site total 71 became **72**
+ *   (72 became **73** on hosted). The pictures are `bytea` in Postgres, not
+ *   objects, so the object store did not move either.
  *
  * `currency_rates` (migration 0034) is deliberately **not** here and never will
  * be. It is global reference data — one row per `(rate_date, currency)`, with no

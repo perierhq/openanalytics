@@ -1,4 +1,5 @@
 import {
+  avatarStateForHandles,
   createDatabase,
   createPool,
   createSiteWithOwner,
@@ -7,9 +8,11 @@ import {
   listSitesDueForMentionPoll,
   newId,
   purgeSitePostgres,
+  readMentionAvatar,
   readMentionSettings,
   recordMentionPoll,
   startSiteDeletion,
+  upsertMentionAvatar,
   upsertMentionSettings,
   upsertMentions,
   type Database,
@@ -31,6 +34,8 @@ import { applyPostgresStreams } from '../support/postgres-streams.ts'
  * 3. The CHECKs refuse what the domain would never write.
  * 4. The poller's pick-up query and the list's keyset behave.
  * 5. Both tables go with the site: the cascade, and the counted purge.
+ * 6. Migration 0049's author pictures: the CHECKs, the primary key as the
+ *    upsert target, the list's `authorHasAvatar`, and the same two deletions.
  */
 
 const CONNECTION_STRING = process.env['TEST_POSTGRES_URL']
@@ -53,6 +58,24 @@ function post(postId: string, overrides: Partial<MentionUpsertRow> = {}): Mentio
     postedAt: new Date('2026-11-10T12:00:00.000Z'),
     matchedTerm: 'conductor.build',
     linksToSite: true,
+    ...overrides,
+  }
+}
+
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+function avatar(
+  siteId: string,
+  overrides: Partial<Parameters<typeof upsertMentionAvatar>[1]> = {},
+) {
+  return {
+    siteId,
+    platform: 'x' as const,
+    handle: 'hampfh',
+    contentType: 'image/jpeg' as const,
+    bytes: JPEG,
+    sourceUrl: 'https://pbs.twimg.com/profile_images/1/a_normal.jpg',
     ...overrides,
   }
 }
@@ -316,6 +339,122 @@ describeIfPostgres('X mentions (migration 0048)', () => {
     expect(walked[2]?.postId).toBe('c')
   })
 
+  it('stores one picture per author per site, replacing it on the primary key', async () => {
+    const siteId = await makeSite()
+    const sibling = await makeSite()
+    const first = new Date('2026-11-01T00:00:00.000Z')
+    await upsertMentionAvatar(db, avatar(siteId, { fetchedAt: first }))
+    expect(await readMentionAvatar(db, siteId, 'x', 'hampfh')).toEqual({
+      contentType: 'image/jpeg',
+      bytes: JPEG,
+    })
+    expect(await avatarStateForHandles(db, siteId, 'x', ['hampfh', 'nobody'])).toEqual([
+      {
+        handle: 'hampfh',
+        fetchedAt: first,
+        sourceUrl: 'https://pbs.twimg.com/profile_images/1/a_normal.jpg',
+      },
+    ])
+
+    const second = new Date('2026-11-09T00:00:00.000Z')
+    await upsertMentionAvatar(
+      db,
+      avatar(siteId, {
+        contentType: 'image/png',
+        bytes: PNG,
+        sourceUrl: 'https://pbs.twimg.com/profile_images/2/b_normal.png',
+        fetchedAt: second,
+      }),
+    )
+    expect(await countIn('mention_avatars', siteId)).toBe(1)
+    expect(await readMentionAvatar(db, siteId, 'x', 'hampfh')).toEqual({
+      contentType: 'image/png',
+      bytes: PNG,
+    })
+    expect(await avatarStateForHandles(db, siteId, 'x', ['hampfh'])).toEqual([
+      {
+        handle: 'hampfh',
+        fetchedAt: second,
+        sourceUrl: 'https://pbs.twimg.com/profile_images/2/b_normal.png',
+      },
+    ])
+
+    // Per site: the sibling holds nothing, and reads nothing.
+    expect(await readMentionAvatar(db, sibling, 'x', 'hampfh')).toBeNull()
+    expect(await avatarStateForHandles(db, sibling, 'x', ['hampfh'])).toEqual([])
+    expect(await avatarStateForHandles(db, siteId, 'x', [])).toEqual([])
+  })
+
+  it('refuses a picture the worker would never store', async () => {
+    const siteId = await makeSite()
+    const insert = (values: {
+      platform?: string
+      handle?: string
+      contentType?: string
+      bytes?: Buffer
+      sourceUrl?: string
+    }) =>
+      pool.query(
+        `INSERT INTO mention_avatars (site_id, platform, author_handle, content_type, bytes, source_url)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          siteId,
+          values.platform ?? 'x',
+          values.handle ?? newId().replace(/-/gu, '').slice(-15),
+          values.contentType ?? 'image/jpeg',
+          values.bytes ?? Buffer.from(JPEG),
+          values.sourceUrl ?? 'https://pbs.twimg.com/profile_images/1/a_normal.jpg',
+        ],
+      )
+    await expect(insert({ platform: 'reddit' })).rejects.toThrow(/mention_avatars_platform_check/)
+    for (const handle of ['bad.handle', 'a'.repeat(16), '', '../x']) {
+      await expect(insert({ handle })).rejects.toThrow(/mention_avatars_handle_check/)
+    }
+    for (const contentType of ['image/svg+xml', 'text/html', 'image/gif']) {
+      await expect(insert({ contentType })).rejects.toThrow(/mention_avatars_content_type_check/)
+    }
+    await expect(insert({ bytes: Buffer.alloc(32_769) })).rejects.toThrow(
+      /mention_avatars_bytes_size_check/,
+    )
+    await expect(insert({ bytes: Buffer.alloc(32_768) })).resolves.toBeDefined()
+    for (const sourceUrl of [
+      'http://pbs.twimg.com/a.jpg',
+      'https://pbs.twimg.com.evil.com/a.jpg',
+      'https://pbsxtwimg.com/a.jpg',
+      'javascript:alert(1)',
+    ]) {
+      await expect(insert({ sourceUrl })).rejects.toThrow(/mention_avatars_source_url_check/)
+    }
+    await expect(insert({ handle: 'dup' })).resolves.toBeDefined()
+    await expect(insert({ handle: 'dup' })).rejects.toThrow(/mention_avatars_pkey/)
+  })
+
+  it('tells the list which rows have a stored picture', async () => {
+    const siteId = await makeSite()
+    await upsertMentions(db, {
+      siteId,
+      platform: 'x',
+      posts: [
+        post('1', { authorHandle: 'hampfh' }),
+        post('2', { authorHandle: 'faceless', authorUrl: 'https://x.com/faceless' }),
+      ],
+    })
+    await upsertMentionAvatar(db, avatar(siteId))
+    // Another site's picture of the same author does not count here.
+    await upsertMentionAvatar(db, avatar(await makeSite(), { handle: 'faceless' }))
+
+    const rows = await listMentions(db, {
+      siteId,
+      from: new Date('2026-11-01T00:00:00.000Z'),
+      to: new Date('2026-12-01T00:00:00.000Z'),
+      limit: 10,
+    })
+    expect(Object.fromEntries(rows.map((row) => [row.authorHandle, row.authorHasAvatar]))).toEqual({
+      hampfh: true,
+      faceless: false,
+    })
+  })
+
   it('cascades with the site row', async () => {
     const siteId = await makeSite()
     // Raw inserts, so no audit row (which outlives sites by design) is involved.
@@ -323,6 +462,7 @@ describeIfPostgres('X mentions (migration 0048)', () => {
       siteId,
     ])
     await upsertMentions(db, { siteId, platform: 'x', posts: [post('1')] })
+    await upsertMentionAvatar(db, avatar(siteId))
 
     const client = await pool.connect()
     try {
@@ -338,6 +478,7 @@ describeIfPostgres('X mentions (migration 0048)', () => {
     }
     expect(await countIn('mentions', siteId)).toBe(0)
     expect(await countIn('site_mention_settings', siteId)).toBe(0)
+    expect(await countIn('mention_avatars', siteId)).toBe(0)
   })
 
   it('is purged with the site, counted per table, and a sibling keeps its rows', async () => {
@@ -346,11 +487,12 @@ describeIfPostgres('X mentions (migration 0048)', () => {
     for (const target of [siteId, sibling]) {
       await upsertMentionSettings(db, { siteId: target, actorUserId: ownerId, xEnabled: true })
       await upsertMentions(db, { siteId: target, platform: 'x', posts: [post('1')] })
+      await upsertMentionAvatar(db, avatar(target))
     }
 
     await startSiteDeletion(db, { siteId, requestedByUserId: ownerId })
     const purged = await purgeSitePostgres(db, { siteId })
-    for (const table of ['site_mention_settings', 'mentions']) {
+    for (const table of ['site_mention_settings', 'mentions', 'mention_avatars']) {
       expect(purged.deleted[table]).toBe(1)
       expect(await countIn(table, siteId)).toBe(0)
       expect(await countIn(table, sibling)).toBe(1)

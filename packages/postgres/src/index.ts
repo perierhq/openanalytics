@@ -457,16 +457,22 @@ export {
 } from './repositories/funnels.ts'
 
 export {
+  avatarStateForHandles,
   dbErrorFacts,
   existingMentionPostIds,
   listMentions,
   listSitesDueForMentionPoll,
+  readMentionAvatar,
   readMentionSettings,
   recordMentionPoll,
+  upsertMentionAvatar,
   upsertMentionSettings,
   upsertMentions,
   type DbErrorFacts,
   type ListMentionsInput,
+  type MentionAvatarRecord,
+  type MentionAvatarState,
+  type MentionAvatarUpsert,
   type MentionPollTarget,
   type MentionRecord,
   type MentionSettingsRecord,

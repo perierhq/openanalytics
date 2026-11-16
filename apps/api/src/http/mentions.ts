@@ -6,12 +6,14 @@ import {
 } from '@openanalytics/contracts'
 import {
   MENTION_PLATFORMS,
+  isMentionAuthorHandle,
   normalizeMentionSettingsPatch,
   type MentionPlatform,
 } from '@openanalytics/domain'
 import {
   dbErrorFacts,
   listMentions,
+  readMentionAvatar,
   readMentionSettings,
   upsertMentionSettings,
   type Database,
@@ -28,7 +30,8 @@ import {
 import { requireCapability, siteMembership, type ApiVariables } from './middleware.ts'
 
 /**
- * X mentions (migration 0048): the settings and the list.
+ * X mentions (migration 0048): the settings and the list; and the authors'
+ * pictures (migration 0049).
  *
  * **Reading is membership-only**, viewer included: what was found and what is
  * searched expose nothing a viewer cannot already see on the public web.
@@ -40,6 +43,14 @@ import { requireCapability, siteMembership, type ApiVariables } from './middlewa
  * row, so an OAuth grant cannot change what this install sends to a third
  * party. The list has a row (`analytics:read`), which is what the
  * `list_mentions` MCP tool reaches.
+ *
+ * **The picture route** serves the bytes the worker stored, so a viewer's
+ * browser never requests anything from X. Membership-only like the list, and
+ * session-only like the settings: it has no grant row, because a picture is
+ * for the dashboard and nothing an MCP client needs. The bytes were typed from
+ * their magic numbers when stored (JPEG, PNG or WebP only), and the response
+ * forbids sniffing and carries a `default-src 'none'` policy, so even a
+ * picture opened on its own can never act as a document.
  */
 
 type Env = { Variables: ApiVariables }
@@ -60,7 +71,12 @@ function settingsJson(settings: MentionSettingsRecord) {
   }
 }
 
-function mentionJson(row: MentionRecord) {
+/** Where the API serves an author's picture for a site. */
+function avatarPath(siteId: string, platform: MentionPlatform, handle: string): string {
+  return `/v1/sites/${encodeURIComponent(siteId)}/mentions/avatars/${platform}/${encodeURIComponent(handle)}`
+}
+
+function mentionJson(siteId: string, row: MentionRecord) {
   return {
     id: row.id,
     platform: row.platform,
@@ -72,6 +88,7 @@ function mentionJson(row: MentionRecord) {
       name: row.authorName,
       followers: row.authorFollowers,
       url: row.authorUrl,
+      avatar_url: row.authorHasAvatar ? avatarPath(siteId, row.platform, row.authorHandle) : null,
     },
     posted_at: row.postedAt.toISOString(),
     matched_term: row.matchedTerm,
@@ -236,12 +253,38 @@ export function createMentionRoutes(deps: { db: Database }): Hono<Env> {
     const items = hasMore ? rows.slice(0, query.limit) : rows
     const last = items.at(-1)
     return c.json({
-      items: items.map(mentionJson),
+      items: items.map((row) => mentionJson(siteId, row)),
       next_cursor:
         hasMore && last !== undefined
           ? encodeMentionsCursor({ postedAtMs: last.postedAt.getTime(), id: last.id })
           : null,
       has_more: hasMore,
+    })
+  })
+
+  app.get(`${base}/avatars/:platform/:handle`, async (c) => {
+    const { siteId } = c.get('membership')
+    const platform = c.req.param('platform')
+    const handle = c.req.param('handle')
+    const issues: { path: string; message: string }[] = []
+    if (!(MENTION_PLATFORMS as readonly string[]).includes(platform)) {
+      issues.push({ path: 'platform', message: `must be one of ${MENTION_PLATFORMS.join(', ')}` })
+    }
+    if (!isMentionAuthorHandle(handle)) {
+      issues.push({ path: 'handle', message: 'must match ^[A-Za-z0-9_]{1,15}$' })
+    }
+    if (issues.length > 0) validationFailed('Invalid mention avatar path', issues)
+
+    const avatar = await readMentionAvatar(db, siteId, platform as MentionPlatform, handle)
+    if (avatar === null) throw new ApiError('NOT_FOUND', 'No picture is stored for that author')
+    return c.body(avatar.bytes, 200, {
+      'content-type': avatar.contentType,
+      'cache-control': 'private, max-age=86400',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'",
+      // Holds even if the session cookie is configured SameSite=None: another
+      // site cannot embed the picture to learn who is a member.
+      'cross-origin-resource-policy': 'same-site',
     })
   })
 

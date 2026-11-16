@@ -712,9 +712,9 @@ describeIfPostgres('reporting currency and the rollup re-roll marker', () => {
         deletionRequestId: started.deletionRequestId,
       })
 
-      expect(SITE_DELETION_TARGETS).toHaveLength(71)
-      // 71, not 72 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031 and the two mentions tables of Postgres 0048): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(71)
+      expect(SITE_DELETION_TARGETS).toHaveLength(72)
+      // 72, not 73 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031, the two mentions tables of Postgres 0048 and the mention avatars table of Postgres 0049): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(72)
       const clickhouse = targets.filter((t) => t.store === 'clickhouse').map((t) => t.target)
       expect(clickhouse).toHaveLength(38)
       // A vocabulary name with no purge statement verifies silently at
@@ -723,7 +723,7 @@ describeIfPostgres('reporting currency and the rollup re-roll marker', () => {
       expect(clickhouse).not.toContain('revenue_1h')
       expect(clickhouse).toContain('revenue_1d')
       expect(clickhouse).toContain('revenue_15m')
-      expect(targets.filter((t) => t.store === 'postgres')).toHaveLength(27)
+      expect(targets.filter((t) => t.store === 'postgres')).toHaveLength(28)
       expect(targets.filter((t) => t.store === 'redis')).toHaveLength(5)
       expect(targets.filter((t) => t.store === 'object')).toHaveLength(1)
     })

@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
+import type { Mention } from "@/lib/api";
 import { revenueTooltipModel, type RevenueBucket } from "@/lib/chart-revenue";
 import { MentionGlyph, SaleGlyph } from "./chart-marker-glyphs";
+import { UserAvatar } from "@/components/ui/user-avatar";
+import { MentionAvatar } from "./mention-avatar";
 
 /**
  * The overview chart's day tooltip: what one bucket held, in sections read top
@@ -17,6 +20,9 @@ export const PAGEVIEWS_COLOR = "#94a3b8";
 
 const intFmt = new Intl.NumberFormat("en-US");
 
+/** Faces before a sale or mention count; the count says how many there are. */
+const TOOLTIP_FACES = 3;
+
 const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
@@ -30,6 +36,18 @@ export type OverviewTooltipContentProps = {
   /** Marker counts for the bucket, after the legend's show/hide choice. */
   sales: number;
   mentions: number;
+  /**
+   * The bucket's buyers' anonymous ids, distinct, newest sale first; the
+   * first three are drawn as small faces before the count, the same faces the
+   * realtime views draw (see `lib/marker-faces.ts`). Sales that matched no
+   * visitor have none.
+   */
+  saleVisitors?: readonly string[];
+  /**
+   * Who wrote the bucket's mentions, ranked, pictures only; the first three
+   * are drawn as small faces before the count.
+   */
+  mentionAuthors?: ReadonlyArray<Pick<Mention["author"], "handle" | "name" | "avatar_url">>;
   /** A dashboard filter narrows the traffic; revenue stays site-wide. */
   filtered?: boolean;
 };
@@ -69,6 +87,8 @@ export function OverviewTooltipContent({
   revenue,
   sales,
   mentions,
+  saleVisitors = [],
+  mentionAuthors = [],
   filtered = false,
 }: OverviewTooltipContentProps) {
   const money = revenue ? revenueTooltipModel(revenue, visitors, { filtered }) : null;
@@ -105,16 +125,38 @@ export function OverviewTooltipContent({
             {sales > 0 ? (
               <p className="flex items-center gap-2">
                 <span className="flex size-2 items-center justify-center">
-                  <SaleGlyph />
+                  <SaleGlyph tone="dark" />
                 </span>
+                {saleVisitors.length > 0 ? (
+                  <span className="flex -space-x-1">
+                    {saleVisitors.slice(0, TOOLTIP_FACES).map((visitor) => (
+                      <span className="flex rounded-full ring-1 ring-black/50" key={visitor}>
+                        <UserAvatar seed={visitor} size={16} />
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
                 {plural(sales, "sale", "sales")}
               </p>
             ) : null}
             {mentions > 0 ? (
               <p className="flex items-center gap-2">
                 <span className="flex size-2 items-center justify-center">
-                  <MentionGlyph />
+                  <MentionGlyph tone="dark" />
                 </span>
+                {mentionAuthors.length > 0 ? (
+                  <span className="flex -space-x-1">
+                    {mentionAuthors.slice(0, TOOLTIP_FACES).map((author) => (
+                      <MentionAvatar
+                        author={author}
+                        className="ring-1 ring-black/50"
+                        key={author.handle}
+                        size={16}
+                        tone="dark"
+                      />
+                    ))}
+                  </span>
+                ) : null}
                 {plural(mentions, "mention", "mentions")}
               </p>
             ) : null}

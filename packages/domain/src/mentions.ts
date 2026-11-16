@@ -45,7 +45,92 @@ export const MENTION_TERM_MAX_LENGTH = 64
 /** The int4 ceiling: the per-post counters are `integer` columns. */
 const INT4_MAX = 2_147_483_647
 
-/** One post, as the poller stores it. No avatar, no language, no raw facets. */
+/**
+ * Author pictures (migration 0049). The poller downloads a small copy once a
+ * week at most per author and site, and the API serves it, so a dashboard
+ * viewer's browser never contacts X.
+ *
+ * The one host anything is ever downloaded from. An exact match, never a
+ * suffix: the source URL comes from a third-party response, and this is the
+ * guard that keeps it from pointing the worker anywhere else.
+ */
+export const MENTION_AVATAR_HOST = 'pbs.twimg.com'
+/** A stored picture is at most this many bytes; mirrors
+ * `mention_avatars_bytes_size_check`. The 48 px variant is 1–4 KB. */
+export const MENTION_AVATAR_MAX_BYTES = 32_768
+/** The types a stored picture may have; mirrors
+ * `mention_avatars_content_type_check`. Read from the bytes, never a header. */
+export const MENTION_AVATAR_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
+export type MentionAvatarContentType = (typeof MENTION_AVATAR_CONTENT_TYPES)[number]
+/** A stored picture older than this is downloaded again. */
+export const MENTION_AVATAR_MAX_AGE_MS = 7 * 24 * 60 * 60_000
+/** A source URL longer than this is not one X hands out. */
+const AVATAR_URL_MAX_LENGTH = 2048
+/** X's size suffixes: `_200x200`, `_400x400`, `_bigger`, `_mini`, … */
+const AVATAR_SIZE_SUFFIX =
+  /_(?:\d{1,4}x\d{1,4}|normal|bigger|mini|reasonably_small|x96)\.([A-Za-z]{3,4})$/u
+
+/**
+ * Whether a URL may be downloaded as an author picture: `https:` on exactly
+ * `pbs.twimg.com`, on the default port, with no credentials. Checked by the
+ * parser and again by the download client, so neither trusts the other.
+ */
+export function isMentionAvatarUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > AVATAR_URL_MAX_LENGTH) {
+    return false
+  }
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  return (
+    url.protocol === 'https:' &&
+    url.hostname === MENTION_AVATAR_HOST &&
+    url.port === '' &&
+    url.username === '' &&
+    url.password === ''
+  )
+}
+
+/**
+ * The source URL to store for an author's picture, or null when there is none
+ * the worker may fetch. A sized variant is rewritten to the 48 px one
+ * (`_400x400.jpg` → `_normal.jpg`); a URL with no recognised suffix is kept as
+ * it is.
+ */
+export function mentionAvatarSourceUrl(raw: unknown): string | null {
+  if (!isMentionAvatarUrl(raw)) return null
+  const url = new URL(raw)
+  url.pathname = url.pathname.replace(AVATAR_SIZE_SUFFIX, '_normal.$1')
+  return url.href
+}
+
+/**
+ * The picture's type from its first bytes: JPEG `FF D8 FF`, PNG
+ * `89 50 4E 47 0D 0A 1A 0A`, WebP `RIFF....WEBP`. Anything else — HTML, SVG,
+ * GIF, an empty body — is null and is never stored.
+ */
+export function sniffMentionAvatarType(bytes: Uint8Array): MentionAvatarContentType | null {
+  const starts = (offset: number, expected: readonly number[]) =>
+    bytes.length >= offset + expected.length &&
+    expected.every((value, i) => bytes[offset + i] === value)
+  if (starts(0, [0xff, 0xd8, 0xff])) return 'image/jpeg'
+  if (starts(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png'
+  // 'RIFF', a four-byte length, 'WEBP'.
+  if (starts(0, [0x52, 0x49, 0x46, 0x46]) && starts(8, [0x57, 0x45, 0x42, 0x50])) {
+    return 'image/webp'
+  }
+  return null
+}
+
+/** Whether a string is an X handle: `[A-Za-z0-9_]{1,15}`. */
+export function isMentionAuthorHandle(value: string): boolean {
+  return HANDLE_PATTERN.test(value)
+}
+
+/** One post, as the poller stores it. No language, no raw facets. */
 export interface ParsedPost {
   /** Digits only, at most 25. */
   readonly postId: string
@@ -70,6 +155,10 @@ export interface ParsedPost {
   /** Lowercased hosts of the expanded links in the post. Used for
    * `links_to_site`, never stored. */
   readonly linkHosts: readonly string[]
+  /** Where the author's picture may be downloaded from (`https://pbs.twimg.com`
+   * only, 48 px variant), or null. Not a column on `mentions`: the poller
+   * downloads it into `mention_avatars`, and nothing ever links to it. */
+  readonly authorAvatarSourceUrl: string | null
 }
 
 export type FxTwitterSearchParse =
@@ -157,6 +246,7 @@ function parseStatus(result: unknown): ParsedPost | null {
     views: count(result['views']),
     postedAt,
     linkHosts: linkHostsOf(result['raw_text']),
+    authorAvatarSourceUrl: mentionAvatarSourceUrl(author['avatar_url']),
   }
 }
 

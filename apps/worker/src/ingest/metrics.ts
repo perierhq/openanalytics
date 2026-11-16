@@ -485,4 +485,9 @@ export const WORKER_METRICS = {
   mentionsPoll: 'worker_mentions_poll',
   /** Mention rows written (new and refreshed) by the poller. */
   mentionsUpserted: 'worker_mentions_upserted',
+  /** Author-picture downloads (migration 0049), by `status`: `ok`, `refused`
+   * (not a `pbs.twimg.com` URL), `unavailable`, `too_large`,
+   * `unsupported_type` (the bytes are not JPEG, PNG or WebP), or `error` (a
+   * database failure reading or storing them). Never part of a poll's status. */
+  mentionAvatars: 'worker_mention_avatars',
 } as const

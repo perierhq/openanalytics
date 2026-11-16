@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { bucketMarkers, type EventMarkerItem } from "./event-markers"
+import { bucketMarkers, markerStack, type EventMarkerItem } from "./event-markers"
 
 const DAY = 86_400_000
 const START = Date.parse("2026-06-20T00:00:00.000Z")
@@ -74,5 +74,17 @@ describe("bucketing marker items into the chart's own buckets", () => {
 
   it("returns nothing with no buckets", () => {
     expect(bucketMarkers([], END, [item("a", "mention", START)])).toEqual([])
+  })
+})
+
+describe("stacking a bucket's marks", () => {
+  it("stacks two faces 2px apart and keeps a gap around a glyph", () => {
+    // Bottom first: a sale's buyer face, then a mention's author face, neither
+    // hiding the other.
+    expect(markerStack(["face", "face"])).toEqual({ offsets: [0, 2], height: 20 + 2 + 20 })
+    expect(markerStack(["face", "glyph"])).toEqual({ offsets: [0, 3], height: 31 })
+    expect(markerStack(["glyph", "face"])).toEqual({ offsets: [0, 3], height: 31 })
+    expect(markerStack(["glyph", "glyph"])).toEqual({ offsets: [0, 3], height: 19 })
+    expect(markerStack(["face"])).toEqual({ offsets: [0], height: 20 })
   })
 })

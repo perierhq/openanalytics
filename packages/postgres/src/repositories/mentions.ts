@@ -1,13 +1,18 @@
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
-import type { MentionPlatform, MentionPollError } from '@openanalytics/domain'
+import type {
+  MentionAvatarContentType,
+  MentionPlatform,
+  MentionPollError,
+} from '@openanalytics/domain'
 import type { Database } from '../client.ts'
 import { newId } from '../ids.ts'
 import { writeAudit } from './audit.ts'
-import { mentions, siteMentionSettings } from '../schema/mentions.ts'
+import { mentionAvatars, mentions, siteMentionSettings } from '../schema/mentions.ts'
 import { siteDomains, sites } from '../schema/sites.ts'
 
 /**
- * X mentions (migration 0048): per-site watch settings and the stored posts.
+ * X mentions (migration 0048): per-site watch settings and the stored posts;
+ * and the authors' pictures (migration 0049).
  *
  * Every read and write takes `siteId` and puts it in the `WHERE`, so a caller
  * authorized on one site cannot reach another site's mentions by holding a
@@ -366,6 +371,8 @@ export interface MentionRecord {
   readonly linksToSite: boolean
   readonly firstSeenAt: Date
   readonly refreshedAt: Date
+  /** Whether the site holds a picture for this post's author (migration 0049). */
+  readonly authorHasAvatar: boolean
 }
 
 export interface ListMentionsInput {
@@ -417,9 +424,115 @@ export async function listMentions(
       linksToSite: mentions.linksToSite,
       firstSeenAt: mentions.firstSeenAt,
       refreshedAt: mentions.refreshedAt,
+      // A primary-key probe per returned row. In the select list rather than a
+      // join so the keyset scan on `mentions_site_posted_idx` and its LIMIT are
+      // untouched: only the rows that are returned are probed.
+      // Qualified by hand: drizzle prints a column of the single selected
+      // table unqualified, which inside this subquery would bind to
+      // `mention_avatars` and make every row match itself.
+      authorHasAvatar: sql<boolean>`EXISTS (
+        SELECT 1 FROM mention_avatars a
+        WHERE a.site_id = mentions.site_id
+          AND a.platform = mentions.platform
+          AND a.author_handle = mentions.author_handle
+      )`,
     })
     .from(mentions)
     .where(and(...conditions))
     .orderBy(desc(mentions.postedAt), desc(mentions.id))
     .limit(input.limit)
+}
+
+export interface MentionAvatarUpsert {
+  readonly siteId: string
+  readonly platform: MentionPlatform
+  readonly handle: string
+  /** From the bytes' magic numbers, never a response header. */
+  readonly contentType: MentionAvatarContentType
+  readonly bytes: Uint8Array
+  readonly sourceUrl: string
+  readonly fetchedAt?: Date
+}
+
+/** Stores an author's picture for a site, replacing the one held before. */
+export async function upsertMentionAvatar(db: Database, input: MentionAvatarUpsert): Promise<void> {
+  const values = {
+    contentType: input.contentType,
+    bytes: Buffer.from(input.bytes.buffer, input.bytes.byteOffset, input.bytes.byteLength),
+    sourceUrl: input.sourceUrl,
+    fetchedAt: input.fetchedAt ?? new Date(),
+  }
+  await db
+    .insert(mentionAvatars)
+    .values({
+      siteId: input.siteId,
+      platform: input.platform,
+      authorHandle: input.handle,
+      ...values,
+    })
+    .onConflictDoUpdate({
+      target: [mentionAvatars.siteId, mentionAvatars.platform, mentionAvatars.authorHandle],
+      set: values,
+    })
+}
+
+export interface MentionAvatarState {
+  readonly handle: string
+  readonly fetchedAt: Date
+  readonly sourceUrl: string
+}
+
+/**
+ * When each of these authors' pictures was last stored for the site, and from
+ * where. An author with no picture has no entry. The bytes are not read.
+ */
+export async function avatarStateForHandles(
+  db: Database,
+  siteId: string,
+  platform: MentionPlatform,
+  handles: readonly string[],
+): Promise<MentionAvatarState[]> {
+  if (handles.length === 0) return []
+  return db
+    .select({
+      handle: mentionAvatars.authorHandle,
+      fetchedAt: mentionAvatars.fetchedAt,
+      sourceUrl: mentionAvatars.sourceUrl,
+    })
+    .from(mentionAvatars)
+    .where(
+      and(
+        eq(mentionAvatars.siteId, siteId),
+        eq(mentionAvatars.platform, platform),
+        inArray(mentionAvatars.authorHandle, [...handles]),
+      ),
+    )
+}
+
+export interface MentionAvatarRecord {
+  readonly contentType: MentionAvatarContentType
+  /** A copy on a plain `ArrayBuffer`, ready to be a response body. */
+  readonly bytes: Uint8Array<ArrayBuffer>
+}
+
+/** One author's stored picture for the site, or null when there is none. */
+export async function readMentionAvatar(
+  db: Database,
+  siteId: string,
+  platform: MentionPlatform,
+  handle: string,
+): Promise<MentionAvatarRecord | null> {
+  const [row] = await db
+    .select({ contentType: mentionAvatars.contentType, bytes: mentionAvatars.bytes })
+    .from(mentionAvatars)
+    .where(
+      and(
+        eq(mentionAvatars.siteId, siteId),
+        eq(mentionAvatars.platform, platform),
+        eq(mentionAvatars.authorHandle, handle),
+      ),
+    )
+  return row === undefined
+    ? null
+    : { contentType: row.contentType, bytes: new Uint8Array(row.bytes) }
 }

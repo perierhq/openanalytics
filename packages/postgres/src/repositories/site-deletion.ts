@@ -23,7 +23,7 @@ import { exportRuns } from '../schema/exports.ts'
 import { importRuns, importUploads } from '../schema/imports.ts'
 import { ingestBatchItems, ingestBatchSites } from '../schema/ingest-batches.ts'
 import { siteIngestSettings } from '../schema/ingest.ts'
-import { mentions, siteMentionSettings } from '../schema/mentions.ts'
+import { mentionAvatars, mentions, siteMentionSettings } from '../schema/mentions.ts'
 import {
   deletionRequests,
   deletionTargets,
@@ -828,6 +828,14 @@ export async function purgeSitePostgres(
     )
     await removeFrom('mentions', () =>
       tx.delete(mentions).where(eq(mentions.siteId, input.siteId)).returning({ id: mentions.id }),
+    )
+    // The authors' pictures (migration 0049). The primary key is composite;
+    // the handle stands in as `id` for the shape `removeFrom` counts through.
+    await removeFrom('mention_avatars', () =>
+      tx
+        .delete(mentionAvatars)
+        .where(eq(mentionAvatars.siteId, input.siteId))
+        .returning({ id: mentionAvatars.authorHandle }),
     )
     // The attribution job's control row (ADR-0033, D6/D8; migration 0036).
     //

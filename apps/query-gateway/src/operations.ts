@@ -2693,8 +2693,76 @@ const revenueUnconvertedOperation = defineOperation({
  * with `confidence = 'none'`, it simply has no journey. An inner join would make
  * unmatched revenue invisible, which is precisely the failure the ADR spends a
  * paragraph refusing.
+ *
+ * ## The buyer's face: `visitor`
+ *
+ * The anonymous id the buyer had in the purchase's last-touch session, the same
+ * id the visitor surfaces show (`VISITOR_IDENTITY`), for drawing the same
+ * generated face. It rotates daily (D-102); two charges share it only when they
+ * share a last-touch session. Null when the charge matched no visitor. Never
+ * the identify() hash.
+ *
+ * "Only when they share a last-touch session" is a real case, not a corner:
+ * the last touch can be up to the attribution window before the charge, so a
+ * renewal, a plan change or a second purchase made without a new visit carries
+ * the same id as the purchase before it, on a different day.
+ *
+ * The attribution's own `visitor_id` is NOT that id for an identified buyer: it
+ * is the site-scoped `identify()` hash, stable across days, and exposing it
+ * would let a reader of this list join one person's purchases over time. So:
+ *
+ * - an `anonymous_day` attribution's key IS the rotating id, from the
+ *   conversion event itself, and is used as is (it is also the id the buyer
+ *   carried at the moment of purchase, which is what the live views show).
+ *   It can differ from the last-touch session's entry id when that session
+ *   crosses UTC midnight: the event carries the new day's id, the session
+ *   keeps the one it started with.
+ * - every other matched charge reads `anonymous_id` off its `lt_session_id`'s
+ *   current session fact (0013: the entry event's anonymous id)
+ * - anything else — unmatched, no last touch yet, a retracted session — is the
+ *   empty string, which the api renders as null.
+ *
+ * ## Page first
+ *
+ * The keyset order and the cap are applied to the transactions subquery
+ * (`cur`), so attribution and sessions are read only for the ≤201 rows of this
+ * page, never for the whole range: on a big site a month holds many thousand
+ * charges and as many last-touch sessions. The page is named again inside the
+ * two `IN` filters (same text, so ClickHouse builds the set once); the outer
+ * ORDER BY and LIMIT stay because a join does not keep its left side's order.
+ *
+ * The session is found by its sort key, `(site_id, session_id)`, through an IN
+ * over the page's attributed last touches, so the primary index prunes it. Its
+ * `session_start` is bounded to [from − 31 days, to): the last touch is at
+ * most the 30-day window before the charge, plus a day of slack, and never
+ * after it, so only those monthly partitions are opened and a last touch from
+ * before the range still resolves. No per-row subquery, and no read of raw
+ * events. Retraction is applied after the version pick, as 0013 requires.
  */
 const REVENUE_TRANSACTIONS_MAX_ROWS = 201
+
+/**
+ * The page's keys alone, newest first under the keyset — the same rows `cur`
+ * returns, for the `IN` filters that keep attribution and session reads to
+ * this page.
+ */
+const REVENUE_TRANSACTIONS_PAGE_KEYS = [
+  'SELECT pg.object_id FROM (',
+  ' SELECT',
+  '  re.object_id AS object_id,',
+  "  toDateTime64(argMax(re.occurred_at, re.version), 3, 'UTC') AS occurred_at",
+  ' FROM revenue_events AS re',
+  ' WHERE re.site_id = {site_id:UUID}',
+  "  AND re.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+  "  AND re.occurred_at < toDateTime64({to:String}, 3, 'UTC')",
+  "  AND (re.occurred_at < toDateTime64({cursor_occurred_at:String}, 3, 'UTC')",
+  "   OR (re.occurred_at = toDateTime64({cursor_occurred_at:String}, 3, 'UTC')",
+  '    AND re.object_id < {cursor_object_id:String}))',
+  ' GROUP BY re.site_id, re.provider, re.object_id',
+  ' ORDER BY occurred_at DESC, object_id DESC',
+  ' LIMIT {limit:UInt32}',
+  ') AS pg',
+].join('')
 
 const revenueTransactionsOperation = defineOperation({
   id: 'analytics.revenue_transactions',
@@ -2751,7 +2819,10 @@ const revenueTransactionsOperation = defineOperation({
     '  att.identity_scope AS identity_scope,',
     // Perier gap 7: new / renewal / plan_change / one_off for a charge, '' for
     // a refund or dispute. See `SUBSCRIPTION_INVOICE_KIND_MAP`.
-    `  ${purchaseKindExpr('cur.object_kind')} AS purchase_kind`,
+    `  ${purchaseKindExpr('cur.object_kind')} AS purchase_kind,`,
+    // See "The buyer's face" above. The pseudonyms it is chosen from never
+    // leave the statement as columns of their own.
+    "  if(att.identity_scope = 'anonymous_day' AND att.user_id = '', att.visitor_id, lts.anonymous_id) AS visitor",
     'FROM (',
     '  SELECT',
     '    re.object_id AS object_id,',
@@ -2781,19 +2852,47 @@ const revenueTransactionsOperation = defineOperation({
     "         OR (re.occurred_at = toDateTime64({cursor_occurred_at:String}, 3, 'UTC')",
     '             AND re.object_id < {cursor_object_id:String}))',
     '  GROUP BY re.site_id, re.provider, re.object_id',
+    '  ORDER BY occurred_at DESC, object_id DESC',
+    '  LIMIT {limit:UInt32}',
     ') AS cur',
     'LEFT JOIN (',
     '  SELECT',
     '    ra.object_id AS object_id,',
     '    argMax(ra.matched_via, ra.version) AS matched_via,',
     '    argMax(ra.confidence, ra.version) AS confidence,',
-    '    argMax(ra.identity_scope, ra.version) AS identity_scope',
+    '    argMax(ra.identity_scope, ra.version) AS identity_scope,',
+    '    argMax(ra.visitor_id, ra.version) AS visitor_id,',
+    '    argMax(ra.user_id, ra.version) AS user_id,',
+    '    argMax(ra.lt_session_id, ra.version) AS lt_session_id',
     '  FROM revenue_attributions AS ra',
     '  WHERE ra.site_id = {site_id:UUID}',
     "    AND ra.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
     "    AND ra.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+    `    AND ra.object_id IN (${REVENUE_TRANSACTIONS_PAGE_KEYS})`,
     '  GROUP BY ra.site_id, ra.provider, ra.object_id',
     ') AS att ON att.object_id = cur.object_id',
+    'LEFT JOIN (',
+    '  SELECT',
+    '    sfv.session_id AS session_id,',
+    '    argMax(sfv.anonymous_id, sfv.version) AS anonymous_id',
+    '  FROM session_facts_versions AS sfv',
+    '  WHERE sfv.site_id = {site_id:UUID}',
+    "    AND sfv.session_start >= toDateTime64({from:String}, 3, 'UTC') - INTERVAL 31 DAY",
+    "    AND sfv.session_start < toDateTime64({to:String}, 3, 'UTC')",
+    // A superset of the page's current last touches (every version's), which
+    // is fine: the join below picks the one the current attribution names.
+    '    AND sfv.session_id IN (',
+    '      SELECT ra_lt.lt_session_id',
+    '      FROM revenue_attributions AS ra_lt',
+    '      WHERE ra_lt.site_id = {site_id:UUID}',
+    "        AND ra_lt.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+    "        AND ra_lt.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+    "        AND ra_lt.lt_session_id != ''",
+    `        AND ra_lt.object_id IN (${REVENUE_TRANSACTIONS_PAGE_KEYS})`,
+    '    )',
+    '  GROUP BY sfv.site_id, sfv.session_id',
+    '  HAVING argMax(sfv.retracted, sfv.version) = 0',
+    ') AS lts ON lts.session_id = att.lt_session_id',
     ...purchaseKindJoins('cur.object_id', 'cur.order_id'),
     'ORDER BY cur.occurred_at DESC, cur.object_id DESC',
     'LIMIT {limit:UInt32}',

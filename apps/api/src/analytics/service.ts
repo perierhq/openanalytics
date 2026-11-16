@@ -3143,6 +3143,11 @@ function mapRevenueTransaction(r: Record<string, unknown>): Schemas['RevenueTran
     // Perier gap 7: what a charge paid for, from the invoice join; null on a
     // refund or dispute (the gateway answers '' for those).
     purchase_kind: purchaseKindOrNull(r['purchase_kind']),
+    // The buyer's rotating anonymous id from the last-touch session, so a sale
+    // can wear the same generated face as its visitor elsewhere. The gateway
+    // answers '' for a charge that matched nobody; that is null here, never an
+    // id. It is never the identify() hash (see the gateway operation).
+    visitor: emptyToNull(str(r['visitor'])),
   }
 }
 

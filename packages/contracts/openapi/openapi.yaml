@@ -4233,6 +4233,65 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/SiteNotFound'
+  /v1/sites/{site_id}/mentions/avatars/{platform}/{handle}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - name: platform
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/MentionPlatform'
+      - name: handle
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[A-Za-z0-9_]{1,15}$'
+    get:
+      operationId: getSiteMentionAvatar
+      tags: [mentions]
+      summary: A mention author's stored profile picture. Readable by every member.
+      description: |
+        The small copy of the author's picture the mention poller stored for
+        this site. Served from this API so a dashboard viewer's browser never
+        requests anything from the platform. `404` when the site has no
+        picture for that author.
+
+        The body is the image bytes (`image/jpeg`, `image/png` or
+        `image/webp`, at most 32 KB) with `Cache-Control: private, max-age=86400`
+        and `X-Content-Type-Options: nosniff`.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The picture.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            No such site is visible to the caller (`SITE_NOT_FOUND`), or the site
+            has no picture stored for that author (`NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /v1/sites/{site_id}/mentions:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -11782,6 +11841,7 @@ components:
           matched_via,
           confidence,
           purchase_kind,
+          visitor,
         ]
       properties:
         object_id:
@@ -11877,6 +11937,16 @@ components:
             Null on a refund or a dispute, which have no purchase of their own.
           oneOf:
             - $ref: '#/components/schemas/SubscriptionPurchaseKind'
+            - type: 'null'
+        visitor:
+          description: |
+            The anonymous id the buyer had in the purchase's last-touch session,
+            the same id the visitor surfaces show, for drawing the same
+            generated face. It rotates daily; two charges share it only when
+            they share a last-touch session. Null when the charge matched no
+            visitor. Never the identify() hash.
+          oneOf:
+            - type: string
             - type: 'null'
 
     RevenueMatchedVia:
@@ -12758,7 +12828,7 @@ components:
     MentionAuthor:
       type: object
       additionalProperties: false
-      required: [handle, name, followers, url]
+      required: [handle, name, followers, url, avatar_url]
       properties:
         handle:
           type: string
@@ -12771,6 +12841,14 @@ components:
         url:
           type: string
           format: uri
+        avatar_url:
+          description: |
+            Path of the author's profile picture on this API
+            (`/v1/sites/{site_id}/mentions/avatars/{platform}/{handle}`), or null
+            when no picture has been stored yet. The picture is downloaded by the
+            worker and served from here, so showing it never contacts the
+            platform from the viewer's browser.
+          type: [string, 'null']
 
     Mention:
       type: object

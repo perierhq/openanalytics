@@ -17,7 +17,7 @@ const mention = (overrides: Partial<Mention> = {}): Mention => ({
   post_id: "1800000000000000001",
   url: "https://x.com/ada/status/1800000000000000001",
   text: "Trying getopen.so for analytics",
-  author: { handle: "ada", name: "Ada", followers: 1200, url: "https://x.com/ada" },
+  author: { handle: "ada", name: "Ada", followers: 1200, url: "https://x.com/ada", avatar_url: null },
   posted_at: "2026-07-01T10:00:00.000Z",
   matched_term: "getopen.so",
   links_to_site: true,
