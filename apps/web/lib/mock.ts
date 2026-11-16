@@ -555,11 +555,31 @@ export function mockMentionSettings(domain: string): SiteMentionSettings {
 const mockDay = (day: number, hour: number) =>
   new Date(Date.UTC(2026, 5, 20 + day, hour, 14)).toISOString();
 
+/**
+ * Mock mode's stand-in for a stored profile picture: a small drawn portrait as
+ * a data address, so nothing is requested from anywhere (never from X). Live,
+ * `avatar_url` is a path on our API.
+ */
+const mockPortrait = (background: string, skin: string, hair: string, shirt: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+      `<rect width="64" height="64" fill="${background}"/>` +
+      `<path d="M10 64c2-13 11-20 22-20s20 7 22 20z" fill="${shirt}"/>` +
+      `<circle cx="32" cy="28" r="12" fill="${skin}"/>` +
+      `<path d="M19 27c0-9 6-14 13-14s13 5 13 14c-3-5-8-7-13-7s-10 2-13 7z" fill="${hair}"/>` +
+      `</svg>`
+  )}`;
+
 const mockMention = (
   index: number,
   day: number,
   hour: number,
-  author: { handle: string; name: string; followers: number | null },
+  author: {
+    handle: string;
+    name: string;
+    followers: number | null;
+    avatar_url?: string | null;
+  },
   text: string,
   extra: Partial<Mention> = {}
 ): Mention => {
@@ -570,7 +590,11 @@ const mockMention = (
     post_id: postId,
     url: `https://x.com/${author.handle}/status/${postId}`,
     text,
-    author: { ...author, url: `https://x.com/${author.handle}` },
+    author: {
+      ...author,
+      avatar_url: author.avatar_url ?? null,
+      url: `https://x.com/${author.handle}`,
+    },
     posted_at: mockDay(day, hour),
     matched_term: "getopen.so",
     links_to_site: true,
@@ -591,7 +615,12 @@ export const MOCK_MENTIONS: Mention[] = [
     1,
     27,
     16,
-    { handle: "marta_builds", name: "Marta Kowalska", followers: 8_900 },
+    {
+      handle: "marta_builds",
+      name: "Marta Kowalska",
+      followers: 8_900,
+      avatar_url: mockPortrait("#dbeafe", "#f1c6a8", "#7c4a2d", "#2563eb"),
+    },
     "Moved our docs site off the big analytics suite and onto getopen.so this week. Same numbers, a tenth of the script, and I can finally read the dashboard."
   ),
   mockMention(
@@ -606,7 +635,12 @@ export const MOCK_MENTIONS: Mention[] = [
     3,
     21,
     18,
-    { handle: "sarahdev", name: "Sarah Chen", followers: 41_200 },
+    {
+      handle: "sarahdev",
+      name: "Sarah Chen",
+      followers: 41_200,
+      avatar_url: mockPortrait("#fce7f3", "#e8b894", "#1f1f24", "#be185d"),
+    },
     "Privacy-first analytics that doesn't feel like a compromise: https://getopen.so — the realtime globe is a nice touch.",
     { likes: 318, reposts: 64, replies: 27, views: 52_000 }
   ),
@@ -622,7 +656,12 @@ export const MOCK_MENTIONS: Mention[] = [
     5,
     9,
     14,
-    { handle: "nadia", name: "Nadia Haddad", followers: 2_300 },
+    {
+      handle: "nadia",
+      name: "Nadia Haddad",
+      followers: 2_300,
+      avatar_url: mockPortrait("#dcfce7", "#c68e66", "#3b2418", "#15803d"),
+    },
     "Our pricing page conversion story, told by getopen.so funnels. Thread below.",
     { likes: 41, replies: 6, views: 7_800 }
   ),

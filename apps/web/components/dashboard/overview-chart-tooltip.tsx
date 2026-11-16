@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
+import type { Mention } from "@/lib/api";
 import { revenueTooltipModel, type RevenueBucket } from "@/lib/chart-revenue";
 import { MentionGlyph, SaleGlyph } from "./chart-marker-glyphs";
+import { MentionAvatar } from "./mention-avatar";
 
 /**
  * The overview chart's day tooltip: what one bucket held, in sections read top
@@ -17,6 +19,9 @@ export const PAGEVIEWS_COLOR = "#94a3b8";
 
 const intFmt = new Intl.NumberFormat("en-US");
 
+/** Faces before the mention count; the count says how many there are. */
+const TOOLTIP_FACES = 3;
+
 const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
@@ -30,6 +35,12 @@ export type OverviewTooltipContentProps = {
   /** Marker counts for the bucket, after the legend's show/hide choice. */
   sales: number;
   mentions: number;
+  /**
+   * Who wrote the bucket's mentions, ranked, pictures only; the first three
+   * are drawn as small faces before the count. Sales have no faces: a
+   * transaction carries no visitor seed (see `lib/marker-faces.ts`).
+   */
+  mentionAuthors?: ReadonlyArray<Pick<Mention["author"], "handle" | "name" | "avatar_url">>;
   /** A dashboard filter narrows the traffic; revenue stays site-wide. */
   filtered?: boolean;
 };
@@ -69,6 +80,7 @@ export function OverviewTooltipContent({
   revenue,
   sales,
   mentions,
+  mentionAuthors = [],
   filtered = false,
 }: OverviewTooltipContentProps) {
   const money = revenue ? revenueTooltipModel(revenue, visitors, { filtered }) : null;
@@ -105,7 +117,7 @@ export function OverviewTooltipContent({
             {sales > 0 ? (
               <p className="flex items-center gap-2">
                 <span className="flex size-2 items-center justify-center">
-                  <SaleGlyph />
+                  <SaleGlyph tone="dark" />
                 </span>
                 {plural(sales, "sale", "sales")}
               </p>
@@ -113,8 +125,21 @@ export function OverviewTooltipContent({
             {mentions > 0 ? (
               <p className="flex items-center gap-2">
                 <span className="flex size-2 items-center justify-center">
-                  <MentionGlyph />
+                  <MentionGlyph tone="dark" />
                 </span>
+                {mentionAuthors.length > 0 ? (
+                  <span className="flex -space-x-1">
+                    {mentionAuthors.slice(0, TOOLTIP_FACES).map((author) => (
+                      <MentionAvatar
+                        author={author}
+                        className="ring-1 ring-black/50"
+                        key={author.handle}
+                        size={16}
+                        tone="dark"
+                      />
+                    ))}
+                  </span>
+                ) : null}
                 {plural(mentions, "mention", "mentions")}
               </p>
             ) : null}

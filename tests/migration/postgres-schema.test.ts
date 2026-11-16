@@ -223,6 +223,15 @@ const EXPECTED_CONSTRAINTS = [
   'mentions_url_check',
   'mentions_author_url_check',
   'mentions_site_platform_post_key',
+  // Mention author pictures (migration 0049): one per author per site, a known
+  // platform, a handle fit for the API path, an image type that is never a
+  // document, at most 32 KB, and a source on pbs.twimg.com only.
+  'mention_avatars_pkey',
+  'mention_avatars_platform_check',
+  'mention_avatars_handle_check',
+  'mention_avatars_content_type_check',
+  'mention_avatars_bytes_size_check',
+  'mention_avatars_source_url_check',
 ]
 
 const declaredTables = schemaTableColumns()

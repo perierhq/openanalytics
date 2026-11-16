@@ -944,6 +944,17 @@ Nothing about the site's visitors is sent. Requests go out without credentials
 and with a `User-Agent` naming OpenAnalytics. Watching is off for every site
 until someone turns it on.
 
+The worker also downloads the authors' profile pictures from `pbs.twimg.com`
+(the small version, once a week at most per author, and from no other host),
+stores them in Postgres, and the dashboard shows them from your own API, so
+viewers never contact X. The metric `worker_mention_avatars{status}` counts
+those downloads; a failed one is tried again on a later poll and never marks
+the site's search as failed. The dashboard loads those pictures with the
+browser's session cookie, which reaches the API when the dashboard and the API
+are on the same site (for example `app.example.com` and `api.example.com`). If
+they are on different sites, the pictures don't load and authors show as
+initials instead.
+
 | Variable                | Where  | Default                     | What it does                                                                                     |
 | ----------------------- | ------ | --------------------------- | ------------------------------------------------------------------------------------------------ |
 | `MENTIONS_X_API_URL`    | worker | `https://api.fxtwitter.com` | The search service. Point it at your own fxtwitter to keep the searches off the public instance. |

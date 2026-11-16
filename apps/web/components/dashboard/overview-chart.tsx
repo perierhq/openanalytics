@@ -56,6 +56,7 @@ import {
 } from "@/lib/chart-revenue";
 import { chartWindow } from "@/lib/chart-window";
 import { bucketMarkers } from "@/lib/event-markers";
+import { rankMentionAuthors } from "@/lib/marker-faces";
 import { relativeBucketLabel } from "@/lib/relative-bucket-label";
 
 /**
@@ -633,13 +634,26 @@ export function OverviewChart({
     enabled: loadOverride === undefined && response !== null,
     hidden: hiddenLayers.includes("revenue"),
   });
-  const markerCounts = new Map(
+  const markerBuckets = new Map(
     bucketMarkers(
       bucketStarts,
       layerEndMs,
       markers.filter((item) => !hiddenLayers.includes(item.kind)),
       ["sale", "mention"]
-    ).map((bucket) => [bucket.startMs, bucket.counts])
+    ).map((bucket) => [
+      bucket.startMs,
+      {
+        counts: bucket.counts,
+        // The tooltip's small faces: distinct authors with a picture, ranked
+        // like the marker's own face.
+        mentionAuthors: rankMentionAuthors(
+          (bucket.byKind.mention ?? []).flatMap((item) =>
+            item.payload.kind === "mention" ? [item.payload.mention] : []
+          ),
+          { limit: 3, withPicture: true }
+        ),
+      },
+    ])
   );
 
   // Clock axes tick on round hours — every third on desktop, every sixth on
@@ -753,11 +767,13 @@ export function OverviewChart({
         content={({ point }) => {
           const date = point.date as Date;
           const visitors = Number(point.visitors) || 0;
-          const counts = markerCounts.get(date.getTime());
+          const bucket = markerBuckets.get(date.getTime());
+          const counts = bucket?.counts;
           return (
             <OverviewTooltipContent
               // Revenue is site-wide; a filter narrows only the traffic.
               filtered={filtersParam !== undefined}
+              mentionAuthors={bucket?.mentionAuthors}
               mentions={counts?.mention ?? 0}
               pageviews={Number(point.pageviews) || 0}
               revenue={

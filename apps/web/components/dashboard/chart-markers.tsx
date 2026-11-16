@@ -2,15 +2,20 @@
 
 import Link from "next/link";
 import * as React from "react";
-import {
-  EventMarkers,
-  type EventMarkerKind,
-} from "@/components/charts/event-markers";
+import { EventMarkers } from "@/components/charts/event-markers";
 import {
   MentionGlyph,
   RevenueGlyph,
   SaleGlyph,
 } from "@/components/dashboard/chart-marker-glyphs";
+import {
+  OVERVIEW_MARKER_KINDS,
+  plural,
+  type OverviewMarkerItem,
+  type OverviewMarkerKind,
+  type OverviewMarkerPayload,
+} from "@/components/dashboard/chart-marker-kinds";
+import { MentionAvatar } from "@/components/dashboard/mention-avatar";
 import { useSiteSummary } from "@/components/dashboard/site-summary-context";
 import { useApiResource } from "@/hooks/use-api-resource";
 import {
@@ -18,7 +23,6 @@ import {
   mentions,
   revenue,
   type AnalyticsRange,
-  type Mention,
   type RevenueConnectionState,
   type RevenueTransaction,
 } from "@/lib/api";
@@ -33,7 +37,7 @@ import {
   type OverviewChartLayer,
 } from "@/lib/chart-markers";
 import { formatMoney } from "@/lib/currencies";
-import type { EventMarkerBucket, EventMarkerItem } from "@/lib/event-markers";
+import type { EventMarkerBucket } from "@/lib/event-markers";
 import { mentionExcerpt } from "@/lib/mentions";
 import { MOCK_MENTIONS, MOCK_SALES } from "@/lib/mock";
 import { cn } from "@/lib/utils";
@@ -47,33 +51,9 @@ import { cn } from "@/lib/utils";
  * remembered show/hide choice.
  */
 
-export type OverviewMarkerKind = "sale" | "mention";
-
-type OverviewMarkerPayload =
-  | { kind: "sale"; sale: RevenueTransaction }
-  | { kind: "mention"; mention: Mention };
-
-type OverviewMarkerItem = EventMarkerItem<OverviewMarkerKind, OverviewMarkerPayload>;
-
-/* ------------------------------------------------------------------ */
-/* Kinds                                                               */
-/* ------------------------------------------------------------------ */
-
-// The glyphs live in `chart-marker-glyphs.tsx`, shared with the day tooltip.
-const plural = (count: number, one: string, many: string) =>
-  `${count} ${count === 1 ? one : many}`;
-
-/** Stacking order, bottom first: sales sit nearest the axis. */
-const KINDS: Record<OverviewMarkerKind, EventMarkerKind> = {
-  sale: {
-    describe: (count) => plural(count, "sale", "sales"),
-    glyph: <SaleGlyph />,
-  },
-  mention: {
-    describe: (count) => plural(count, "mention", "mentions"),
-    glyph: <MentionGlyph />,
-  },
-};
+// The kinds (words, glyphs, the mention face) live in `chart-marker-kinds.tsx`;
+// the glyphs in `chart-marker-glyphs.tsx`, shared with the day tooltip.
+export type { OverviewMarkerKind };
 
 export type { OverviewChartLayer };
 
@@ -317,7 +297,7 @@ export function OverviewMarkers({
       bucketLabel={bucketLabel}
       endMs={endMs}
       items={visible}
-      kinds={KINDS}
+      kinds={OVERVIEW_MARKER_KINDS}
       renderContent={(bucket) => (
         <BucketPopover base={base} bucket={bucket} bucketLabel={bucketLabel} timeLabel={timeLabel} />
       )}
@@ -410,9 +390,12 @@ function BucketPopover({
           </p>
           <ul className="flex flex-col gap-1.5 pl-4">
             {posts.slice(0, PREVIEW).map((post) => (
-              <li className="text-xs leading-5" key={post.id}>
-                <span className="font-medium">@{post.author.handle}</span>{" "}
-                <span className="text-muted-foreground">{mentionExcerpt(post.text)}</span>
+              <li className="flex items-start gap-2 text-xs leading-5" key={post.id}>
+                <MentionAvatar author={post.author} size={20} />
+                <span className="min-w-0">
+                  <span className="font-medium">@{post.author.handle}</span>{" "}
+                  <span className="text-muted-foreground">{mentionExcerpt(post.text)}</span>
+                </span>
               </li>
             ))}
           </ul>

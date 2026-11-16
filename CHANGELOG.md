@@ -173,6 +173,9 @@ Postgres migration 0048 adds two tables for X mentions and changes nothing
 that exists. It runs with the usual `pnpm run migrate:postgres`; there is
 nothing to do by hand.
 
+Postgres migration 0049 adds one table, for the profile pictures of mention
+authors, and changes nothing that exists; nothing to do by hand.
+
 ### Added
 
 - **X mentions.** An owner or admin can turn on mention watching for a site.
@@ -184,6 +187,12 @@ nothing to do by hand.
   `MENTIONS_X_API_URL` points it at your own fxtwitter, `MENTIONS_ENABLED=false`
   stops it for the whole install, and `MENTIONS_POLL_MINUTES` (default 60) sets
   how often each site is searched.
+
+- **Mention author pictures.** The mentions list shows each author's profile
+  picture. The worker downloads the small version from `pbs.twimg.com` (once a
+  week at most per author), stores it in Postgres, and the API serves it at
+  `GET /v1/sites/{site_id}/mentions/avatars/{platform}/{handle}`; each
+  mention's `author.avatar_url` points there. Viewers' browsers never contact X.
 
 - **Sales and mentions on the overview chart.** Days with sales or mentions get
   a marker under the chart; opening one lists that day's sales (owners only,

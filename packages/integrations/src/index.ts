@@ -257,3 +257,16 @@ export {
   type FxTwitterSearchPage,
   type FxTwitterSearchResult,
 } from './fxtwitter.ts'
+
+/**
+ * X mention author pictures (migration 0049): one capped GET to
+ * `pbs.twimg.com` and nowhere else, typed from the bytes.
+ */
+export {
+  MENTION_AVATAR_MAX_BYTES,
+  createMentionAvatarClient,
+  type MentionAvatarClient,
+  type MentionAvatarClientConfig,
+  type MentionAvatarFetchOptions,
+  type MentionAvatarFetchResult,
+} from './mention-avatar.ts'

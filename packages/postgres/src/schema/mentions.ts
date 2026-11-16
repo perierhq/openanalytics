@@ -3,9 +3,11 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   index,
   integer,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -20,7 +22,9 @@ import { sites } from './sites.ts'
  * `site_mention_settings` is one row per site that has ever saved settings; a
  * site without one reads as the defaults (watching off, no terms).
  * `mentions` holds the posts the poller found, one row per post per site. No
- * avatar URL is stored, so the dashboard cannot hotlink X images.
+ * avatar URL is stored, so the dashboard cannot hotlink X images; the pictures
+ * themselves live in `mention_avatars` (mirror of migration 0049) and the API
+ * serves them.
  */
 
 export type MentionPlatformColumn = 'x'
@@ -90,5 +94,38 @@ export const mentions = pgTable(
     check('mentions_text_length_check', sql`char_length(${t.text}) <= 1000`),
     check('mentions_url_check', sql`${t.url} ~ '^https://'`),
     check('mentions_author_url_check', sql`${t.authorUrl} ~ '^https://'`),
+  ],
+)
+
+export type MentionAvatarContentTypeColumn = 'image/jpeg' | 'image/png' | 'image/webp'
+
+/** `bytea`. node-postgres reads it as a `Buffer` and writes a `Buffer` as one. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+})
+
+export const mentionAvatars = pgTable(
+  'mention_avatars',
+  {
+    siteId: idColumn('site_id')
+      .notNull()
+      .references(() => sites.id, { onDelete: 'cascade' }),
+    platform: text('platform').$type<MentionPlatformColumn>().notNull(),
+    authorHandle: text('author_handle').notNull(),
+    contentType: text('content_type').$type<MentionAvatarContentTypeColumn>().notNull(),
+    bytes: bytea('bytes').notNull(),
+    sourceUrl: text('source_url').notNull(),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: 'mention_avatars_pkey', columns: [t.siteId, t.platform, t.authorHandle] }),
+    check('mention_avatars_platform_check', sql`${t.platform} IN ('x')`),
+    check('mention_avatars_handle_check', sql`${t.authorHandle} ~ '^[A-Za-z0-9_]{1,15}$'`),
+    check(
+      'mention_avatars_content_type_check',
+      sql`${t.contentType} IN ('image/jpeg', 'image/png', 'image/webp')`,
+    ),
+    check('mention_avatars_bytes_size_check', sql`octet_length(${t.bytes}) <= 32768`),
+    check('mention_avatars_source_url_check', sql`${t.sourceUrl} ~ '^https://pbs\\.twimg\\.com/'`),
   ],
 )

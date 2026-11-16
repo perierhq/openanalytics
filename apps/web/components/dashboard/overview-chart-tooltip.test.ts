@@ -93,9 +93,37 @@ describe("the overview chart's day tooltip", () => {
     expect(out).toContain("1 mention")
   })
 
-  it("draws the same glyphs as the chart's markers", () => {
+  it("draws the chart's glyphs in their dark-surface variant, filled, not hollow", () => {
     const html = render({ sales: 3, mentions: 1 })
-    expect(html).toContain(renderToStaticMarkup(createElement(SaleGlyph)))
-    expect(html).toContain(renderToStaticMarkup(createElement(MentionGlyph)))
+    expect(html).toContain(renderToStaticMarkup(createElement(SaleGlyph, { tone: "dark" })))
+    expect(html).toContain(renderToStaticMarkup(createElement(MentionGlyph, { tone: "dark" })))
+    // The light-surface glyph's dark fill disappears on the tooltip and leaves
+    // only its white ring.
+    expect(html).not.toContain(renderToStaticMarkup(createElement(MentionGlyph)))
+    const dark = renderToStaticMarkup(createElement(MentionGlyph, { tone: "dark" }))
+    expect(dark).not.toContain("bg-foreground")
+    expect(dark).not.toContain("ring-white ")
+  })
+
+  it("puts up to three faces before the mention count", () => {
+    const author = (handle: string) => ({
+      handle,
+      name: handle,
+      followers: 1,
+      url: `https://x.com/${handle}`,
+      avatar_url: `/v1/sites/s/mentions/avatars/x/${handle}`,
+    })
+    const html = render({
+      mentions: 5,
+      mentionAuthors: ["a", "b", "c", "d"].map(author),
+    })
+    expect(html.match(/<img /g)?.length).toBe(3)
+    expect(html).not.toContain("avatars/x/d")
+    expect(html).toContain('width="16"')
+    expect(html.indexOf("avatars/x/c")).toBeLessThan(html.indexOf("5 mentions"))
+  })
+
+  it("has no faces without authors", () => {
+    expect(render({ mentions: 2 })).not.toContain("<img")
   })
 })

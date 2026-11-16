@@ -111,3 +111,18 @@ export function bucketMarkers<K extends string, P>(
       };
     });
 }
+
+/** Above this many buckets markers stay glyphs, whatever the width. */
+export const FACE_BUCKET_LIMIT = 45;
+/** A face is 20px; under this column width neighbouring faces would collide. */
+export const FACE_MIN_COLUMN = 24;
+
+/**
+ * Whether a kind that has faces may draw them instead of its glyph: at most
+ * 45 buckets, each wide enough to hold a face. The width check keeps a phone
+ * on a 30-day range (about 12px a bucket) on glyphs instead of a row of
+ * overlapping faces.
+ */
+export function markerFaceMode(bucketCount: number, columnWidth: number): boolean {
+  return bucketCount <= FACE_BUCKET_LIMIT && columnWidth >= FACE_MIN_COLUMN;
+}

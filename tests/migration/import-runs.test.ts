@@ -500,13 +500,13 @@ describeIfPostgres('import runs', () => {
       // 47 was M11's end state; M12 took it to 57 across CP1-CP5 (ADR-0033, D8
       // and its CP3 amendment). The object target deliberately did not multiply
       // and revenue adds none — provider bodies are never persisted.
-      // 71, not 72 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031 and the two mentions tables of Postgres 0048): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(71)
+      // 72, not 73 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031, the two mentions tables of Postgres 0048 and the mention avatars table of Postgres 0049): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(72)
       expect(targets).toHaveLength(SITE_DELETION_TARGETS.length)
       const byStore = (store: string) => targets.filter((t) => t.store === store).length
       expect(byStore('clickhouse')).toBe(38)
       expect(byStore('redis')).toBe(5)
-      expect(byStore('postgres')).toBe(27)
+      expect(byStore('postgres')).toBe(28)
       expect(byStore('object')).toBe(1)
 
       // The row exists even with nothing to purge. Omitting it would make the

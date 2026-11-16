@@ -750,7 +750,7 @@ const mcpTools: McpToolDefinition[] = [
     name: 'list_mentions',
     title: 'List Mentions',
     description:
-      'Public posts on X that mention one site, newest first, found by the mention poller for sites whose owner turned watching on. Each post carries its text, author handle and follower count, its like/repost/reply/quote/view counts as of `refreshed_at`, the term that found it (`matched_term`: the site domain or an extra search term), and `links_to_site` — true when the post links to the site rather than only naming it. Filter by `posted_at` in the half-open range [from, to). Page with the response’s `next_cursor` while `has_more` is true. An empty list can also mean watching is off for the site.',
+      'Public posts on X that mention one site, newest first, found by the mention poller for sites whose owner turned watching on. Each post carries its text, author handle and follower count (`author.avatar_url` is a path for the dashboard, which needs a browser session and cannot be fetched with this token), its like/repost/reply/quote/view counts as of `refreshed_at`, the term that found it (`matched_term`: the site domain or an extra search term), and `links_to_site` — true when the post links to the site rather than only naming it. Filter by `posted_at` in the half-open range [from, to). Page with the response’s `next_cursor` while `has_more` is true. An empty list can also mean watching is off for the site.',
     path: '/sites/{site_id}/mentions',
     params: [
       { name: 'from', description: 'Range start, ISO-8601 UTC (inclusive).', required: true },

@@ -829,21 +829,32 @@ export {
 
 /**
  * X mentions (migration 0048): the fxtwitter search parser, the link-to-site
- * rule, the settings patch normalizer and the query builder the poller uses.
+ * rule, the settings patch normalizer and the query builder the poller uses;
+ * and the author-picture rules (migration 0049): the host allowlist, the size
+ * rewrite and the magic-byte type check.
  */
 export {
   MENTION_AUTHOR_NAME_MAX_LENGTH,
+  MENTION_AVATAR_CONTENT_TYPES,
+  MENTION_AVATAR_HOST,
+  MENTION_AVATAR_MAX_AGE_MS,
+  MENTION_AVATAR_MAX_BYTES,
   MENTION_PLATFORMS,
   MENTION_POLL_ERRORS,
   MENTION_TERMS_MAX,
   MENTION_TERM_MAX_LENGTH,
   MENTION_TERM_MIN_LENGTH,
   MENTION_TEXT_MAX_LENGTH,
+  isMentionAuthorHandle,
+  isMentionAvatarUrl,
   linksToSite,
+  mentionAvatarSourceUrl,
   mentionQueries,
   normalizeMentionSettingsPatch,
   parseFxTwitterSearch,
+  sniffMentionAvatarType,
   type FxTwitterSearchParse,
+  type MentionAvatarContentType,
   type MentionPlatform,
   type MentionPollError,
   type MentionSettingsIssue,

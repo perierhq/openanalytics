@@ -19,6 +19,7 @@ import {
   CredentialKeyringError,
   createCredentialVault,
   createFxTwitterClient,
+  createMentionAvatarClient,
   createS3ObjectStorage,
   createPolarRevenueAdapter,
   createStripeRevenueAdapter,
@@ -623,6 +624,9 @@ if (env.DATABASE_URL) {
           baseUrl: env.MENTIONS_X_API_URL,
           version: env.SERVICE_VERSION,
         }),
+        // Author pictures (migration 0049): from `pbs.twimg.com` only, stored in
+        // Postgres and served by the API, so viewers never contact X.
+        avatars: createMentionAvatarClient({ version: env.SERVICE_VERSION }),
         pollMinutes: env.MENTIONS_POLL_MINUTES,
       })
     : null

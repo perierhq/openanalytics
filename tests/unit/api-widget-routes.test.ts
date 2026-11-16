@@ -579,7 +579,7 @@ describe('the published fixture is what the route actually returns', () => {
   })
 })
 
-describe('the deletion registry, at 71 after ClickHouse 0030/0031 and Postgres 0047/0048', () => {
+describe('the deletion registry, at 72 after ClickHouse 0030/0031 and Postgres 0047/0048/0049', () => {
   /**
    * Pinned here as well as in the migration suite because that suite needs a
    * database and therefore only runs in CI: a widget table that is not a
@@ -588,17 +588,18 @@ describe('the deletion registry, at 71 after ClickHouse 0030/0031 and Postgres 0
    */
   it('names the widget table as a Postgres target', () => {
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
-    // 71, not 72: `billing_transfer_offers` is registered by the hosted surface
+    // 72, not 73: `billing_transfer_offers` is registered by the hosted surface
     // (`CLOUD_DELETION_EXTENSION`), so what this pins is the set a build with no
     // such surface erases. 62 became 72 when ADR-0079 booked the ten `*_15m`
     // rollups (ClickHouse migrations 0025/0026), 72 became 62 again when
     // migration 0029 dropped the ten hour tables, 62 became 64 when 0030
     // added the two custom-event property breakdowns, and 64 became 69 when
     // the subscription lifecycle added three Postgres tables (0047) and two
-    // ClickHouse tables (0031), and 69 became 71 when X mentions added two
-    // Postgres tables (0048).
-    expect(SITE_DELETION_TARGETS).toHaveLength(71)
-    expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(27)
+    // ClickHouse tables (0031), 69 became 71 when X mentions added two
+    // Postgres tables (0048), and 71 became 72 when the mention authors'
+    // pictures added one more (0049).
+    expect(SITE_DELETION_TARGETS).toHaveLength(72)
+    expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(28)
     expect(SITE_DELETION_TARGETS).toContainEqual({ store: 'postgres', target: 'widgets' })
   })
 })

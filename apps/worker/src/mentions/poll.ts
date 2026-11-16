@@ -1,11 +1,22 @@
-import { linksToSite, mentionQueries, type MentionPollError } from '@openanalytics/domain'
-import type { FxTwitterClient, FxTwitterSearchResult } from '@openanalytics/integrations'
+import {
+  MENTION_AVATAR_MAX_AGE_MS,
+  linksToSite,
+  mentionQueries,
+  type MentionPollError,
+} from '@openanalytics/domain'
+import type {
+  FxTwitterClient,
+  FxTwitterSearchResult,
+  MentionAvatarClient,
+} from '@openanalytics/integrations'
 import type { Logger, Metrics } from '@openanalytics/observability'
 import {
+  avatarStateForHandles,
   dbErrorFacts,
   existingMentionPostIds,
   listSitesDueForMentionPoll,
   recordMentionPoll,
+  upsertMentionAvatar,
   upsertMentions,
   type Database,
   type MentionPollTarget,
@@ -27,6 +38,14 @@ import { WORKER_METRICS } from '../ingest/metrics.ts'
  * holds a post we already have means we have caught up. Every post the search
  * returns is stored; a known one has its counts refreshed.
  *
+ * Then, once the site's poll is stamped, the authors' pictures (migration
+ * 0049): for each distinct author in this poll's posts whose picture the site
+ * does not hold, holds from a different URL, or fetched over a week ago, the
+ * small picture is downloaded from `pbs.twimg.com` and stored. At most ten per
+ * site per poll, one second apart. A picture that fails is counted
+ * (`worker_mention_avatars`) and tried again on a later poll; it never fails
+ * the poll and never touches `last_error`, which is about the search.
+ *
  * What it refuses to do:
  *
  * - **Throw.** It shares a process with batch ingest and email delivery. A
@@ -40,8 +59,8 @@ import { WORKER_METRICS } from '../ingest/metrics.ts'
  *   pause, and aborts the pause or search in flight. A site cut short is not
  *   stamped, so it is first in line after the restart.
  * - **Log what people wrote.** Logs carry site ids, counts, failure categories
- *   and SQLSTATEs, never post text, author names or a database error message
- *   (which would carry the statement's parameters).
+ *   and SQLSTATEs, never post text, author names or handles, picture bytes or
+ *   a database error message (which would carry the statement's parameters).
  */
 
 const DEFAULT_TICK_MS = 5 * 60_000
@@ -49,16 +68,20 @@ const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_PAUSE_MS = 1000
 const FIRST_POLL_MAX_PAGES = 3
 const LATER_POLL_MAX_PAGES = 1
+/** Author pictures downloaded per site per poll; the rest wait for the next. */
+const AVATARS_PER_SITE = 10
 
 export interface MentionsPollDeps {
   readonly db: Database
   readonly logger: Logger
   readonly metrics: Metrics
   readonly client: FxTwitterClient
+  /** Downloads author pictures from `pbs.twimg.com` (migration 0049). */
+  readonly avatars: MentionAvatarClient
   /** `MENTIONS_POLL_MINUTES`: how long a site waits between polls. */
   readonly pollMinutes: number
   readonly batchSize?: number
-  /** Pause between two consecutive HTTP calls. */
+  /** Pause between two consecutive HTTP calls, searches and pictures alike. */
   readonly pauseMs?: number
   readonly tickMs?: number
   readonly now?: () => Date
@@ -108,6 +131,9 @@ function queriesFor(site: MentionPollTarget): { query: string; term: string }[] 
 /** One search, or null when the poller was stopped before or during it. */
 type PacedSearch = (query: string, cursor?: string) => Promise<FxTwitterSearchResult | null>
 
+/** Downloads and stores a site's due author pictures; never throws. */
+type AvatarRefresh = (siteId: string, authors: ReadonlyMap<string, string>) => Promise<void>
+
 /** One tick. Extracted so tests drive it directly rather than through a timer. */
 export async function pollMentionsOnce(deps: MentionsPollDeps): Promise<MentionsPollResult> {
   const now = deps.now ?? (() => new Date())
@@ -141,10 +167,13 @@ export async function pollMentionsOnce(deps: MentionsPollDeps): Promise<Mentions
       return isStopped() ? null : result
     }
 
+    const refreshAvatars: AvatarRefresh = (siteId, authors) =>
+      refreshSiteAvatars(deps, siteId, authors, { isStopped, sleep, pauseMs, now })
+
     for (const site of due) {
       if (isStopped()) break
       sites += 1
-      const outcome = await pollSite(deps, site, search)
+      const outcome = await pollSite(deps, site, search, refreshAvatars)
       upserted += outcome.upserted
       if (outcome.status === 'stopped') break
       if (outcome.status !== 'ok') failed += 1
@@ -172,10 +201,14 @@ async function pollSite(
   deps: MentionsPollDeps,
   site: MentionPollTarget,
   search: PacedSearch,
+  refreshAvatars: AvatarRefresh,
 ): Promise<{ status: SiteStatus; upserted: number }> {
   const maxPages = site.lastPolledAt === null ? FIRST_POLL_MAX_PAGES : LATER_POLL_MAX_PAGES
   let error: MentionPollError | null = null
   let upserted = 0
+  // Each distinct author in this poll with a picture to fetch, in the order
+  // first seen (newest posts first), mapped to the picture's source URL.
+  const authors = new Map<string, string>()
 
   try {
     for (const { query, term } of queriesFor(site)) {
@@ -206,6 +239,11 @@ async function pollSite(
         // query's paging. Acceptable: the post is stored either way, and the
         // only cost is that a term query may page less deep on a first poll.
         const posts = result.data.posts
+        for (const post of posts) {
+          if (post.authorAvatarSourceUrl !== null && !authors.has(post.authorHandle)) {
+            authors.set(post.authorHandle, post.authorAvatarSourceUrl)
+          }
+        }
         const known = await existingMentionPostIds(
           deps.db,
           site.siteId,
@@ -272,7 +310,102 @@ async function pollSite(
   deps.metrics.increment(WORKER_METRICS.mentionsPoll, { status })
   if (upserted > 0) deps.metrics.increment(WORKER_METRICS.mentionsUpserted, {}, upserted)
   deps.logger.info('mentions_polled', { site_id: site.siteId, status, upserted })
+  // After the stamp, so neither a failing picture nor a stop between pictures
+  // can change what the poll recorded.
+  await refreshAvatars(site.siteId, authors)
   return { status, upserted }
+}
+
+/**
+ * Downloads the due pictures of these authors and stores them for the site.
+ * Never throws: a failed download is counted and retried on a later poll, and
+ * a database error ends this site's pictures for this poll.
+ */
+async function refreshSiteAvatars(
+  deps: MentionsPollDeps,
+  siteId: string,
+  authors: ReadonlyMap<string, string>,
+  pacing: {
+    readonly isStopped: () => boolean
+    readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>
+    readonly pauseMs: number
+    readonly now: () => Date
+  },
+): Promise<void> {
+  if (authors.size === 0 || pacing.isStopped()) return
+  const counts = new Map<string, number>()
+  const count = (status: string) => counts.set(status, (counts.get(status) ?? 0) + 1)
+
+  try {
+    const stored = new Map(
+      (await avatarStateForHandles(deps.db, siteId, 'x', [...authors.keys()])).map((row) => [
+        row.handle,
+        row,
+      ]),
+    )
+    const staleBefore = pacing.now().getTime() - MENTION_AVATAR_MAX_AGE_MS
+    const due = [...authors]
+      .filter(([handle, sourceUrl]) => {
+        const held = stored.get(handle)
+        return (
+          held === undefined ||
+          held.fetchedAt.getTime() < staleBefore ||
+          held.sourceUrl !== sourceUrl
+        )
+      })
+      .slice(0, AVATARS_PER_SITE)
+
+    for (const [index, [handle, sourceUrl]] of due.entries()) {
+      if (pacing.isStopped()) break
+      if (index > 0) {
+        await pacing.sleep(pacing.pauseMs, deps.signal)
+        if (pacing.isStopped()) break
+      }
+      const result = await deps.avatars.fetchAvatar(
+        sourceUrl,
+        deps.signal === undefined ? undefined : { signal: deps.signal },
+      )
+      // A download cut short by `stop()` is neither stored nor counted.
+      if (pacing.isStopped()) break
+      if (!result.ok) {
+        count(result.reason)
+        continue
+      }
+      await upsertMentionAvatar(deps.db, {
+        siteId,
+        platform: 'x',
+        handle,
+        contentType: result.contentType,
+        bytes: result.bytes,
+        sourceUrl,
+        fetchedAt: pacing.now(),
+      })
+      count('ok')
+    }
+  } catch (err) {
+    // Reading or storing failed: logged by category and driver code only, as
+    // the poll's own database errors are. The poll is already stamped.
+    count('error')
+    deps.logger.warn('mention_avatars_failed', {
+      site_id: siteId,
+      ...dbErrorFacts(err),
+      retryable: true,
+    })
+  }
+
+  let total = 0
+  for (const [status, n] of counts) {
+    total += n
+    deps.metrics.increment(WORKER_METRICS.mentionAvatars, { status }, n)
+  }
+  if (total > 0) {
+    const stored = counts.get('ok') ?? 0
+    deps.logger.info('mention_avatars_refreshed', {
+      site_id: siteId,
+      stored,
+      failed: total - stored,
+    })
+  }
 }
 
 export interface MentionsPoller {

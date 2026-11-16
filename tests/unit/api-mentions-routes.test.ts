@@ -69,6 +69,7 @@ function mention(i: number): MentionRecord {
     linksToSite: true,
     firstSeenAt: new Date('2026-11-10T13:00:00.000Z'),
     refreshedAt: new Date('2026-11-10T14:00:00.000Z'),
+    authorHasAvatar: false,
   }
 }
 
@@ -79,6 +80,11 @@ const calls = {
 }
 const stored: { rows: MentionRecord[] } = { rows: [] }
 const failWrite: { error: Error | null } = { error: null }
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])
+const avatars: {
+  rows: Map<string, { contentType: 'image/jpeg' | 'image/png' | 'image/webp'; bytes: Uint8Array }>
+  reads: { siteId: string; platform: string; handle: string }[]
+} = { rows: new Map(), reads: [] }
 
 vi.mock('@openanalytics/postgres', async (importOriginal) => {
   const actual = await importOriginal<typeof PostgresModule>()
@@ -121,6 +127,10 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
     listMentions: async (_db: unknown, input: ListMentionsInput) => {
       calls.list.push(input)
       return stored.rows.slice(0, input.limit)
+    },
+    readMentionAvatar: async (_db: unknown, siteId: string, platform: string, handle: string) => {
+      avatars.reads.push({ siteId, platform, handle })
+      return siteId === SITE ? (avatars.rows.get(`${platform}/${handle}`) ?? null) : null
     },
   }
 })
@@ -182,6 +192,8 @@ beforeEach(() => {
   calls.list = []
   calls.reads = 0
   stored.rows = []
+  avatars.rows = new Map()
+  avatars.reads = []
   settings.current = {
     domain: 'conductor.build',
     domains: ['conductor.build'],
@@ -337,6 +349,7 @@ describe('GET /mentions', () => {
             name: 'Hampus Hallkvist',
             followers: 5,
             url: 'https://x.com/hampfh',
+            avatar_url: null,
           },
           posted_at: mention(1).postedAt.toISOString(),
           matched_term: 'conductor.build',
@@ -380,6 +393,16 @@ describe('GET /mentions', () => {
     expect(calls.list[1]?.after).toEqual({ postedAt: mention(2).postedAt, id: mention(2).id })
   })
 
+  it('points author.avatar_url at this API when a picture is stored, else null', async () => {
+    stored.rows = [{ ...mention(1), authorHasAvatar: true }, mention(2)]
+    const res = await send('GET', `${LIST}?${RANGE}`, VIEWER)
+    const body = (await res.json()) as { items: { author: { avatar_url: string | null } }[] }
+    expect(body.items.map((item) => item.author.avatar_url)).toEqual([
+      `/v1/sites/${SITE}/mentions/avatars/x/hampfh`,
+      null,
+    ])
+  })
+
   it.each([
     ['a malformed cursor', `${RANGE}&cursor=not-a-cursor`],
     [
@@ -396,6 +419,46 @@ describe('GET /mentions', () => {
     expect(res.status).toBe(400)
     expect((await errorOf(res))['code']).toBe('VALIDATION_FAILED')
     expect(calls.list).toEqual([])
+  })
+})
+
+describe('GET /mentions/avatars/{platform}/{handle}', () => {
+  const AVATAR = `/v1/sites/${SITE}/mentions/avatars/x/hampfh`
+
+  it('answers a viewer with the stored bytes, type and locked-down headers', async () => {
+    avatars.rows.set('x/hampfh', { contentType: 'image/jpeg', bytes: JPEG })
+    const res = await send('GET', AVATAR, VIEWER)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/jpeg')
+    expect(res.headers.get('cache-control')).toBe('private, max-age=86400')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'")
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(JPEG)
+    expect(avatars.reads).toEqual([{ siteId: SITE, platform: 'x', handle: 'hampfh' }])
+  })
+
+  it('answers 404 when the site has no picture for that author', async () => {
+    const res = await send('GET', `/v1/sites/${SITE}/mentions/avatars/x/nobody`, VIEWER)
+    expect(res.status).toBe(404)
+  })
+
+  it.each([
+    ['a handle with a dot', 'x/bad.handle'],
+    ['a handle over 15 characters', `x/${'a'.repeat(16)}`],
+    ['an encoded slash', 'x/a%2Fb'],
+    ['an unknown platform', 'reddit/hampfh'],
+  ])('refuses %s with 400 before any read', async (_label, tail) => {
+    const res = await send('GET', `/v1/sites/${SITE}/mentions/avatars/${tail}`, VIEWER)
+    expect(res.status).toBe(400)
+    expect((await errorOf(res))['code']).toBe('VALIDATION_FAILED')
+    expect(avatars.reads).toEqual([])
+  })
+
+  it('refuses a stranger and an anonymous caller before any read', async () => {
+    avatars.rows.set('x/hampfh', { contentType: 'image/jpeg', bytes: JPEG })
+    expect((await send('GET', AVATAR, STRANGER)).status).not.toBe(200)
+    expect((await send('GET', AVATAR)).status).toBe(401)
+    expect(avatars.reads).toEqual([])
   })
 })
 
@@ -425,6 +488,14 @@ describe('an OAuth grant', () => {
 
     expect(calls.reads).toBe(0)
     expect(calls.upsert).toEqual([])
+  })
+
+  it('is refused on the avatar route, which is session only', async () => {
+    avatars.rows.set('x/hampfh', { contentType: 'image/jpeg', bytes: JPEG })
+    const res = await viaGrant('GET', `/v1/sites/${SITE}/mentions/avatars/x/hampfh`)
+    expect(res.status).toBe(403)
+    expect((await errorOf(res))['code']).toBe('FORBIDDEN')
+    expect(avatars.reads).toEqual([])
   })
 
   it('may read the list', async () => {

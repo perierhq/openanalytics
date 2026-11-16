@@ -2,12 +2,12 @@
 
 import * as React from "react";
 import { relativeTime } from "@/components/dashboard/data-state";
+import { MentionAvatar } from "@/components/dashboard/mention-avatar";
 import { ExternalLinkIcon, LinkIcon } from "@/components/icons/hugeicons";
 import { Badge } from "@/components/ui/badge";
 import type { Mention } from "@/lib/api";
 import {
   formatCompact,
-  initialsOf,
   matchedTermLabel,
   mentionCounts,
 } from "@/lib/mentions";
@@ -15,10 +15,9 @@ import {
 /**
  * One post that mentions the site.
  *
- * **Nothing here loads from X.** The author's avatar would be an image from
- * X's media host, and fetching it would send every dashboard viewer's IP
- * address to X. The initials disc stands in for it; the links only leave
- * when somebody clicks them.
+ * **Nothing here loads from X.** The author's picture is the copy our API
+ * stored (`MentionAvatar` refuses any other address), with the initials disc
+ * when there is none; the links only leave when somebody clicks them.
  */
 
 const absolute = new Intl.DateTimeFormat(undefined, {
@@ -42,12 +41,7 @@ export function MentionRow({
 
   return (
     <li className="flex gap-3 py-3">
-      <span
-        aria-hidden="true"
-        className="flex size-9 shrink-0 select-none items-center justify-center rounded-full bg-black/6 text-xs font-medium text-foreground/70"
-      >
-        {initialsOf(author.name, author.handle)}
-      </span>
+      <MentionAvatar author={author} size={32} />
 
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-3">

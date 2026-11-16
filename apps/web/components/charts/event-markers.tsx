@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Popover,
@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/popover";
 import {
   bucketMarkers,
+  markerFaceMode,
   type EventMarkerBucket,
   type EventMarkerItem,
 } from "@/lib/event-markers";
@@ -29,17 +30,30 @@ import { useChartHover, useChartStable } from "./chart-context";
  * 90-bucket chart calm: the glyph says "something of this kind happened
  * here", and the popover says how much.
  *
+ * **Faces when there's room.** A kind may bring a `face`: who is behind the
+ * bucket's items (a mention's author), about 20px. With at most 45 buckets,
+ * each wide enough for one (`markerFaceMode`), the face stands in for the
+ * glyph; otherwise every kind keeps its glyph. A face keeps its kind readable
+ * without colour on its own (its ring and badge), and the button's label,
+ * hit area and focus ring are the same either way.
+ *
  * **HTML, not SVG.** The chart's `<svg>` is `aria-hidden`, so a marker drawn
  * inside it could be neither focused nor read. The markers portal into the
  * chart's container (the same door the tooltip uses) as real buttons, each
  * with a label that spells out the bucket ("Jul 12: 2 mentions, 1 sale").
  */
 
-export type EventMarkerKind = {
+export type EventMarkerKind<P = unknown> = {
   /** "2 mentions", "1 sale" — read out in the marker's label. */
   describe: (count: number) => string;
   /** The small mark drawn for this kind, about 8px. */
   glyph: ReactNode;
+  /**
+   * The bucket's items of this kind (newest first) as a face, 20px, drawn
+   * instead of the glyph when the chart has room. Decorative: the marker's
+   * label already says what is there.
+   */
+  face?: (items: readonly EventMarkerItem<string, P>[]) => ReactNode;
 };
 
 export interface EventMarkersProps<K extends string, P> {
@@ -47,25 +61,36 @@ export interface EventMarkersProps<K extends string, P> {
   /** Exclusive end of the last bucket (the range's `to`). */
   endMs: number;
   /** Kinds in stacking order, bottom first. Items of an unlisted kind are not drawn. */
-  kinds: Readonly<Record<K, EventMarkerKind>>;
+  kinds: Readonly<Record<K, EventMarkerKind<P>>>;
   /** The bucket's name in the chart's own zone and grain. */
   bucketLabel: (start: Date) => string;
   renderContent: (bucket: EventMarkerBucket<K, P>) => ReactNode;
 }
 
 const GLYPH = 8;
+const FACE = 20;
 const GLYPH_GAP = 3;
 /** Clear of the plot's bottom edge, so the glyphs sit above the axis rule. */
 const BOTTOM_INSET = 6;
 
+/**
+ * Asks once, after the first commit, whether the snapshot changed: the
+ * chart's container is attached by then, so the layer renders a second time
+ * with somewhere to portal into. Null on the server and in the first render.
+ */
+const checkAfterCommit = (onChange: () => void) => {
+  onChange();
+  return () => {};
+};
+
 export function EventMarkers<K extends string, P>(props: EventMarkersProps<K, P>) {
   const { containerRef } = useChartStable();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const container = containerRef.current;
-  if (!(mounted && container)) return null;
+  const container = useSyncExternalStore(
+    checkAfterCommit,
+    () => containerRef.current,
+    () => null
+  );
+  if (!container) return null;
   return createPortal(<EventMarkersLayer {...props} />, container);
 }
 
@@ -121,8 +146,14 @@ function EventMarkersLayer<K extends string, P>({
     onMouseEnter: () => setTooltipData(null),
   };
 
-  // Wide enough to aim at, never wider than a bucket, so neighbours don't overlap.
-  const hitWidth = Math.max(GLYPH + 4, Math.min(24, columnWidth || 24));
+  const faces = markerFaceMode(data.length, columnWidth);
+  const drawsFace = (kind: K) => faces && kinds[kind].face !== undefined;
+  // Wide enough to aim at, never wider than a bucket, so neighbours don't
+  // overlap; face mode only runs on columns wide enough for this width.
+  const hitWidth = Math.max(
+    (faces ? FACE : GLYPH) + 4,
+    Math.min(24, columnWidth || 24)
+  );
   const bottom = margin.top + innerHeight - BOTTOM_INSET;
 
   return (
@@ -130,7 +161,11 @@ function EventMarkersLayer<K extends string, P>({
       {buckets.map((bucket) => {
         const start = new Date(bucket.startMs);
         const stackHeight =
-          bucket.kinds.length * GLYPH + (bucket.kinds.length - 1) * GLYPH_GAP;
+          bucket.kinds.reduce(
+            (total, kind) => total + (drawsFace(kind) ? FACE : GLYPH),
+            0
+          ) +
+          (bucket.kinds.length - 1) * GLYPH_GAP;
         const hitHeight = stackHeight + 8;
         // The plot runs edge to edge, so the first and last buckets sit on the
         // card's edge; the centre is clamped to keep the whole mark visible.
@@ -162,16 +197,22 @@ function EventMarkersLayer<K extends string, P>({
                 gap: GLYPH_GAP,
               }}
             >
-              {bucket.kinds.map((kind) => (
-                <span
-                  aria-hidden="true"
-                  className="flex shrink-0 items-center justify-center"
-                  key={kind}
-                  style={{ width: GLYPH, height: GLYPH }}
-                >
-                  {kinds[kind].glyph}
-                </span>
-              ))}
+              {bucket.kinds.map((kind) => {
+                const face = drawsFace(kind);
+                const size = face ? FACE : GLYPH;
+                return (
+                  <span
+                    aria-hidden="true"
+                    className="flex shrink-0 items-center justify-center"
+                    key={kind}
+                    style={{ width: size, height: size }}
+                  >
+                    {face
+                      ? kinds[kind].face?.(bucket.byKind[kind] ?? [])
+                      : kinds[kind].glyph}
+                  </span>
+                );
+              })}
             </PopoverTrigger>
             <PopoverPopup
               className="w-72 max-w-[calc(100vw-2rem)]"
