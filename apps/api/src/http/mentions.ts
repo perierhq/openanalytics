@@ -282,6 +282,9 @@ export function createMentionRoutes(deps: { db: Database }): Hono<Env> {
       'cache-control': 'private, max-age=86400',
       'x-content-type-options': 'nosniff',
       'content-security-policy': "default-src 'none'",
+      // Holds even if the session cookie is configured SameSite=None: another
+      // site cannot embed the picture to learn who is a member.
+      'cross-origin-resource-policy': 'same-site',
     })
   })
 

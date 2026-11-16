@@ -70,6 +70,12 @@ const FIRST_POLL_MAX_PAGES = 3
 const LATER_POLL_MAX_PAGES = 1
 /** Author pictures downloaded per site per poll; the rest wait for the next. */
 const AVATARS_PER_SITE = 10
+/**
+ * How long a picture that failed to download is left alone. Without it, an
+ * author whose picture always fails (too large, not an image, gone) would take
+ * one of the site's slots on every poll and could keep working ones out.
+ */
+const AVATAR_FAILURE_BACKOFF_MS = 24 * 60 * 60_000
 
 export interface MentionsPollDeps {
   readonly db: Database
@@ -85,6 +91,12 @@ export interface MentionsPollDeps {
   readonly pauseMs?: number
   readonly tickMs?: number
   readonly now?: () => Date
+  /**
+   * When each `siteId:handle` picture last failed, kept for the life of the
+   * process by `startMentionsPoller`. Memory only: a restart forgets it, which
+   * costs one more attempt per author.
+   */
+  readonly avatarFailures?: Map<string, number>
   /** Resolves after `ms`, or as soon as `signal` aborts. */
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
   /** True once `stop()` was called: checked before every search and pause. */
@@ -343,9 +355,13 @@ async function refreshSiteAvatars(
         row,
       ]),
     )
-    const staleBefore = pacing.now().getTime() - MENTION_AVATAR_MAX_AGE_MS
+    const nowMs = pacing.now().getTime()
+    const staleBefore = nowMs - MENTION_AVATAR_MAX_AGE_MS
+    const failures = deps.avatarFailures
     const due = [...authors]
       .filter(([handle, sourceUrl]) => {
+        const failedAt = failures?.get(`${siteId}:${handle}`)
+        if (failedAt !== undefined && nowMs - failedAt < AVATAR_FAILURE_BACKOFF_MS) return false
         const held = stored.get(handle)
         return (
           held === undefined ||
@@ -369,8 +385,10 @@ async function refreshSiteAvatars(
       if (pacing.isStopped()) break
       if (!result.ok) {
         count(result.reason)
+        failures?.set(`${siteId}:${handle}`, pacing.now().getTime())
         continue
       }
+      failures?.delete(`${siteId}:${handle}`)
       await upsertMentionAvatar(deps.db, {
         siteId,
         platform: 'x',
@@ -422,12 +440,18 @@ export function startMentionsPoller(deps: MentionsPollDeps): MentionsPoller {
   let running = false
   let stopped = false
   const controller = new AbortController()
+  const avatarFailures = new Map<string, number>()
 
   const tick = async (): Promise<void> => {
     if (running || stopped) return
     running = true
     try {
-      await pollMentionsOnce({ ...deps, stopped: () => stopped, signal: controller.signal })
+      await pollMentionsOnce({
+        ...deps,
+        avatarFailures,
+        stopped: () => stopped,
+        signal: controller.signal,
+      })
     } catch (err) {
       deps.logger.error('mentions_poll_tick_failed', { ...dbErrorFacts(err), retryable: true })
     } finally {

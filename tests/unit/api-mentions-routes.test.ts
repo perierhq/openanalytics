@@ -433,6 +433,7 @@ describe('GET /mentions/avatars/{platform}/{handle}', () => {
     expect(res.headers.get('cache-control')).toBe('private, max-age=86400')
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
     expect(res.headers.get('content-security-policy')).toBe("default-src 'none'")
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('same-site')
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(JPEG)
     expect(avatars.reads).toEqual([{ siteId: SITE, platform: 'x', handle: 'hampfh' }])
   })
@@ -456,7 +457,9 @@ describe('GET /mentions/avatars/{platform}/{handle}', () => {
 
   it('refuses a stranger and an anonymous caller before any read', async () => {
     avatars.rows.set('x/hampfh', { contentType: 'image/jpeg', bytes: JPEG })
-    expect((await send('GET', AVATAR, STRANGER)).status).not.toBe(200)
+    const stranger = await send('GET', AVATAR, STRANGER)
+    expect(stranger.status).toBe(404)
+    expect((await errorOf(stranger))['code']).toBe('SITE_NOT_FOUND')
     expect((await send('GET', AVATAR)).status).toBe(401)
     expect(avatars.reads).toEqual([])
   })

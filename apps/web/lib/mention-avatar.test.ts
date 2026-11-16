@@ -30,6 +30,10 @@ describe("a mention author's picture address", () => {
       "//pbs.twimg.com/profile_images/1/ada_normal.jpg",
       "https://x.com/ada/photo",
       "https://abs.twimg.com/a.png",
+      "/\\pbs.twimg.com/profile_images/1/ada_normal.jpg",
+      "/\t/pbs.twimg.com/profile_images/1/ada_normal.jpg",
+      "/\n/pbs.twimg.com/profile_images/1/ada_normal.jpg",
+      "/v1/sites/s1/mentions/avatars/x/../../../../x",
     ]) {
       expect(mentionAvatarSrc(url, { apiBase: API })).toBeNull()
       expect(mentionAvatarSrc(url, { apiBase: "" })).toBeNull()

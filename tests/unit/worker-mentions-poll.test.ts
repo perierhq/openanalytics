@@ -313,6 +313,36 @@ describe('author pictures', () => {
     expect(state.avatarUpserts.map((u) => u.handle)).toEqual(handles.slice(0, 10))
   })
 
+  it('skips a picture that failed for a day, so it cannot hold a slot every poll', async () => {
+    state.due = [target(polledBefore)]
+    const handles = Array.from({ length: 11 }, (_, i) => `author${String(i)}`)
+    const { client } = scriptedClient(() => authorsPage(handles.map((handle) => ({ handle }))))
+    // author0 always fails; the rest succeed.
+    const avatars = avatarClient((url) =>
+      url === avatarOf('author0')
+        ? { ok: false, reason: 'too_large' }
+        : { ok: true, contentType: 'image/jpeg', bytes: JPEG },
+    )
+    const avatarFailures = new Map<string, number>()
+    const first = deps(client, undefined, avatars.client).deps
+    await pollMentionsOnce({ ...first, avatarFailures })
+    expect(avatars.calls.map((c) => c.url)).toContain(avatarOf('author0'))
+    expect(avatars.calls).toHaveLength(10)
+
+    // Next poll, an hour later: author0 is skipped, so author10 gets its slot.
+    avatars.calls.length = 0
+    const hourLater = new Date(NOW.getTime() + 60 * 60_000)
+    await pollMentionsOnce({ ...first, now: () => hourLater, avatarFailures })
+    expect(avatars.calls.map((c) => c.url)).not.toContain(avatarOf('author0'))
+    expect(avatars.calls.map((c) => c.url)).toContain(avatarOf('author10'))
+
+    // A day after the failure it is tried again.
+    avatars.calls.length = 0
+    const dayLater = new Date(NOW.getTime() + DAY + 60_000)
+    await pollMentionsOnce({ ...first, now: () => dayLater, avatarFailures })
+    expect(avatars.calls.map((c) => c.url)).toContain(avatarOf('author0'))
+  })
+
   it('never fails the poll or touches last_error when a picture fails', async () => {
     state.due = [target(polledBefore)]
     const { client } = scriptedClient(() =>

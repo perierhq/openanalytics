@@ -30,13 +30,20 @@ function originOf(url: string): string | null {
   }
 }
 
+/**
+ * The only relative shape the API emits. Matching it exactly, rather than
+ * "starts with one slash", also refuses paths a browser would resolve to
+ * another host, such as `/\\host` or a slash, a tab and a slash.
+ */
+const API_AVATAR_PATH = /^\/v1\/sites\/[A-Za-z0-9_-]+\/mentions\/avatars\/x\/[A-Za-z0-9_]{1,15}$/;
+
 export function mentionAvatarSrc(
   avatarUrl: string | null | undefined,
   { apiBase, allowDataUrls = false }: MentionAvatarSrcOptions
 ): string | null {
   if (!avatarUrl) return null;
 
-  if (avatarUrl.startsWith("/") && !avatarUrl.startsWith("//")) {
+  if (API_AVATAR_PATH.test(avatarUrl)) {
     return `${apiBase.replace(/\/+$/, "")}${avatarUrl}`;
   }
 
