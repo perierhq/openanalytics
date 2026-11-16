@@ -12,12 +12,14 @@ import {
 } from "@/components/dashboard/analytics-card";
 import { CustomEventsModal } from "@/components/dashboard/custom-events-modal";
 import { HoverList, HoverRow } from "@/components/dashboard/hover-list";
+import { RowBar } from "@/components/dashboard/row-bar";
 import {
   SquircleCard,
   SquircleCardScroll,
 } from "@/components/ui/squircle-card";
 import { getAnalyticsCustomEvents } from "@/lib/api";
 import { MOCK_CUSTOM_EVENTS } from "@/lib/mock";
+import { trafficBars } from "@/lib/row-bars";
 
 /**
  * Custom events, from `GET /v1/sites/{site_id}/analytics/custom-events`.
@@ -63,11 +65,17 @@ export function CustomEventsCard() {
           isEmpty={(data) => data.items.length === 0}
           resource={resource}
         >
-          {(data) => (
+          {(data) => {
+            // The bar follows the number the row leads with: events.
+            const bar = trafficBars(data.items.map((row) => row.events));
+            return (
             <SquircleCardScroll>
               <HoverList>
                 {data.items.map((row) => (
-                  <HoverRow key={`${row.event_name}-${row.event_type}`}>
+                  <HoverRow
+                    backdrop={<RowBar segments={bar(row.events)} />}
+                    key={`${row.event_name}-${row.event_type}`}
+                  >
                     <div className="flex items-center justify-between gap-4 px-5 py-1.5">
                       <span className="flex min-w-0 flex-1 items-center gap-2">
                         {/* The definition's label when one exists; the raw
@@ -95,13 +103,13 @@ export function CustomEventsCard() {
                       </span>
                       <span className="flex items-baseline gap-2">
                         <span
-                          className="text-sm tabular-nums text-muted-foreground"
+                          className="text-sm tabular-nums text-foreground/80"
                           title="Events"
                         >
                           {row.events.toLocaleString("en-US")}
                         </span>
                         <span
-                          className="w-14 text-right text-xs tabular-nums text-muted-foreground/70"
+                          className="w-14 text-right text-xs tabular-nums text-foreground/70"
                           title="Unique visitors"
                         >
                           {row.visitors.toLocaleString("en-US")}
@@ -112,7 +120,8 @@ export function CustomEventsCard() {
                 ))}
               </HoverList>
             </SquircleCardScroll>
-          )}
+            );
+          }}
         </AnalyticsCardBody>
       </SquircleCard>
 

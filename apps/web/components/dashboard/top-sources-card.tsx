@@ -1,15 +1,9 @@
 "use client";
 
-import {
-  ArrowDown01Icon,
-  ArrowRight02Icon,
-  Globe02Icon,
-  Target02Icon,
-} from "hugeicons-react";
+import { ArrowDown01Icon, Globe02Icon } from "hugeicons-react";
 import { AnimatePresence, motion } from "motion/react";
 import * as React from "react";
 import { usePublishPosterSources } from "@/components/dashboard/poster-publishers";
-import { Favicon } from "@/components/dashboard/site-favicon";
 import {
   AnalyticsCardBody,
   breakdownShare,
@@ -31,8 +25,33 @@ import {
   SquircleCard,
   SquircleCardScroll,
 } from "@/components/ui/squircle-card";
-import type { AnalyticsMeta, SourceRow } from "@/lib/api";
-import { resolveReferrer } from "@/lib/referrers";
+import {
+  RowRevenueCaveat,
+  rowRevenueProps,
+  RowSortToggle,
+  useRowRevenue,
+} from "@/components/dashboard/row-revenue";
+import type {
+  AnalyticsMeta,
+  RevenueAttributionDimension,
+  SourceRow,
+} from "@/lib/api";
+import { stackedBars } from "@/lib/row-bars";
+import {
+  foldReferrers,
+  foldUtm,
+  type FoldedRow,
+} from "@/lib/source-rows";
+import { sourceMark } from "@/components/dashboard/source-mark";
+import {
+  hasUnconvertedOrders,
+  revenueOf,
+  rowRevenueAmount,
+  seeAllColumns,
+  sortRows,
+  type RowRevenue,
+  type RowSort,
+} from "@/lib/row-revenue";
 
 /**
  * Acquisition, from `GET /v1/sites/{site_id}/analytics/sources`. The contract
@@ -52,124 +71,91 @@ import { resolveReferrer } from "@/lib/referrers";
  * The read itself is shared with the AI referrals card through
  * `SourcesProvider` (sources-resource.tsx): both fold the same response,
  * and the overview fetches it once.
+ *
+ * For a site's owner with a connected provider, each cut also shows the
+ * last-touch revenue its rows brought (`lib/row-revenue.ts`): a green part on
+ * the row's bar, the amount beside its visitors, and a header toggle that
+ * ranks the rows by it. Anyone else, a failed read, or a cut where no row
+ * earned anything shows the card exactly as it was.
  */
 
 const SPRING = { type: "spring", stiffness: 550, damping: 38 } as const;
 
 type SourceView = "referrers" | "utm_campaign" | "utm_source" | "utm_medium";
 
-const VIEWS: { id: SourceView; label: string; empty: string }[] = [
+const VIEWS: {
+  id: SourceView;
+  label: string;
+  empty: string;
+  /** The attribution dimension whose revenue joins onto this cut's rows. */
+  revenue: RevenueAttributionDimension;
+}[] = [
   {
     id: "referrers",
     label: "Referrers",
     empty: "No referrers in this range yet.",
+    revenue: "referrer_domain",
   },
   {
     id: "utm_campaign",
     label: "Campaigns",
     empty: "No campaign-tagged visits in this range.",
+    revenue: "utm_campaign",
   },
   {
     id: "utm_source",
     label: "UTM sources",
     empty: "No utm_source-tagged visits in this range.",
+    revenue: "utm_source",
   },
   {
     id: "utm_medium",
     label: "UTM medium",
     empty: "No utm_medium-tagged visits in this range.",
+    revenue: "utm_medium",
   },
 ];
 
-export type FoldedRow = {
-  label: string;
-  /** Canonical domain for the favicon — referrers view only. */
-  domain: string | null;
-  direct: boolean;
-  views: number;
-  visitors: number;
-  /**
-   * The raw `referrer_domain` values this row folded together, and what a
-   * click filters by. The filter matches the canonical host exactly
-   * (ADR-0075), and folding is by display name, which can merge more than
-   * one host under one label; filtering by every host the row actually
-   * holds is the only way the filtered numbers describe the row that was
-   * clicked. Direct's raw value is the contract's own `""`.
-   */
-  raw: string[];
-};
-
-/** The referrer dimension: every row's domain, "" folding into Direct. */
-export function foldReferrers(items: SourceRow[]): FoldedRow[] {
-  const byLabel = new Map<string, FoldedRow>();
-  for (const row of items) {
-    const source = row.referrer_domain
-      ? resolveReferrer(row.referrer_domain)
-      : null;
-    const label = source?.name ?? "Direct / none";
-    const bucket = byLabel.get(label) ?? {
-      label,
-      domain: source?.domain ?? null,
-      direct: source === null,
-      views: 0,
-      visitors: 0,
-      raw: [],
-    };
-    bucket.views += row.views;
-    bucket.visitors += row.visitors;
-    if (!bucket.raw.includes(row.referrer_domain)) {
-      bucket.raw.push(row.referrer_domain);
-    }
-    byLabel.set(label, bucket);
-  }
-  return [...byLabel.values()].sort(byVisitors);
+/** One cut of the tuple list, ranked by visitors. */
+function foldView(items: SourceRow[], view: SourceView): FoldedRow[] {
+  return view === "referrers" ? foldReferrers(items) : foldUtm(items, view);
 }
 
-/** Ranked by the shown number, views breaking ties (see the file comment). */
-function byVisitors(a: FoldedRow, b: FoldedRow): number {
-  return b.visitors - a.visitors || b.views - a.views;
+/**
+ * The rows as the card draws them: ranked by `sort`, and the bar behind each,
+ * its revenue segment only while revenue is shown. The row's label is its
+ * revenue key (referrers fold by label, utm values are the label).
+ */
+function rankRows(
+  rows: FoldedRow[],
+  revenue: RowRevenue | null,
+  sort: RowSort
+) {
+  const revenueMinor = (row: FoldedRow) =>
+    revenueOf(revenue, row.label)?.revenueMinor ?? 0;
+  const ranked = sortRows(rows, revenue === null ? "visitors" : sort, {
+    traffic: (row) => row.visitors,
+    revenue: revenueMinor,
+  });
+  const bars = stackedBars(
+    ranked.map((row) => ({
+      traffic: row.visitors,
+      revenue: revenue === null ? null : revenueMinor(row),
+    })),
+    revenue !== null && sort === "revenue" ? "revenue" : "traffic"
+  );
+  return ranked.map((row, index) => ({ row, bar: bars[index] ?? [] }));
 }
 
-/** One utm dimension: tagged rows only — untagged traffic is not "(none)",
- *  it simply is not part of this cut. */
-function foldUtm(
-  items: SourceRow[],
-  key: "utm_source" | "utm_medium" | "utm_campaign"
-): FoldedRow[] {
-  const byLabel = new Map<string, FoldedRow>();
-  for (const row of items) {
-    const value = row[key].trim();
-    if (value === "") continue;
-    const bucket = byLabel.get(value) ?? {
-      label: value,
-      domain: null,
-      direct: false,
-      views: 0,
-      visitors: 0,
-      raw: [],
-    };
-    bucket.views += row.views;
-    bucket.visitors += row.visitors;
-    byLabel.set(value, bucket);
-  }
-  return [...byLabel.values()].sort(byVisitors);
-}
-
-/** Favicon for a real referrer, the arrow for Direct, a target for utm. */
-export function sourceMark(row: FoldedRow): React.ReactNode {
-  if (row.domain !== null) {
-    return (
-      <Favicon
-        key={row.domain}
-        domain={row.domain}
-        className="size-4 rounded-full border border-border/60 object-cover"
-      />
-    );
-  }
-  if (row.direct) {
-    return <ArrowRight02Icon className="size-3.5 text-muted-foreground/70" />;
-  }
-  return <Target02Icon className="size-3.5 text-muted-foreground/70" />;
+/** Revenue only when at least one row of the cut has some to show. */
+function shownRevenue(
+  rows: FoldedRow[] | null,
+  revenue: RowRevenue | null
+): RowRevenue | null {
+  if (rows === null || revenue === null) return null;
+  return rows.some((row) => revenueOf(revenue, row.label) !== null)
+    ? revenue
+    : null;
 }
 
 export function TopSourcesCard() {
@@ -177,7 +163,18 @@ export function TopSourcesCard() {
   const resource = useSourcesResource();
   const [view, setView] = React.useState<SourceView>("referrers");
   const [open, setOpen] = React.useState(false);
+  const [sort, setSort] = React.useState<RowSort>("visitors");
   const current = VIEWS.find((entry) => entry.id === view) ?? VIEWS[0];
+
+  // Owner-only revenue beside the visitors; `null` for everyone else, for a
+  // failed read, and for a cut none of whose rows earned anything.
+  const rowRevenue = useRowRevenue(current.revenue);
+  const folded = React.useMemo(
+    () =>
+      resource.status === "ready" ? foldView(resource.data.items, view) : null,
+    [resource, view]
+  );
+  const revenue = shownRevenue(folded, rowRevenue);
 
   // The referrer fold for the share poster, whatever cut the header shows:
   // the poster prints referrers, and the fold reads the same tuple list.
@@ -203,6 +200,21 @@ export function TopSourcesCard() {
     <SquircleCard
       onSeeAll={() => setOpen(true)}
       icon={<Globe02Icon aria-hidden="true" />}
+      titleAside={
+        revenue !== null ? (
+          <RowRevenueCaveat
+            unconverted={hasUnconvertedOrders(
+              revenue,
+              (folded ?? []).map((row) => row.label)
+            )}
+          />
+        ) : undefined
+      }
+      actions={
+        revenue !== null ? (
+          <RowSortToggle onSort={setSort} sort={sort} />
+        ) : undefined
+      }
       title={
         <DropdownMenu
           align="start"
@@ -249,10 +261,7 @@ export function TopSourcesCard() {
         resource={resource}
       >
         {(data) => {
-          const rows =
-            view === "referrers"
-              ? foldReferrers(data.items)
-              : foldUtm(data.items, view);
+          const rows = folded ?? foldView(data.items, view);
           const share = breakdownShare(
             rows.map((row) => row.visitors),
             data.meta.truncated
@@ -274,8 +283,10 @@ export function TopSourcesCard() {
                 ) : (
                   <SquircleCardScroll>
                     <HoverList>
-                      {rows.map((row) => (
+                      {rankRows(rows, revenue, sort).map(({ row, bar }) => (
                         <BreakdownRow
+                          {...rowRevenueProps(revenue, row.label)}
+                          bar={bar}
                           icon={sourceMark(row)}
                           key={row.label}
                           name={row.label}
@@ -317,6 +328,8 @@ export function TopSourcesCard() {
         <SourcesModal
           items={resource.status === "ready" ? resource.data.items : null}
           meta={resource.status === "ready" ? resource.data.meta : null}
+          revenue={revenue}
+          sort={sort}
           view={view}
           onClose={() => setOpen(false)}
         />
@@ -330,23 +343,24 @@ export function TopSourcesCard() {
 function SourcesModal({
   items,
   meta,
+  revenue,
+  sort,
   view,
   onClose,
 }: {
   items: SourceRow[] | null;
   /** Read for `truncated` alone: a share of a capped row set is inflated. */
   meta: AnalyticsMeta | null;
+  /** The card's revenue, when it shows any: a Revenue column here. */
+  revenue: RowRevenue | null;
+  /** The card's order, so the modal continues the list the card began. */
+  sort: RowSort;
   view: SourceView;
   onClose: () => void;
 }) {
   const intervalLabel = useIntervalLabel();
   const current = VIEWS.find((entry) => entry.id === view) ?? VIEWS[0];
-  const rows =
-    items === null
-      ? null
-      : view === "referrers"
-        ? foldReferrers(items)
-        : foldUtm(items, view);
+  const rows = items === null ? null : foldView(items, view);
   const share = breakdownShare(
     rows === null ? [] : rows.map((row) => row.visitors),
     meta?.truncated ?? false
@@ -365,19 +379,72 @@ function SourcesModal({
           {current.empty}
         </p>
       ) : (
-        // the shared white glide, rounded for the grey band
-        <HoverList className="[&>li>span]:rounded-[10px]">
-          {rows.map((row) => (
-            <BreakdownRow
-              icon={sourceMark(row)}
-              key={row.label}
-              name={row.label}
-              pct={share(row.visitors)}
-              value={row.visitors.toLocaleString("en-US")}
+        <div>
+          {revenue !== null ? (
+            <SourcesColumns
+              columns={seeAllColumns("sources", true)}
+              pct={rows.some((row) => share(row.visitors) !== undefined)}
             />
-          ))}
-        </HoverList>
+          ) : null}
+          {/* the shared white glide, rounded for the grey band */}
+          <HoverList className="[&>li>span]:rounded-[10px]">
+            {rankRows(rows, revenue, sort).map(({ row, bar }) => (
+              <BreakdownRow
+                bar={bar}
+                icon={sourceMark(row)}
+                key={row.label}
+                name={row.label}
+                pct={share(row.visitors)}
+                revenue={
+                  revenue === null
+                    ? undefined
+                    : rowRevenueAmount(
+                        revenueOf(revenue, row.label),
+                        revenue.currency
+                      )
+                }
+                value={row.visitors.toLocaleString("en-US")}
+              />
+            ))}
+          </HoverList>
+        </div>
       )}
     </SeeAllModal>
+  );
+}
+
+/**
+ * The modal's column captions, once above the rows. The first number column
+ * is the visitors with their share beside it (the `w-10` spacer, when the rows
+ * print one), then the revenue column at the row's own `w-14`.
+ */
+function SourcesColumns({
+  columns,
+  pct,
+}: {
+  columns: string[];
+  pct: boolean;
+}) {
+  const [first, ...rest] = columns;
+  return (
+    <div className="flex items-center justify-between gap-4 pb-1.5 pl-4.5 pr-5">
+      <span className="text-xs font-medium text-muted-foreground/70">
+        Source
+      </span>
+      <span className="flex items-baseline gap-2">
+        <span className="text-xs font-medium text-muted-foreground/70">
+          {first}
+        </span>
+        {pct ? <span aria-hidden="true" className="w-10" /> : null}
+        {rest.map((column) => (
+          <span
+            className="w-14 text-right text-xs font-medium text-muted-foreground/70"
+            key={column}
+          >
+            {column}
+          </span>
+        ))}
+      </span>
+    </div>
   );
 }

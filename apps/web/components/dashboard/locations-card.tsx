@@ -33,6 +33,7 @@ import {
   type GeographyRow,
 } from "@/lib/api";
 import { MOCK_GEOGRAPHY } from "@/lib/mock";
+import { trafficBars } from "@/lib/row-bars";
 
 /**
  * Locations, from `GET /v1/sites/{site_id}/analytics/geography`. The contract
@@ -201,6 +202,7 @@ export function LocationsCard() {
             places.map((place) => place.visitors),
             data.meta.truncated
           );
+          const bar = trafficBars(places.map((place) => place.visitors));
           return (
             <AnimatePresence initial={false} mode="wait">
               <motion.div
@@ -263,6 +265,7 @@ export function LocationsCard() {
                                   )
                               : undefined
                           }
+                          bar={bar(place.visitors)}
                           pct={share(place.visitors)}
                           value={place.visitors.toLocaleString("en-US")}
                         />
@@ -315,6 +318,7 @@ function LocationsModal({
     places === null ? [] : places.map((place) => place.visitors),
     meta?.truncated ?? false
   );
+  const bar = trafficBars(places === null ? [] : places.map((place) => place.visitors));
 
   return (
     <SeeAllModal
@@ -349,6 +353,7 @@ function LocationsModal({
                     ? countryName(place.country)
                     : place.label
                 }
+                bar={bar(place.visitors)}
                 pct={share(place.visitors)}
                 value={place.visitors.toLocaleString("en-US")}
               />

@@ -51,6 +51,12 @@ export default function DashboardDocsPage() {
       </DocSection>
 
       <DocSection title="The breakdowns">
+        <p>
+          Every row has a bar behind it, as long as the row&apos;s number
+          against the biggest row in the list. The percentage beside it is the
+          row&apos;s share of all the rows, so the first bar is always full and
+          its percentage usually is not.
+        </p>
         <DocHeading>Pages</DocHeading>
         <p>
           Top paths by pageviews, with entries and exits, so you can see where
@@ -68,6 +74,20 @@ export default function DashboardDocsPage() {
           (just below) is how you give those a name. See{" "}
           <DocLink slug="troubleshooting">troubleshooting</DocLink> if a number
           looks lower than another tool&apos;s.
+        </p>
+        <p>
+          If you own the site and a payment provider is connected, the Sources
+          card and the Entry pages cut of the Pages card also show revenue: a
+          green part on each row&apos;s bar and the amount beside its number,
+          with a toggle in the header to rank the rows by revenue instead. The
+          revenue, renewals included, goes to the source or entry page of the
+          buyer&apos;s last visit before the purchase. Hover or focus a row for
+          its revenue and buyers and, for ranges up to 92 days, the visitors
+          whose visit started there and the revenue per visitor. Orders in a
+          currency with no exchange rate are left out, and the row says how
+          many. Revenue is hidden while a filter is on, because revenue cannot
+          be filtered, and for ranges over 400 days. See{" "}
+          <DocLink slug="revenue">revenue</DocLink>.
         </p>
         <DocHeading>AI referrals</DocHeading>
         <p>

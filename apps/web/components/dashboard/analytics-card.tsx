@@ -10,7 +10,6 @@ import {
   FreshnessChip,
   ProvenanceChips,
 } from "@/components/dashboard/data-state";
-import { HoverRow } from "@/components/dashboard/hover-list";
 import { useAnalyticsInterval } from "@/components/dashboard/interval-context";
 import { SkeletonReveal } from "@/components/ui/skeleton-reveal";
 import { useSquircleCardHeaderChip } from "@/components/ui/squircle-card";
@@ -225,9 +224,9 @@ export function AnalyticsCardBody<
  * **The denominator is the sum of the rows, never the largest of them.** Scaling
  * to the largest row makes the first row read `100%` on every card in the
  * dashboard, which says "all of your traffic came from here" about a row that
- * might hold a third of it. That would be a bar's scale, and these rows have no
- * bar: `pct` is printed as a number, and a printed number has to be true on its
- * own.
+ * might hold a third of it. That is the bar's scale (`barScale`), and the bar
+ * is drawn as one: `pct` is printed as a number, and a printed number has to be
+ * true on its own.
  *
  * **`undefined` when the gateway capped the row set.** Then the sum is a sum of
  * what came back rather than of what exists, and every share computed from it is
@@ -250,93 +249,4 @@ export function breakdownShare(
   return (value: number) => Math.round((value / total) * 100);
 }
 
-/** Shared row for simple name/value breakdowns (moved off the mock page). */
-export function BreakdownRow({
-  name,
-  value,
-  pct,
-  icon,
-  onSelect,
-}: {
-  name: string;
-  value: string;
-  pct?: number;
-  /** A real mark (flag, favicon, browser glyph) in place of the dot. Sits
-   *  in a fixed 16px box so mixed marks in one list stay aligned. */
-  icon?: React.ReactNode;
-  /**
-   * Makes the row a filter door: the whole row becomes a button, the name
-   * underlines under the pointer so the affordance is visible before the
-   * press, and the press adds this row's value to the chip row (ADR-0075:
-   * row → chip is the entire discovery mechanism, there is no separate
-   * filter picker). Absent, the row renders exactly as before, which is
-   * what every non-filterable cut (UTM views, browsers, OS) passes.
-   */
-  onSelect?: () => void;
-}) {
-  const body = (
-    <>
-      <span className="flex min-w-0 flex-1 items-center gap-3">
-        {icon !== undefined ? (
-          <span
-            aria-hidden="true"
-            className="flex size-4 shrink-0 items-center justify-center"
-          >
-            {icon}
-          </span>
-        ) : (
-          <span
-            aria-hidden="true"
-            className="size-2 shrink-0 rounded-full bg-primary/50 transition-colors group-hover:bg-primary"
-          />
-        )}
-        <span
-          className={
-            "truncate text-sm" +
-            (onSelect !== undefined
-              ? " underline-offset-2 group-hover:underline"
-              : "")
-          }
-        >
-          {name}
-        </span>
-      </span>
-      <span className="flex items-baseline gap-2">
-        <span className="text-sm tabular-nums text-muted-foreground">
-          {value}
-        </span>
-        {pct !== undefined && (
-          <span className="w-10 text-right text-xs tabular-nums text-muted-foreground/70">
-            {pct}%
-          </span>
-        )}
-      </span>
-    </>
-  );
-
-  /* pl-4.5 with a mark: the 16px mark's centre lands a hair right of
-     the dots' centre, tuned by eye against the header icon. */
-  const rowClass =
-    "flex items-center justify-between gap-4 py-1.5 pr-5 " +
-    (icon !== undefined ? "pl-4.5" : "pl-5");
-
-  return (
-    <HoverRow>
-      {onSelect !== undefined ? (
-        <button
-          aria-label={`Filter by ${name}`}
-          className={
-            rowClass +
-            " w-full cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          }
-          onClick={onSelect}
-          type="button"
-        >
-          {body}
-        </button>
-      ) : (
-        <div className={rowClass}>{body}</div>
-      )}
-    </HoverRow>
-  );
-}
+export { BreakdownRow } from "@/components/dashboard/breakdown-row";

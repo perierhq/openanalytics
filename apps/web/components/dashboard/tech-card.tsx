@@ -36,6 +36,7 @@ import {
   type DeviceRow,
 } from "@/lib/api";
 import { MOCK_DEVICES } from "@/lib/mock";
+import { trafficBars } from "@/lib/row-bars";
 
 /**
  * Device types, browsers and operating systems: three cuts of one
@@ -197,6 +198,7 @@ export function TechCard() {
               rows.map((row) => row.visitors),
               data.meta.truncated
             );
+            const bar = trafficBars(rows.map((row) => row.visitors));
             return (
               <AnimatePresence initial={false} mode="wait">
                 <motion.div
@@ -240,6 +242,7 @@ export function TechCard() {
                               ? () => addFilter("device_type", row.label)
                               : undefined
                           }
+                          bar={bar(row.visitors)}
                           pct={share(row.visitors)}
                           value={row.visitors.toLocaleString("en-US")}
                         />
@@ -287,6 +290,7 @@ function TechModal({
     rows === null ? [] : rows.map((row) => row.visitors),
     meta?.truncated ?? false
   );
+  const bar = trafficBars(rows === null ? [] : rows.map((row) => row.visitors));
 
   return (
     <SeeAllModal
@@ -312,6 +316,7 @@ function TechModal({
                 icon={rowMark(view, row.label)}
                 key={row.label}
                 name={rowName(view, row.label)}
+                bar={bar(row.visitors)}
                 pct={share(row.visitors)}
                 value={row.visitors.toLocaleString("en-US")}
               />

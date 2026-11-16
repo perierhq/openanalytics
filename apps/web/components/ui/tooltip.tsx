@@ -23,6 +23,8 @@ export function TooltipPopup({
   align = "center",
   sideOffset = 4,
   side = "top",
+  collisionPadding,
+  collisionAvoidance,
   anchor,
   children,
   portalProps,
@@ -31,6 +33,8 @@ export function TooltipPopup({
   align?: TooltipPrimitive.Positioner.Props["align"];
   side?: TooltipPrimitive.Positioner.Props["side"];
   sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
+  collisionPadding?: TooltipPrimitive.Positioner.Props["collisionPadding"];
+  collisionAvoidance?: TooltipPrimitive.Positioner.Props["collisionAvoidance"];
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
   portalProps?: TooltipPrimitive.Portal.Props;
 }): React.ReactElement {
@@ -39,6 +43,8 @@ export function TooltipPopup({
       <TooltipPrimitive.Positioner
         align={align}
         anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
+        collisionPadding={collisionPadding}
         className="z-50 h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none"
         data-slot="tooltip-positioner"
         side={side}

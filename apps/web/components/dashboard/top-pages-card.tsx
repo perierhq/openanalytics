@@ -7,9 +7,14 @@ import {
   AnalyticsCardBody,
   useSiteAnalytics,
 } from "@/components/dashboard/analytics-card";
+import {
+  BreakdownRow,
+  RevenueAmount,
+} from "@/components/dashboard/breakdown-row";
 import { useAnalyticsFilters } from "@/components/dashboard/filter-context";
 import { usePublishPosterPages } from "@/components/dashboard/poster-publishers";
 import { HoverList, HoverRow } from "@/components/dashboard/hover-list";
+import { RowBar } from "@/components/dashboard/row-bar";
 import {
   SeeAllModal,
   SeeAllSkeleton,
@@ -19,6 +24,12 @@ import {
   DropdownMenu,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import {
+  RowRevenueCaveat,
+  rowRevenueProps,
+  RowSortToggle,
+  useRowRevenue,
+} from "@/components/dashboard/row-revenue";
 import {
   SquircleCard,
   SquircleCardScroll,
@@ -30,6 +41,16 @@ import {
   type PagesSort,
 } from "@/lib/api";
 import { MOCK_PAGES } from "@/lib/mock";
+import { stackedBars } from "@/lib/row-bars";
+import {
+  hasUnconvertedOrders,
+  revenueOf,
+  rowRevenueAmount,
+  seeAllColumns,
+  sortRows,
+  type RowRevenue,
+  type RowSort,
+} from "@/lib/row-revenue";
 
 /**
  * Top pages, from `GET /v1/sites/{site_id}/analytics/pages`, and, behind
@@ -49,6 +70,11 @@ import { MOCK_PAGES } from "@/lib/mock";
  * that does not ask. `0` is a measurement: no session began or ended here.
  * The two render differently on purpose: a dash for null, a zero for zero.
  *
+ * **Entry pages carry revenue** for a site's owner: the last-touch revenue of
+ * the visits that began on the page, as on the Sources card
+ * (`lib/row-revenue.ts`). Only that cut: revenue is about where a buyer's
+ * visit began, which says nothing about a page's views or its exits.
+ *
  * Brings its own SquircleCard: the header carries the cut picker and
  * "See all" opens the vertical modal, both of which need card state.
  */
@@ -63,7 +89,6 @@ const VIEWS: {
   sort: PagesSort;
   /** What the number column holds in this cut. */
   measure: (page: PageRow) => number | null;
-  modalColumns: [string, string];
 }[] = [
   {
     id: "pages",
@@ -74,21 +99,18 @@ const VIEWS: {
     // wherever it honestly can.
     sort: "views",
     measure: (page) => page.visitors,
-    modalColumns: ["Views", "Visitors"],
   },
   {
     id: "entries",
     label: "Entry pages",
     sort: "entrances",
     measure: (page) => page.entrances,
-    modalColumns: ["Entries", "Bounce"],
   },
   {
     id: "exits",
     label: "Exit pages",
     sort: "exits",
     measure: (page) => page.exits,
-    modalColumns: ["Exits", "Views"],
   },
 ];
 
@@ -118,6 +140,20 @@ export function TopPagesCard() {
     sort: current.sort,
   });
   const [open, setOpen] = React.useState(false);
+  const [sort, setSort] = React.useState<RowSort>("visitors");
+
+  // Revenue is about where visits began, so only the Entry pages cut reads
+  // it (owner-only; `null` for everyone else and on any failure).
+  const rowRevenue = useRowRevenue(view === "entries" ? "entry_page" : null);
+  const revenue =
+    view === "entries" &&
+    rowRevenue !== null &&
+    resource.status === "ready" &&
+    resource.data.items.some(
+      (page) => revenueOf(rowRevenue, page.page_path) !== null
+    )
+      ? rowRevenue
+      : null;
 
   // The views ranking for the share poster, and only that: the read is
   // cut by the header's sort, and a top-N by exits is not a top pages list.
@@ -165,6 +201,26 @@ export function TopPagesCard() {
       <SquircleCard
         icon={<File01Icon aria-hidden="true" />}
         onSeeAll={() => setOpen(true)}
+        titleAside={
+          revenue !== null && resource.status === "ready" ? (
+            <RowRevenueCaveat
+              entryPages
+              unconverted={hasUnconvertedOrders(
+                revenue,
+                resource.data.items.map((page) => page.page_path)
+              )}
+            />
+          ) : undefined
+        }
+        actions={
+          revenue !== null ? (
+            <RowSortToggle
+              onSort={setSort}
+              sort={sort}
+              trafficLabel="Entries"
+            />
+          ) : undefined
+        }
         title={
           <DropdownMenu
             align="start"
@@ -225,23 +281,19 @@ export function TopPagesCard() {
               >
                 <SquircleCardScroll>
                   <HoverList>
-                    {orderRows(data.items, data.meta.truncated).map((page) => (
-                      <HoverRow key={page.page_path}>
-                        <div className="flex items-center justify-between gap-4 px-5 py-1.5">
-                          <span
-                            aria-hidden="true"
-                            className="size-2 shrink-0 rounded-full bg-primary/50 transition-colors group-hover:bg-primary"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm">
-                              {page.page_path}
-                            </span>
-                          </span>
-                          <span className="text-sm tabular-nums text-muted-foreground">
-                            {measureLabel(current.measure(page))}
-                          </span>
-                        </div>
-                      </HoverRow>
+                    {rankPages(
+                      orderRows(data.items, data.meta.truncated),
+                      current,
+                      revenue,
+                      sort
+                    ).map(({ page, bar }) => (
+                      <BreakdownRow
+                        {...rowRevenueProps(revenue, page.page_path)}
+                        bar={bar}
+                        key={page.page_path}
+                        name={page.page_path}
+                        value={measureLabel(current.measure(page))}
+                      />
                     ))}
                   </HoverList>
                 </SquircleCardScroll>
@@ -255,6 +307,8 @@ export function TopPagesCard() {
         {open && (
           <TopPagesModal
             onClose={() => setOpen(false)}
+            revenue={revenue}
+            sort={sort}
             pages={
               resource.status === "ready"
                 ? orderRows(
@@ -269,6 +323,34 @@ export function TopPagesCard() {
       </AnimatePresence>
     </>
   );
+}
+
+/**
+ * The rows as drawn: ranked by `sort` while revenue is shown, each with the
+ * bar behind it (the cut's measure, then the entry page's revenue). A
+ * measure that was not measured (`null`) draws no traffic segment.
+ */
+function rankPages(
+  pages: PageRow[],
+  view: (typeof VIEWS)[number],
+  revenue: RowRevenue | null,
+  sort: RowSort
+) {
+  const traffic = (page: PageRow) => view.measure(page) ?? 0;
+  const revenueMinor = (page: PageRow) =>
+    revenueOf(revenue, page.page_path)?.revenueMinor ?? 0;
+  const ranked = sortRows(pages, revenue === null ? "visitors" : sort, {
+    traffic,
+    revenue: revenueMinor,
+  });
+  const bars = stackedBars(
+    ranked.map((page) => ({
+      traffic: traffic(page),
+      revenue: revenue === null ? null : revenueMinor(page),
+    })),
+    revenue !== null && sort === "revenue" ? "revenue" : "traffic"
+  );
+  return ranked.map((page, index) => ({ page, bar: bars[index] ?? [] }));
 }
 
 /** The modal's two numeric cells for one row, by the cut being shown. */
@@ -294,13 +376,20 @@ const MODAL_SUBTITLE: Record<PagesView, string> = {
 function TopPagesModal({
   pages,
   view,
+  revenue,
+  sort,
   onClose,
 }: {
   pages: PageRow[] | null;
   view: (typeof VIEWS)[number];
+  /** The card's entry-page revenue, when it shows any: a Revenue column. */
+  revenue: RowRevenue | null;
+  /** The card's order, so the modal continues the list the card began. */
+  sort: RowSort;
   onClose: () => void;
 }) {
   const intervalLabel = useIntervalLabel();
+  const columns = seeAllColumns(view.id, revenue !== null);
   return (
     <SeeAllModal
       title={view.label}
@@ -316,7 +405,7 @@ function TopPagesModal({
               Page
             </span>
             <span className="flex items-baseline gap-2">
-              {view.modalColumns.map((column) => (
+              {columns.map((column) => (
                 <span
                   className="w-14 text-right text-xs font-medium text-muted-foreground/70"
                   key={column}
@@ -328,10 +417,13 @@ function TopPagesModal({
           </div>
           {/* the shared white glide, rounded for the grey band */}
           <HoverList className="[&>li>span]:rounded-[10px]">
-            {pages.map((page) => {
+            {rankPages(pages, view, revenue, sort).map(({ page, bar }) => {
               const [first, second] = modalCells(view.id, page);
               return (
-                <HoverRow key={page.page_path}>
+                <HoverRow
+                  backdrop={<RowBar segments={bar} />}
+                  key={page.page_path}
+                >
                   <div className="flex items-center justify-between gap-4 px-3 py-2">
                     <span
                       aria-hidden="true"
@@ -343,12 +435,20 @@ function TopPagesModal({
                       </span>
                     </span>
                     <span className="flex items-baseline gap-2">
-                      <span className="w-14 text-right text-sm tabular-nums text-muted-foreground">
+                      <span className="w-14 text-right text-sm tabular-nums text-foreground/80">
                         {first}
                       </span>
-                      <span className="w-14 text-right text-sm tabular-nums text-muted-foreground/70">
+                      <span className="w-14 text-right text-sm tabular-nums text-foreground/70">
                         {second}
                       </span>
+                      {revenue !== null ? (
+                        <RevenueAmount
+                          amount={rowRevenueAmount(
+                            revenueOf(revenue, page.page_path),
+                            revenue.currency
+                          )}
+                        />
+                      ) : null}
                     </span>
                   </div>
                 </HoverRow>

@@ -32,10 +32,7 @@ import {
   OverviewChart,
   resolutionForInterval,
 } from "@/components/dashboard/overview-chart";
-import {
-  foldReferrers,
-  sourceMark,
-} from "@/components/dashboard/top-sources-card";
+import { sourceMark } from "@/components/dashboard/source-mark";
 import {
   INTERVALS,
   IntervalProvider,
@@ -96,6 +93,8 @@ import {
 } from "@/lib/mock";
 import { readSseRecords, toFrame } from "@/lib/realtime";
 import { useApi } from "@/lib/use-api";
+import { trafficBars } from "@/lib/row-bars";
+import { foldReferrers } from "@/lib/source-rows";
 
 /**
  * The public share board — `/share/{share_slug}`, no account needed — in the
@@ -639,6 +638,7 @@ function PublicBreakdownCard({
     rows === null ? [] : rows.map((row) => row.value),
     truncated
   );
+  const bar = trafficBars(rows === null ? [] : rows.map((row) => row.value));
   return (
     <SquircleCard
       hideSeeAll
@@ -663,6 +663,7 @@ function PublicBreakdownCard({
                   icon={row.icon}
                   key={row.key}
                   name={row.name}
+                  bar={bar(row.value)}
                   pct={share(row.value)}
                   value={row.value.toLocaleString("en-US")}
                 />
@@ -858,6 +859,7 @@ function PublicTechCard({
     rows === null ? [] : rows.map((row) => row.visitors),
     devices?.meta.truncated ?? false
   );
+  const bar = trafficBars(rows === null ? [] : rows.map((row) => row.visitors));
 
   return (
     <SquircleCard
@@ -928,6 +930,7 @@ function PublicTechCard({
                         icon={current.mark(row.label)}
                         key={row.label}
                         name={current.name(row.label)}
+                        bar={bar(row.visitors)}
                         pct={share(row.visitors)}
                         value={row.visitors.toLocaleString("en-US")}
                       />
@@ -1056,6 +1059,7 @@ function PublicLocationsCard({
     places === null ? [] : places.map((place) => place.visitors),
     geography?.meta.truncated ?? false
   );
+  const bar = trafficBars(places === null ? [] : places.map((place) => place.visitors));
 
   return (
     <SquircleCard
@@ -1132,6 +1136,7 @@ function PublicLocationsCard({
                             ? countryName(place.country)
                             : place.label
                         }
+                        bar={bar(place.visitors)}
                         pct={share(place.visitors)}
                         value={place.visitors.toLocaleString("en-US")}
                       />

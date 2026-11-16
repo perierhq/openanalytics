@@ -41,9 +41,16 @@ export function HoverList({
 /** Row inside a HoverList; renders the shared highlight when hovered. */
 export function HoverRow({
   className,
+  backdrop,
   children,
 }: {
   className?: string;
+  /**
+   * Drawn behind the row's content and above the hover glide, as a direct
+   * child of the `<li>` so a list's row rounding reaches it: the breakdown
+   * rows' bar (`RowBar`).
+   */
+  backdrop?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const key = React.useId();
@@ -64,6 +71,7 @@ export function HoverRow({
           className="absolute inset-x-0 inset-y-0 bg-white/90"
         />
       )}
+      {backdrop}
       <div className="relative">{children}</div>
     </li>
   );

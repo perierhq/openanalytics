@@ -34,6 +34,9 @@ import type {
   RevenueTransaction,
   RevenueTimeseriesPoint,
   RevenueTimeseriesResponse,
+  RevenueAttributionDimension,
+  RevenueAttributionResponse,
+  RevenueAttributionRow,
   SiteMentionSettings,
 } from "@/lib/api";
 
@@ -804,3 +807,106 @@ export const MOCK_REVENUE_TIMESERIES: RevenueTimeseriesResponse = {
     return [...byDay.values()];
   })(),
 };
+
+/**
+ * Where each mock sale came from, for the last-touch revenue the Sources card
+ * and the Entry pages cut show. Keyed by `MOCK_SALES` id, so the amounts are
+ * the sales' own: the unmatched charge is the unattributed row, the EUR sale
+ * has no rate and counts as an unconverted order, and renewals are revenue
+ * but not orders, as the attribution read reports them.
+ */
+const MOCK_SALE_TOUCHES: Record<
+  string,
+  { referrer_domain: string; utm_source: string; entry_page: string }
+> = {
+  // A click from ChatGPT's app: no referrer, its utm tag.
+  ch_mock_1: { referrer_domain: "", utm_source: "chatgpt.com", entry_page: "/" },
+  ch_mock_2: { referrer_domain: "google.com", utm_source: "", entry_page: "/pricing" },
+  ch_mock_3: { referrer_domain: "news.ycombinator.com", utm_source: "", entry_page: "/blog/why-we-left-ga" },
+  ch_mock_4: { referrer_domain: "news.ycombinator.com", utm_source: "", entry_page: "/blog/why-we-left-ga" },
+  // The EUR sale with no rate, from ChatGPT's app too: Direct's unconverted order.
+  ch_mock_5: { referrer_domain: "", utm_source: "chatgpt.com", entry_page: "/" },
+  ch_mock_6: { referrer_domain: "google.com", utm_source: "", entry_page: "/pricing" },
+};
+
+/**
+ * The attribution's own visitors: sessions that *entered* with each value,
+ * which is fewer than the cards' numbers (Direct / none on the Sources card
+ * also holds internal navigation, Entry pages counts entries).
+ */
+const MOCK_ENTRY_VISITORS: Record<string, number> = {
+  "": 1_642,
+  "google.com": 2_655,
+  "news.ycombinator.com": 1_210,
+  "chatgpt.com": 402,
+  "/": 2_410,
+  "/pricing": 588,
+  "/blog/why-we-left-ga": 1_051,
+};
+
+/** `GET /revenue/attribution` (last touch) over `MOCK_SALES`, per dimension. */
+export function mockRevenueAttribution(
+  dimension: RevenueAttributionDimension
+): RevenueAttributionResponse {
+  const rows = new Map<string | null, RevenueAttributionRow>();
+  const buyers = new Map<string | null, Set<string>>();
+  for (const sale of MOCK_SALES) {
+    const touch = MOCK_SALE_TOUCHES[sale.object_id];
+    const value =
+      touch === undefined
+        ? null
+        : dimension === "referrer_domain" || dimension === "entry_page" || dimension === "utm_source"
+          ? touch[dimension]
+          : "";
+    const row = rows.get(value) ?? {
+      value,
+      revenue_minor: 0,
+      recurring_revenue_minor: 0,
+      orders: 0,
+      unconverted_orders: 0,
+      buyers: 0,
+      visitors: value === null ? null : (MOCK_ENTRY_VISITORS[value] ?? 0),
+      conversion_rate: null,
+      revenue_per_visitor_minor: null,
+    };
+    const conversion = sale.purchase_kind === "new" || sale.purchase_kind === "one_off";
+    if (sale.reporting === null) {
+      row.unconverted_orders += 1;
+    } else {
+      row.revenue_minor += sale.gross.amount_minor;
+      if (!conversion) row.recurring_revenue_minor += sale.gross.amount_minor;
+    }
+    if (conversion) {
+      row.orders += 1;
+      if (value !== null && sale.visitor) {
+        const set = buyers.get(value) ?? new Set<string>();
+        set.add(sale.visitor);
+        buyers.set(value, set);
+        row.buyers = set.size;
+      }
+    }
+    rows.set(value, row);
+  }
+  return {
+    meta: MOCK_REVENUE_SUMMARY.meta,
+    touch: "last",
+    dimension,
+    currency: "USD",
+    visitors_available: true,
+    rows: [...rows.values()]
+      .map((row) =>
+        row.visitors === null || row.visitors === 0
+          ? row
+          : {
+              ...row,
+              conversion_rate: row.buyers / row.visitors,
+              revenue_per_visitor_minor: row.revenue_minor / row.visitors,
+            }
+      )
+      .sort(
+      (a, b) =>
+        Number(b.value === null) - Number(a.value === null) ||
+        b.revenue_minor - a.revenue_minor
+    ),
+  };
+}
