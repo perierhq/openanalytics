@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { API_BASE_URL, LIVE_API, type Mention } from "@/lib/api";
+import { API_BASE_URL, LIVE_API } from "@/lib/api-config";
+import type { Mention } from "@/lib/api";
 import { mentionAvatarSrc } from "@/lib/mention-avatar";
 import { initialsOf } from "@/lib/mentions";
 import { cn } from "@/lib/utils";
