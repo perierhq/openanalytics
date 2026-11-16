@@ -8,7 +8,11 @@ const ACTIONS = "flex shrink-0 items-center gap-1"
 
 const render = (props: Partial<Parameters<typeof SquircleCard>[0]>) =>
   renderToStaticMarkup(
-    createElement(SquircleCard, { title: "Sources", children: null, ...props })
+    createElement(
+      SquircleCard,
+      { title: "Sources", ...props } as Parameters<typeof SquircleCard>[0],
+      null
+    )
   )
 
 describe("the card header's right side", () => {
