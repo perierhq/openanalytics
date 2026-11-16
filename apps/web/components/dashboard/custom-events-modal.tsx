@@ -11,7 +11,9 @@ import {
   SeeAllSkeleton,
   useIntervalLabel,
 } from "@/components/dashboard/see-all-modal";
+import { RowBar } from "@/components/dashboard/row-bar";
 import type { CustomEventRow } from "@/lib/api";
+import { trafficBars, type BarSegment } from "@/lib/row-bars";
 import { cn } from "@/lib/utils";
 
 /**
@@ -73,6 +75,7 @@ export function CustomEventsModal({
   onClose: () => void;
 }) {
   const [expanded, setExpanded] = React.useState<string | null>(null);
+  const bar = trafficBars(events === null ? [] : events.map((row) => row.events));
   const intervalLabel = useIntervalLabel();
   const params = useParams<{ site: string }>();
   const slug = params.site ? decodeURIComponent(params.site) : "";
@@ -136,6 +139,7 @@ export function CustomEventsModal({
           </div>
           {events.map((row) => (
             <EventRow
+              bar={bar(row.events)}
               key={`${row.event_name}-${row.event_type}`}
               row={row}
               expanded={expanded === row.event_name}
@@ -212,10 +216,13 @@ function SampleProperties({ properties }: { properties: unknown }) {
 
 function EventRow({
   row,
+  bar,
   expanded,
   onToggle,
 }: {
   row: CustomEventRow;
+  /** The bar behind the row's header, as in every breakdown list. */
+  bar: BarSegment[];
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -228,11 +235,12 @@ function EventRow({
         onClick={onToggle}
         aria-expanded={expanded}
         className={cn(
-          "flex w-full cursor-pointer items-center justify-between gap-4 rounded-[14px] px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "group relative flex w-full cursor-pointer items-center justify-between gap-4 rounded-[14px] px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
           !expanded && "hover:bg-white/70"
         )}
       >
-        <span className="min-w-0 flex-1">
+        <RowBar className="rounded-[14px]" segments={bar} />
+        <span className="relative min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className="truncate text-sm font-medium">
               {row.display_name ?? row.event_name}
@@ -251,16 +259,16 @@ function EventRow({
             </span>
           ) : null}
         </span>
-        <span className="flex items-center gap-2">
+        <span className="relative flex items-center gap-2">
           <span className="flex items-baseline gap-2">
             <span
-              className="w-14 text-right text-sm tabular-nums text-muted-foreground"
+              className="w-14 text-right text-sm tabular-nums text-foreground/80"
               title="Events"
             >
               {row.events.toLocaleString("en-US")}
             </span>
             <span
-              className="w-14 text-right text-sm tabular-nums text-muted-foreground/70"
+              className="w-14 text-right text-sm tabular-nums text-foreground/70"
               title="Unique visitors"
             >
               {row.visitors.toLocaleString("en-US")}

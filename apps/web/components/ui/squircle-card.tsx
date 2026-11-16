@@ -86,6 +86,9 @@ type SquircleCardProps = {
    *  its own sizing: a share figure, the stat cards' ⓘ tip. The heading's svg
    *  rules would otherwise resize a tip's icon. */
   titleAside?: React.ReactNode;
+  /** A small control on the header's right, before "See all": the Sources
+   *  card's sort toggle. */
+  actions?: React.ReactNode;
   /** Content of the inset panel (typically a list); it stretches to the
    *  frame's bottom edge */
   children: React.ReactNode;
@@ -117,6 +120,7 @@ export function SquircleCard({
   title,
   icon,
   titleAside,
+  actions,
   children,
   seeAllHref = "#",
   onSeeAll,
@@ -135,6 +139,19 @@ export function SquircleCard({
         className="size-3.5 transition-transform duration-200 group-hover/seeall:translate-x-0.5"
       />
     </>
+  );
+  const seeAll = hideSeeAll ? null : onSeeAll ? (
+    <button
+      type="button"
+      onClick={onSeeAll}
+      className={cn(seeAllClassName, "cursor-pointer")}
+    >
+      {seeAllBody}
+    </button>
+  ) : (
+    <Link href={seeAllHref} className={seeAllClassName}>
+      {seeAllBody}
+    </Link>
   );
   return (
     <SquircleSurface
@@ -158,18 +175,13 @@ export function SquircleCard({
           {titleAside}
           {headerChip}
         </div>
-        {hideSeeAll ? null : onSeeAll ? (
-          <button
-            type="button"
-            onClick={onSeeAll}
-            className={cn(seeAllClassName, "cursor-pointer")}
-          >
-            {seeAllBody}
-          </button>
+        {actions == null ? (
+          seeAll
         ) : (
-          <Link href={seeAllHref} className={seeAllClassName}>
-            {seeAllBody}
-          </Link>
+          <div className="flex shrink-0 items-center gap-1">
+            {actions}
+            {seeAll}
+          </div>
         )}
       </div>
       <SquircleSurface

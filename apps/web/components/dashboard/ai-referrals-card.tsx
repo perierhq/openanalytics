@@ -17,16 +17,15 @@ import {
   useIntervalLabel,
 } from "@/components/dashboard/see-all-modal";
 import { useSourcesResource } from "@/components/dashboard/sources-resource";
-import {
-  sourceMark,
-  type FoldedRow,
-} from "@/components/dashboard/top-sources-card";
+import { sourceMark } from "@/components/dashboard/source-mark";
 import {
   SquircleCard,
   SquircleCardScroll,
 } from "@/components/ui/squircle-card";
 import type { AnalyticsMeta, SourceRow } from "@/lib/api";
+import type { FoldedRow } from "@/lib/source-rows";
 import { resolveAiUtm, resolveReferrer } from "@/lib/referrers";
+import { trafficBars } from "@/lib/row-bars";
 
 /**
  * The visits AI assistants sent, cut out of the same sources read the
@@ -171,6 +170,7 @@ export function AiReferralsCard() {
               rows.map((row) => row.visitors),
               data.meta.truncated
             );
+            const bar = trafficBars(rows.map((row) => row.visitors));
             return (
               <SquircleCardScroll>
                 <HoverList>
@@ -196,6 +196,7 @@ export function AiReferralsCard() {
                             }
                           : undefined
                       }
+                      bar={bar(row.visitors)}
                       pct={share(row.visitors)}
                       value={row.visitors.toLocaleString("en-US")}
                     />
@@ -237,6 +238,7 @@ function AiReferralsModal({
     rows === null ? [] : rows.map((row) => row.visitors),
     meta?.truncated ?? false
   );
+  const bar = trafficBars(rows === null ? [] : rows.map((row) => row.visitors));
   // The total and the share live in the header here, the one place the
   // card shows a figure that is not a row: "1,204 visitors · 4% of all
   // visitors · Last 30 days", or without the share when it is withheld.
@@ -269,6 +271,7 @@ function AiReferralsModal({
               icon={sourceMark(row)}
               key={row.label}
               name={row.label}
+              bar={bar(row.visitors)}
               pct={share(row.visitors)}
               value={row.visitors.toLocaleString("en-US")}
             />
