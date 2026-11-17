@@ -123,8 +123,11 @@ session. Render exactly:
 - Put the tag in `<head>`. `async` is deliberate: the tracker records the first
   pageview immediately and folds in the site's configuration afterwards.
 
-See [`../frontend/tracker_snippet.md`](../frontend/tracker_snippet.md) for the
-optional attributes (consent flags, `data-oa-event`).
+The optional `<script>` attributes (`data-require-consent`, `data-respect-gpc`,
+`data-respect-dnt`, `data-storage="none"`) are read in
+[`apps/tracker/src/install.ts`](../../apps/tracker/src/install.ts); the
+`data-oa-event` element marker is read in
+[`apps/tracker/src/rules.ts`](../../apps/tracker/src/rules.ts).
 
 ### The config cache
 
