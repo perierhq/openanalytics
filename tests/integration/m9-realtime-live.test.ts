@@ -8,6 +8,8 @@ import {
 } from '@openanalytics/contracts'
 import {
   DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
+  compileIngestExclusions,
   loadPolicy,
   loadServiceEnv,
   type SiteIngestConfig,
@@ -335,6 +337,7 @@ function buildCollector(opts: {
     settings: DEFAULT_TRACKER_SETTINGS,
     slug: 'shop',
     noCodeRules: [],
+    exclusions: compileIngestExclusions(EMPTY_INGEST_EXCLUSIONS),
   }
   const deps: CollectorDeps = {
     configStore: {

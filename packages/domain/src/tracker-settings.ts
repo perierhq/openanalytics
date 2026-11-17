@@ -3,6 +3,7 @@ import {
   MIN_HEARTBEAT_INTERVAL_SECONDS,
   PRESENCE_WINDOW_HEARTBEAT_RATIO,
 } from '@openanalytics/contracts'
+import { normalizeIngestExclusions, type IngestExclusions } from './ingest-exclusions.ts'
 
 /**
  * Defaults for a site's tracker configuration (docs snapshot 02 §11).
@@ -131,6 +132,14 @@ export interface TrackerSettingsPatch {
   readonly heartbeatIntervalSeconds?: number
   readonly features?: Partial<TrackerFeatureFlags>
   readonly attributedRevenue?: boolean
+  /**
+   * Server-side exclusions. Never part of what a browser is served — they are
+   * read by the collector alone — but written through the same settings
+   * surface, so a change moves `config_version` and reaches the collector's
+   * ingest-config cache the way every other setting does. Present means
+   * "replace the whole set".
+   */
+  readonly exclusions?: IngestExclusions
 }
 
 /** One rejected field, in the shape the HTTP layer reports validation issues. */
@@ -182,6 +191,7 @@ export function normalizeTrackerSettingsPatch(
     heartbeatIntervalSeconds?: number
     features?: Partial<TrackerFeatureFlags>
     attributedRevenue?: boolean
+    exclusions?: IngestExclusions
   } = {}
 
   if (Object.hasOwn(body, 'timezone')) {
@@ -274,6 +284,12 @@ export function normalizeTrackerSettingsPatch(
     } else {
       patch.attributedRevenue = value
     }
+  }
+
+  if (Object.hasOwn(body, 'exclusions')) {
+    const result = normalizeIngestExclusions(body['exclusions'])
+    if (result.ok) patch.exclusions = result.exclusions
+    else issues.push(...result.issues)
   }
 
   if (issues.length > 0) return { ok: false, issues }

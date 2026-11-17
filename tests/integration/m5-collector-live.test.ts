@@ -7,8 +7,11 @@ import {
 import { persistedEventSchema } from '@openanalytics/contracts'
 import {
   DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
+  compileIngestExclusions,
   loadPolicy,
   usageWindowFor,
+  type CompiledIngestExclusions,
   type SiteIngestConfig,
 } from '@openanalytics/domain'
 import {
@@ -23,10 +26,13 @@ import {
   decodeSiteQueueIndexEntry,
   dedupKey,
   encodeSiteQueueIndexEntry,
+  excludedRecordKey,
   realtimeUpdatesChannel,
   siteQueueIndexKey,
   visitorMetaKey,
   visitorPagesKey,
+  type EnqueueBatchResult,
+  type EnqueueAccepted,
 } from '@openanalytics/redis'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -53,6 +59,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
  */
 
 const VALKEY_URL = process.env['TEST_VALKEY_URL']
+const daysInSeconds = (days: number): number => days * 24 * 60 * 60
 const describeIfValkey = VALKEY_URL ? describe : describe.skip
 
 const POLICY = loadPolicy({})
@@ -81,11 +88,15 @@ describeIfValkey('M5 collector against a live Valkey', () => {
   let app: ReturnType<typeof createApp>
   let metrics: ReturnType<typeof createRecordingMetrics>
   let now: Date
+  /** What the real script answered, batch by batch: the stream ids the HTTP
+   * response does not carry. */
+  let scriptAnswers: EnqueueBatchResult[]
   let resolved: {
     config: SiteIngestConfig
     settings: typeof DEFAULT_TRACKER_SETTINGS
     slug: string
     noCodeRules: readonly never[]
+    exclusions: CompiledIngestExclusions
   }
 
   const config = (): SiteIngestConfig => ({
@@ -150,14 +161,25 @@ describeIfValkey('M5 collector against a live Valkey', () => {
       settings: DEFAULT_TRACKER_SETTINGS,
       slug: 'shop',
       noCodeRules: [],
+      exclusions: compileIngestExclusions(EMPTY_INGEST_EXCLUSIONS),
     }
+
+    const queue = createEventStreamQueue({ client, policy: POLICY, streamKey })
+    scriptAnswers = []
 
     deps = {
       configStore: {
         resolve: async (key: string) => (key === TRACKING_KEY ? resolved : null),
         invalidate: () => undefined,
       },
-      queue: createEventStreamQueue({ client, policy: POLICY, streamKey }),
+      queue: {
+        enqueue: (input) => queue.enqueue(input),
+        enqueueBatch: async (inputs) => {
+          const answer = await queue.enqueueBatch(inputs)
+          scriptAnswers.push(answer)
+          return answer
+        },
+      },
       realtime: createRealtimeCache({
         client,
         eventMaxLatenessHours: POLICY.EVENT_MAX_LATENESS_HOURS,
@@ -239,6 +261,124 @@ describeIfValkey('M5 collector against a live Valkey', () => {
     // Newest first: the self-referral is null, the search engine is one domain
     // whatever spelling arrived.
     expect(sources).toEqual([null, 'google.com'])
+  })
+
+  it('answers a retried excluded event as a duplicate and a changed one with 409', async () => {
+    // The real script, not the double: an excluded event is remembered for the
+    // dedup window as a payload hash and a time, so the answers match the
+    // counted path's — and nothing of it reaches the stream.
+    resolved = {
+      ...resolved,
+      exclusions: compileIngestExclusions({ ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] }),
+    }
+    const hidden = pageView({ page: { url: 'https://shop.example.com/admin/very-private' } })
+    const kept = pageView()
+    const before = await streamLength()
+
+    const first = await post('/v1/events', batchOf([hidden, kept]))
+    expect(await first.json()).toEqual({ accepted: 2, duplicate: 0 })
+    const again = await post('/v1/events', batchOf([hidden, kept]))
+    expect(await again.json()).toEqual({ accepted: 0, duplicate: 2 })
+    expect(await streamLength()).toBe(before + 1)
+
+    const changed = { ...hidden, page: { url: 'https://shop.example.com/admin/other' } }
+    const conflict = await post('/v1/events', batchOf([changed]))
+    expect(conflict.status).toBe(409)
+    expect(await streamLength()).toBe(before + 1)
+
+    const key = excludedRecordKey(siteId, hidden.event_id)
+    const record = await client.hgetall(key)
+    expect(Object.keys(record).sort()).toEqual(['accepted_at', 'payload_hash'])
+    expect(JSON.stringify(record)).not.toContain('very-private')
+    const ttl = await client.ttl(key)
+    expect(ttl).toBeGreaterThan(daysInSeconds(POLICY.INGEST_DEDUP_TTL_DAYS) - 60)
+    expect(ttl).toBeLessThanOrEqual(daysInSeconds(POLICY.INGEST_DEDUP_TTL_DAYS))
+    await client.del(key)
+  })
+
+  it('answers a fully excluded batch sent twice like a counted one', async () => {
+    resolved = {
+      ...resolved,
+      exclusions: compileIngestExclusions({
+        ...EMPTY_INGEST_EXCLUSIONS,
+        ipRanges: ['203.0.113.0/24'],
+      }),
+    }
+    const event = pageView()
+    const before = await streamLength()
+    const office = { 'x-real-ip': '203.0.113.7' }
+
+    const first = await post('/v1/events', batchOf([event]), office)
+    expect(await first.json()).toEqual({ accepted: 1, duplicate: 0 })
+    const again = await post('/v1/events', batchOf([event]), office)
+    expect(await again.json()).toEqual({ accepted: 0, duplicate: 1 })
+    expect(await streamLength()).toBe(before)
+
+    const key = excludedRecordKey(siteId, event.event_id)
+    expect(JSON.stringify(await client.hgetall(key))).not.toContain('203.0.113')
+    await client.del(key)
+  })
+
+  describe('an exclusion changed between a delivery and its retry', () => {
+    const ADMIN_RULES = { ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] }
+    const adminPage = () => pageView({ page: { url: 'https://shop.example.com/admin/users/7' } })
+
+    /** The script's answer for the only event of the latest batch. */
+    const lastAnswer = (): EnqueueAccepted => {
+      const batch = scriptAnswers.at(-1)
+      if (batch?.outcome !== 'accepted') throw new Error('expected an accepted batch')
+      const [only] = batch.results
+      if (!only || only.outcome === 'idempotency_conflict') throw new Error('expected one result')
+      return only
+    }
+
+    it('answers a counted event retried after an exclusion was added as its duplicate', async () => {
+      const event = adminPage()
+      const before = await streamLength()
+
+      await post('/v1/events', batchOf([event]))
+      const first = lastAnswer()
+      expect(first.outcome).toBe('enqueued')
+      expect(await streamLength()).toBe(before + 1)
+
+      // The exclusion lands between the delivery and the retry: the retry is
+      // handed to the script as excluded, and must still find the counted
+      // record — same payload hash, so a duplicate rather than a 409.
+      resolved = { ...resolved, exclusions: compileIngestExclusions(ADMIN_RULES) }
+      const retry = await post('/v1/events', batchOf([event]))
+
+      expect(await retry.json()).toEqual({ accepted: 0, duplicate: 1 })
+      const again = lastAnswer()
+      expect(again.outcome).toBe('duplicate')
+      expect(first.streamId).toMatch(/^\d+-\d+$/)
+      expect(again.streamId).toBe(first.streamId)
+      expect(await streamLength()).toBe(before + 1)
+      // Nothing was remembered as excluded for an event already counted.
+      expect(await client.exists(excludedRecordKey(siteId, event.event_id))).toBe(0)
+    })
+
+    it('answers an excluded event retried after the exclusion was removed as its duplicate', async () => {
+      resolved = { ...resolved, exclusions: compileIngestExclusions(ADMIN_RULES) }
+      const event = adminPage()
+      const before = await streamLength()
+
+      await post('/v1/events', batchOf([event]))
+      expect(lastAnswer().outcome).toBe('excluded')
+
+      // The exclusion is removed before the retry: the retry is handed to the
+      // script as counted, and must find the excluded record and stop there.
+      resolved = { ...resolved, exclusions: compileIngestExclusions(EMPTY_INGEST_EXCLUSIONS) }
+      const retry = await post('/v1/events', batchOf([event]))
+
+      expect(await retry.json()).toEqual({ accepted: 0, duplicate: 1 })
+      const again = lastAnswer()
+      expect(again.outcome).toBe('duplicate')
+      expect(again.streamId).toBe('')
+      // No XADD: the stream did not grow and no counted record was written.
+      expect(await streamLength()).toBe(before)
+      expect(await client.exists(dedupKey(siteId, event.event_id))).toBe(0)
+      await client.del(excludedRecordKey(siteId, event.event_id))
+    })
   })
 
   it('creates exactly one stream row for 25 concurrent identical events', async () => {

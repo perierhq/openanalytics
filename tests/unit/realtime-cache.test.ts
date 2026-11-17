@@ -1,5 +1,7 @@
 import {
   BUMP_EPOCH_SCRIPT,
+  GEO_RESOLVED_KEY,
+  GEO_RESOLVED_TTL_SECONDS,
   INCREMENT_WINDOWS_SCRIPT,
   InvalidKeyComponentError,
   REALTIME_EPOCH_TTL_MS,
@@ -322,5 +324,50 @@ describe('tag sightings', () => {
   it('keys the hash by site alone, so an origin can never name a key', () => {
     expect(tagSightingKey('site-1')).toBe('tag_sighting:site-1')
     expect(() => tagSightingKey('site:1')).toThrow(InvalidKeyComponentError)
+  })
+})
+
+describe('the geo-resolved signal (server-side exclusions)', () => {
+  const AT = new Date('2026-11-16T10:00:00.000Z')
+
+  function fakeClient(stored: string | null = null) {
+    const sets: unknown[][] = []
+    const gets: string[] = []
+    const client = {
+      set: async (...args: unknown[]) => {
+        sets.push(args)
+        return 'OK'
+      },
+      get: async (key: string) => {
+        gets.push(key)
+        return stored
+      },
+    }
+    return {
+      sets,
+      gets,
+      cache: createRealtimeCache({
+        client: client as unknown as RealtimeCacheOptions['client'],
+        eventMaxLatenessHours: 48,
+      }),
+    }
+  }
+
+  it('records when a country was last resolved, and nothing else', async () => {
+    const fake = fakeClient()
+    await fake.cache.markGeoResolved({ at: AT })
+    // One deployment-wide key holding an instant: no site, no address and no
+    // country, so it says "this install resolves countries" and nothing more.
+    expect(fake.sets).toEqual([
+      [GEO_RESOLVED_KEY, '2026-11-16T10:00:00.000Z', 'EX', GEO_RESOLVED_TTL_SECONDS],
+    ])
+    expect(GEO_RESOLVED_TTL_SECONDS).toBe(7 * 86_400)
+  })
+
+  it('reads the instant back, or null when no country was resolved recently', async () => {
+    expect(await fakeClient('2026-11-16T10:00:00.000Z').cache.readGeoResolvedAt()).toBe(
+      '2026-11-16T10:00:00.000Z',
+    )
+    expect(await fakeClient(null).cache.readGeoResolvedAt()).toBeNull()
   })
 })

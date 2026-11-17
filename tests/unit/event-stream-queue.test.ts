@@ -13,6 +13,7 @@ import {
   decodeSiteQueueIndexEntry,
   dedupKey,
   encodeSiteQueueIndexEntry,
+  excludedRecordKey,
   isEnqueueConflict,
   isNoScriptError,
   MalformedSiteQueueIndexEntryError,
@@ -20,6 +21,7 @@ import {
   siteQueueIndexKey,
   utcDayOf,
 } from '@openanalytics/redis'
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 const policy = loadPolicy({})
@@ -99,16 +101,17 @@ describe('durable queue key naming', () => {
 })
 
 describe('enqueue script invocation', () => {
-  it('declares every key it touches: the stream, then a dedup/index pair per event', () => {
-    // The pairing is what lets the script address event `i` as KEYS[2i] and
-    // KEYS[2i+1]. Building the keys inside Lua instead would hide every key the
-    // script writes from the call site and from cluster analysis.
+  it('declares every key it touches: the stream, then a dedup/index/excluded triple per event', () => {
+    // The grouping is what lets the script address event `i` as KEYS[3i-1],
+    // KEYS[3i] and KEYS[3i+1]. Building the keys inside Lua instead would hide
+    // every key the script writes from the call site and from cluster analysis.
     const call = buildEnqueueCall([input], { policy })
 
     expect(call.keys).toEqual([
       'event_stream',
       `ingest_dedup:${input.siteId}:${input.eventId}`,
       `site_queue_index:${input.siteId}:2026-07-21`,
+      excludedRecordKey(input.siteId, input.eventId),
     ])
   })
 
@@ -120,8 +123,10 @@ describe('enqueue script invocation', () => {
       'event_stream',
       `ingest_dedup:${input.siteId}:${input.eventId}`,
       `site_queue_index:${input.siteId}:2026-07-21`,
+      excludedRecordKey(input.siteId, input.eventId),
       `ingest_dedup:${input.siteId}:e2`,
       `site_queue_index:${input.siteId}:2026-07-22`,
+      excludedRecordKey(input.siteId, 'e2'),
     ])
   })
 
@@ -139,6 +144,7 @@ describe('enqueue script invocation', () => {
       input.payloadHash,
       input.payload,
       input.acceptedAt,
+      '0',
     ])
 
     const longer = buildEnqueueCall([input], {
@@ -146,6 +152,48 @@ describe('enqueue script invocation', () => {
     })
     expect(longer.argv[1]).toBe(String(14 * DAY_IN_SECONDS))
     expect(longer.argv[2]).toBe(String(15 * DAY_IN_SECONDS))
+  })
+
+  it('keys an excluded event by a hash that names neither the site nor the event', () => {
+    const key = excludedRecordKey(input.siteId, input.eventId)
+    expect(key).toBe(
+      `ingest_excluded:${createHash('sha256').update(`${input.siteId}:${input.eventId}`).digest('hex')}`,
+    )
+    expect(key).not.toContain(input.siteId)
+    expect(key).not.toContain(input.eventId)
+    // The same identifier rules as every other key: no separator smuggling.
+    expect(() => excludedRecordKey('a:b', input.eventId)).toThrow(InvalidKeyComponentError)
+  })
+
+  it('hands an excluded event to the script with no payload, flagged', () => {
+    const { payload: _payload, ...rest } = input
+    const call = buildEnqueueCall([{ ...rest, excluded: true }], { policy })
+
+    expect(call.argv.slice(3)).toEqual([
+      input.siteId,
+      input.eventId,
+      input.payloadHash,
+      '',
+      input.acceptedAt,
+      '1',
+    ])
+  })
+
+  it('remembers an excluded event as a payload hash and a time, for the dedup window', () => {
+    // The same window and the same 409 rule as the counted path: the record is
+    // read beside the dedup record in pass one, and written in pass two with
+    // the dedup TTL. It holds no payload and no stream entry is made for it.
+    expect(ENQUEUE_SCRIPT).toContain(
+      "redis.call('HMGET', excluded_key, 'payload_hash', 'accepted_at')",
+    )
+    expect(ENQUEUE_SCRIPT).toContain(
+      "redis.call('HSET', excluded_key, 'payload_hash', payload_hash, 'accepted_at', accepted_at)",
+    )
+    expect(ENQUEUE_SCRIPT).toContain("redis.call('EXPIRE', excluded_key, dedup_ttl_seconds)")
+    const excludedRead = ENQUEUE_SCRIPT.indexOf("redis.call('HMGET', excluded_key")
+    const conflictReturn = ENQUEUE_SCRIPT.indexOf("return { 'idempotency_conflict'")
+    expect(excludedRead).toBeGreaterThan(-1)
+    expect(conflictReturn).toBeGreaterThan(excludedRead)
   })
 
   it('refuses an empty batch rather than issuing a no-op EVAL', () => {
@@ -207,6 +255,17 @@ describe('enqueue reply parsing', () => {
     expect(first?.enqueued).toBe(false)
     expect(first ? isEnqueueConflict(first) : true).toBe(false)
     expect(first?.firstAcceptedAt).toBe('2026-07-21T10:15:00.000Z')
+  })
+
+  it('reads an excluded event as remembered, not enqueued', () => {
+    // `enqueued` stays false: only a stream entry may be billed or fed to realtime.
+    const results = accepted(['ok', 'excluded', '', input.acceptedAt], 1)
+    expect(results[0]).toEqual({
+      outcome: 'excluded',
+      enqueued: false,
+      streamId: '',
+      firstAcceptedAt: input.acceptedAt,
+    })
   })
 
   it('reads a mixed batch position by position', () => {

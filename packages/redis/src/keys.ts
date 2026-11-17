@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 /**
  * Key naming for the durable queue instance (docs snapshot 05, D-205).
  *
@@ -19,6 +21,12 @@ export const EVENT_STREAM_GROUP = 'ingest_workers'
  */
 export const EVENT_STREAM_DLQ_KEY = 'event_stream_dlq'
 export const DEDUP_KEY_PREFIX = 'ingest_dedup'
+/**
+ * Record of an event the site's own exclusions dropped: a payload hash and a
+ * time, kept for the dedup window so a retry of it answers `duplicate` and a
+ * changed body answers `409`, exactly as a counted event's would.
+ */
+export const EXCLUDED_RECORD_KEY_PREFIX = 'ingest_excluded'
 /** Named by docs snapshot 05, D-209: `site_queue_index:{site}:{utc_day}`. */
 export const SITE_QUEUE_INDEX_PREFIX = 'site_queue_index'
 
@@ -66,6 +74,22 @@ export function utcDayOf(acceptedAt: string | Date): string {
 /** Dedup record for one `(site_id, event_id)` pair (docs snapshot 05, D-209 step 1). */
 export function dedupKey(siteId: string, eventId: string): string {
   return `${DEDUP_KEY_PREFIX}:${assertSafe('siteId', siteId)}:${assertSafe('eventId', eventId)}`
+}
+
+/**
+ * Record key for one excluded `(site_id, event_id)` pair.
+ *
+ * Hashed, unlike the dedup key: nothing else ever needs to find these records
+ * by site — they hold no payload, there is no stream entry for deletion to
+ * chase, and they expire on the dedup TTL — so the key does not name the site
+ * either. A site deleted inside the window leaves keys that say nothing about
+ * it and are gone when the window closes.
+ */
+export function excludedRecordKey(siteId: string, eventId: string): string {
+  const digest = createHash('sha256')
+    .update(`${assertSafe('siteId', siteId)}:${assertSafe('eventId', eventId)}`)
+    .digest('hex')
+  return `${EXCLUDED_RECORD_KEY_PREFIX}:${digest}`
 }
 
 /**

@@ -1,6 +1,12 @@
 import type { TrackerConfig } from '@openanalytics/contracts'
 import type { CloudIngestFacts } from './cloud-extension.ts'
-import type { Policy, SiteIngestConfig, SiteTrackerSettings } from '@openanalytics/domain'
+import {
+  compileIngestExclusions,
+  type CompiledIngestExclusions,
+  type Policy,
+  type SiteIngestConfig,
+  type SiteTrackerSettings,
+} from '@openanalytics/domain'
 import {
   type Database,
   type ResolvedNoCodeRule,
@@ -51,6 +57,14 @@ export interface CachedIngestConfig {
    * `client_sdk` traffic rather than rejected.
    */
   readonly noCodeRules: readonly ResolvedNoCodeRule[]
+  /**
+   * The site's server-side exclusions, compiled for matching.
+   *
+   * Compiled once per `config_version` and reused across TTL refreshes of the
+   * same version, so neither an event nor a cache refill pays for parsing
+   * CIDR ranges and path patterns. Never projected into `toTrackerConfig`.
+   */
+  readonly exclusions: CompiledIngestExclusions
   /**
    * What a registered surface resolved beside this config (`decorateConfig`).
    *
@@ -110,6 +124,29 @@ export function createIngestConfigStore(options: IngestConfigStoreOptions): Inge
   // always the first one the iterator yields.
   const cache = new Map<string, CacheEntry>()
 
+  // Compiled exclusions by site, stamped with the config version they were
+  // compiled from. A TTL refill of an unchanged site reuses the matcher; a
+  // settings write moves the version and the next refill recompiles. Bounded
+  // like the cache above, by site rather than by key.
+  const compiled = new Map<string, { version: number; exclusions: CompiledIngestExclusions }>()
+  const compiledFor = (
+    siteId: string,
+    version: number,
+    source: Parameters<typeof compileIngestExclusions>[0],
+  ): CompiledIngestExclusions => {
+    const prior = compiled.get(siteId)
+    if (prior !== undefined && prior.version === version) return prior.exclusions
+    const exclusions = compileIngestExclusions(source)
+    compiled.delete(siteId)
+    compiled.set(siteId, { version, exclusions })
+    while (compiled.size > maxEntries) {
+      const oldest = compiled.keys().next()
+      if (oldest.done === true) break
+      compiled.delete(oldest.value)
+    }
+    return exclusions
+  }
+
   const remember = (key: string, value: CachedIngestConfig | null): void => {
     cache.delete(key)
     cache.set(key, {
@@ -145,6 +182,11 @@ export function createIngestConfigStore(options: IngestConfigStoreOptions): Inge
           settings: resolved.settings,
           slug: resolved.slug,
           noCodeRules: resolved.noCodeRules,
+          exclusions: compiledFor(
+            resolved.config.siteId,
+            resolved.config.configVersion,
+            resolved.exclusions,
+          ),
         }
         if (options.decorate) value = await options.decorate(value)
       }

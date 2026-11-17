@@ -141,4 +141,36 @@ describe('tracker settings patch', () => {
       'body:not_an_object',
     ])
   })
+
+  it('carries normalised exclusions, which replace the stored set as a whole', () => {
+    const result = normalizeTrackerSettingsPatch(
+      {
+        exclusions: {
+          ip_ranges: ['203.0.113.7'],
+          paths: ['/admin/*'],
+          countries: ['de'],
+          hostnames: ['Staging.Example.com'],
+        },
+      },
+      isValidTimezone,
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.patch).toEqual({
+      exclusions: {
+        ipRanges: ['203.0.113.7/32'],
+        paths: ['/admin/*'],
+        countries: ['DE'],
+        hostnames: ['staging.example.com'],
+      },
+    })
+  })
+
+  it('reports an exclusion problem against its own list', () => {
+    const result = normalizeTrackerSettingsPatch(
+      { exclusions: { ip_ranges: ['office'], paths: [], countries: [], hostnames: [] } },
+      isValidTimezone,
+    )
+    expect(codes(result)).toEqual(['exclusions.ip_ranges.0:invalid'])
+  })
 })

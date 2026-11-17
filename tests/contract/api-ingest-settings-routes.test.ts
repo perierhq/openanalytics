@@ -1,6 +1,13 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { loadServiceEnv, DEFAULT_TRACKER_SETTINGS } from '@openanalytics/domain'
+import {
+  loadServiceEnv,
+  DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
+  type IngestExclusions,
+} from '@openanalytics/domain'
+import type { RealtimeCache } from '@openanalytics/redis'
+import { InProcessRateLimiter } from '../../apps/api/src/http/rate-limit.ts'
 import type { Auth } from '@openanalytics/auth'
 import type { Database } from '@openanalytics/postgres'
 import type * as PostgresModule from '@openanalytics/postgres'
@@ -48,6 +55,7 @@ const memberships = new Map<string, { role: string; isBillingOwner: boolean }>([
 const stored = {
   configVersion: 3,
   settings: { ...DEFAULT_TRACKER_SETTINGS, attributedRevenue: false },
+  exclusions: EMPTY_INGEST_EXCLUSIONS as IngestExclusions,
 }
 
 /** Every repository call the routes can make, so "refused before any write" is
@@ -62,7 +70,11 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
       memberships.get(params.userId) ?? null,
     readSiteIngestSettings: async (_db: unknown, siteId: string) => {
       calls.reads.push(siteId)
-      return { configVersion: stored.configVersion, settings: { ...stored.settings } }
+      return {
+        configVersion: stored.configVersion,
+        settings: { ...stored.settings },
+        exclusions: stored.exclusions,
+      }
     },
     upsertSiteIngestSettings: async (_db: unknown, input: Record<string, unknown>) => {
       calls.writes.push(input)
@@ -74,6 +86,9 @@ vi.mock('@openanalytics/postgres', async (importOriginal) => {
           ...stored.settings,
           attributedRevenue: input['attributedRevenue'] as boolean,
         }
+      }
+      if (input['exclusions'] !== undefined) {
+        stored.exclusions = input['exclusions'] as IngestExclusions
       }
       if (input['timezone'] !== undefined) {
         stored.settings = { ...stored.settings, timezone: input['timezone'] as string }
@@ -105,16 +120,26 @@ const auth = {
 } as unknown as Auth
 
 const { logger } = createCapturedLogger()
-const app = createApp({
-  service: createServiceMetadata({ name: 'api', version: '0.0.0-test', environment: 'test' }),
-  logger,
-  env: loadServiceEnv('api', testEnv()),
-  auth,
-  db: {} as Database,
-})
+const appWith = (cache?: Pick<RealtimeCache, 'readGeoResolvedAt'>) =>
+  createApp({
+    service: createServiceMetadata({ name: 'api', version: '0.0.0-test', environment: 'test' }),
+    logger,
+    env: loadServiceEnv('api', testEnv()),
+    auth,
+    db: {} as Database,
+    ...(cache === undefined
+      ? {}
+      : {
+          realtime: {
+            cache: cache as RealtimeCache,
+            rateLimiter: new InProcessRateLimiter({ requestsPerMinute: 60, burst: 120 }),
+          },
+        }),
+  })
+const app = appWith()
 
-const send = (method: string, user?: string, body?: unknown) =>
-  app.fetch(
+const send = (method: string, user?: string, body?: unknown, target = app) =>
+  target.fetch(
     new Request(`http://api.test/v1/sites/${SITE}/ingest-settings`, {
       method,
       headers: {
@@ -130,6 +155,7 @@ beforeEach(() => {
   calls.writes = []
   stored.configVersion = 3
   stored.settings = { ...DEFAULT_TRACKER_SETTINGS, attributedRevenue: false }
+  stored.exclusions = EMPTY_INGEST_EXCLUSIONS
 })
 
 describe('OpenAPI documents the ingest-settings surface', () => {
@@ -264,5 +290,174 @@ describe('PATCH /v1/sites/{site_id}/ingest-settings', () => {
       features: { interactions: false },
       attributedRevenue: true,
     })
+  })
+})
+
+describe('exclusions on the ingest-settings surface', () => {
+  const OFFICE_LISTS = {
+    ip_ranges: ['203.0.113.7', '10.0.0.0/8'],
+    paths: ['/admin/*'],
+    countries: ['de'],
+    hostnames: ['Staging.Example.com'],
+  }
+
+  it('reads an empty set for a site that excluded nothing', async () => {
+    const body = (await (await send('GET', OWNER)).json()) as Record<string, unknown>
+    expect(body['exclusions']).toEqual({ ip_ranges: [], paths: [], countries: [], hostnames: [] })
+  })
+
+  it('stores the lists normalised, replaces them whole, and bumps the version', async () => {
+    const response = await send('PATCH', ADMIN, { exclusions: OFFICE_LISTS })
+    expect(response.status).toBe(200)
+    expect(calls.writes[0]).toEqual({
+      siteId: SITE,
+      exclusions: {
+        ipRanges: ['203.0.113.7/32', '10.0.0.0/8'],
+        paths: ['/admin/*'],
+        countries: ['DE'],
+        hostnames: ['staging.example.com'],
+      },
+    })
+    const body = (await response.json()) as Record<string, unknown>
+    expect(body['config_version']).toBe(4)
+    expect(body['exclusions']).toEqual({
+      ip_ranges: ['203.0.113.7/32', '10.0.0.0/8'],
+      paths: ['/admin/*'],
+      countries: ['DE'],
+      hostnames: ['staging.example.com'],
+    })
+
+    // A second write replaces the set: what it does not list is gone.
+    const replaced = await send('PATCH', OWNER, {
+      exclusions: { ip_ranges: [], paths: ['/preview'], countries: [], hostnames: [] },
+    })
+    expect(((await replaced.json()) as Record<string, unknown>)['exclusions']).toEqual({
+      ip_ranges: [],
+      paths: ['/preview'],
+      countries: [],
+      hostnames: [],
+    })
+  })
+
+  it('leaves all four lists alone on a PATCH that does not name exclusions', async () => {
+    const stored = await send('PATCH', OWNER, { exclusions: OFFICE_LISTS })
+    expect(stored.status).toBe(200)
+    const lists = ((await stored.json()) as Record<string, unknown>)['exclusions']
+    expect(lists).toEqual({
+      ip_ranges: ['203.0.113.7/32', '10.0.0.0/8'],
+      paths: ['/admin/*'],
+      countries: ['DE'],
+      hostnames: ['staging.example.com'],
+    })
+
+    const timezone = await send('PATCH', ADMIN, { timezone: 'Europe/Berlin' })
+    expect(timezone.status).toBe(200)
+    expect(((await timezone.json()) as Record<string, unknown>)['exclusions']).toEqual(lists)
+
+    const revenue = await send('PATCH', OWNER, { attributed_revenue: true })
+    expect(revenue.status).toBe(200)
+    expect(((await revenue.json()) as Record<string, unknown>)['exclusions']).toEqual(lists)
+
+    // Neither partial write handed the repository an `exclusions` member — not
+    // even an empty one, which would clear the lists.
+    expect(calls.writes.slice(1).map((write) => Object.hasOwn(write, 'exclusions'))).toEqual([
+      false,
+      false,
+    ])
+    const read = await send('GET', OWNER)
+    expect(((await read.json()) as Record<string, unknown>)['exclusions']).toEqual(lists)
+  })
+
+  it('refuses a viewer before writing anything', async () => {
+    const response = await send('PATCH', VIEWER, { exclusions: OFFICE_LISTS })
+    expect(response.status).toBe(403)
+    expect(calls.writes).toEqual([])
+  })
+
+  it('names the list and the entry that failed, per field', async () => {
+    const response = await send('PATCH', OWNER, {
+      exclusions: {
+        ip_ranges: ['203.0.113.7', 'my office'],
+        paths: ['admin'],
+        countries: ['Germany'],
+        hostnames: ['https://staging.example.com'],
+      },
+    })
+    expect(response.status).toBe(400)
+    expect(calls.writes).toEqual([])
+    const body = (await response.json()) as { error?: { details?: { issues?: unknown } } }
+    const text = JSON.stringify(body.error?.details)
+    for (const field of [
+      'exclusions.ip_ranges.1',
+      'exclusions.paths.0',
+      'exclusions.countries.0',
+      'exclusions.hostnames.0',
+    ]) {
+      expect(text).toContain(field)
+    }
+    // The value is never echoed back.
+    expect(text).not.toContain('my office')
+  })
+
+  it('refuses a partial set, because a write replaces all four lists', async () => {
+    const response = await send('PATCH', OWNER, { exclusions: { ip_ranges: ['10.0.0.1'] } })
+    expect(response.status).toBe(400)
+    expect(JSON.stringify(await response.json())).toContain('exclusions.paths')
+    expect(calls.writes).toEqual([])
+  })
+
+  it('refuses a list over its limit', async () => {
+    const response = await send('PATCH', OWNER, {
+      exclusions: {
+        ip_ranges: [],
+        paths: [],
+        countries: [],
+        hostnames: Array.from({ length: 21 }, (_, index) => `h${index}.example.com`),
+      },
+    })
+    expect(response.status).toBe(400)
+    expect(JSON.stringify(await response.json())).toContain('too_many')
+  })
+
+  it('says whether a country exclusion can match, without failing the read', async () => {
+    // No realtime store: unknown, not false.
+    expect(
+      ((await (await send('GET', OWNER)).json()) as Record<string, unknown>)[
+        'exclusions_country_active'
+      ],
+    ).toBeNull()
+
+    const resolving = appWith({ readGeoResolvedAt: async () => '2026-11-16T10:00:00.000Z' })
+    expect(
+      ((await (await send('GET', OWNER, undefined, resolving)).json()) as Record<string, unknown>)[
+        'exclusions_country_active'
+      ],
+    ).toBe(true)
+
+    const silent = appWith({ readGeoResolvedAt: async () => null })
+    expect(
+      ((await (await send('GET', OWNER, undefined, silent)).json()) as Record<string, unknown>)[
+        'exclusions_country_active'
+      ],
+    ).toBe(false)
+
+    const down = appWith({ readGeoResolvedAt: () => Promise.reject(new Error('valkey down')) })
+    const answered = await send('GET', OWNER, undefined, down)
+    expect(answered.status).toBe(200)
+    expect(
+      ((await answered.json()) as Record<string, unknown>)['exclusions_country_active'],
+    ).toBeNull()
+  })
+
+  it('documents exclusions in the contract and keeps them out of the tracker config', async () => {
+    const text = await spec()
+    expect(text).toContain('IngestExclusions:')
+    expect(text).toContain('exclusions_country_active:')
+    const start = text.indexOf('\n    TrackerConfig:\n')
+    expect(start).toBeGreaterThan(0)
+    const rest = text.slice(start + 1)
+    const block = rest.slice(0, rest.slice(1).search(/\n {4}[A-Za-z]+:\n/) + 1)
+    expect(block).toContain('config_version')
+    expect(block).not.toContain('exclusions')
   })
 })

@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto'
 import { and, eq, isNull, or, sql } from 'drizzle-orm'
 import {
   DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
   InvalidHeartbeatIntervalError,
+  type IngestExclusions,
   isValidHeartbeatIntervalSeconds,
   type SiteIngestConfig,
   type SiteTrackerSettings,
@@ -70,6 +72,37 @@ export interface ResolvedIngestConfig {
    * second round-trip would put a Postgres read in front of every batch.
    */
   readonly noCodeRules: readonly ResolvedNoCodeRule[]
+  /**
+   * The site's server-side exclusions (migration 0051), in the same single
+   * query. Never part of the tracker config: the collector matches them, no
+   * browser sees them.
+   */
+  readonly exclusions: IngestExclusions
+}
+
+/** The four exclusion columns of a (possibly absent) settings row. */
+interface ExclusionColumns {
+  readonly excludeIpRanges: string[] | null
+  readonly excludePaths: string[] | null
+  readonly excludeCountries: string[] | null
+  readonly excludeHostnames: string[] | null
+}
+
+const exclusionColumns = {
+  excludeIpRanges: siteIngestSettings.excludeIpRanges,
+  excludePaths: siteIngestSettings.excludePaths,
+  excludeCountries: siteIngestSettings.excludeCountries,
+  excludeHostnames: siteIngestSettings.excludeHostnames,
+}
+
+/** A site with no settings row excludes nothing, the same as an empty row. */
+function exclusionsFrom(row: ExclusionColumns): IngestExclusions {
+  return {
+    ipRanges: row.excludeIpRanges ?? EMPTY_INGEST_EXCLUSIONS.ipRanges,
+    paths: row.excludePaths ?? EMPTY_INGEST_EXCLUSIONS.paths,
+    countries: row.excludeCountries ?? EMPTY_INGEST_EXCLUSIONS.countries,
+    hostnames: row.excludeHostnames ?? EMPTY_INGEST_EXCLUSIONS.hostnames,
+  }
 }
 
 /**
@@ -103,6 +136,7 @@ export async function resolveIngestConfig(
       featureInteractions: siteIngestSettings.featureInteractions,
       featureHeartbeat: siteIngestSettings.featureHeartbeat,
       attributedRevenue: siteIngestSettings.attributedRevenue,
+      ...exclusionColumns,
       allowedDomains: sql<string[]>`coalesce(
         (SELECT array_agg(lower(domain)) FROM site_domains WHERE site_id = ${sites.id}),
         '{}'
@@ -154,6 +188,7 @@ export async function resolveIngestConfig(
       allowedDomains: row.allowedDomains ?? [],
     },
     noCodeRules: row.noCodeRules ?? [],
+    exclusions: exclusionsFrom(row),
     settings: {
       timezone: row.timezone ?? DEFAULT_TRACKER_SETTINGS.timezone,
       redactQueryKeys: row.redactQueryKeys ?? DEFAULT_TRACKER_SETTINGS.redactQueryKeys,
@@ -186,7 +221,11 @@ export async function resolveIngestConfig(
 export async function readSiteIngestSettings(
   db: Database,
   siteId: string,
-): Promise<{ settings: SiteTrackerSettings; configVersion: number } | null> {
+): Promise<{
+  settings: SiteTrackerSettings
+  exclusions: IngestExclusions
+  configVersion: number
+} | null> {
   const [row] = await db
     .select({
       configVersion: sites.configVersion,
@@ -199,6 +238,7 @@ export async function readSiteIngestSettings(
       featureInteractions: siteIngestSettings.featureInteractions,
       featureHeartbeat: siteIngestSettings.featureHeartbeat,
       attributedRevenue: siteIngestSettings.attributedRevenue,
+      ...exclusionColumns,
     })
     .from(sites)
     .leftJoin(siteIngestSettings, eq(siteIngestSettings.siteId, sites.id))
@@ -208,6 +248,7 @@ export async function readSiteIngestSettings(
 
   return {
     configVersion: row.configVersion,
+    exclusions: exclusionsFrom(row),
     settings: {
       timezone: row.timezone ?? DEFAULT_TRACKER_SETTINGS.timezone,
       redactQueryKeys: row.redactQueryKeys ?? DEFAULT_TRACKER_SETTINGS.redactQueryKeys,
@@ -233,6 +274,8 @@ export interface UpsertSiteIngestSettingsInput {
   readonly heartbeatIntervalSeconds?: number
   readonly features?: Partial<SiteTrackerSettings['features']>
   readonly attributedRevenue?: boolean
+  /** Present means "replace all four lists"; already normalised by the domain. */
+  readonly exclusions?: IngestExclusions
 }
 
 /**
@@ -285,6 +328,14 @@ export async function upsertSiteIngestSettings(
     ...(input.attributedRevenue === undefined
       ? {}
       : { attributedRevenue: input.attributedRevenue }),
+    ...(input.exclusions === undefined
+      ? {}
+      : {
+          excludeIpRanges: [...input.exclusions.ipRanges],
+          excludePaths: [...input.exclusions.paths],
+          excludeCountries: [...input.exclusions.countries],
+          excludeHostnames: [...input.exclusions.hostnames],
+        }),
   }
 
   return db.transaction(async (tx) => {

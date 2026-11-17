@@ -1,8 +1,21 @@
 import { createHash } from 'node:crypto'
 import type { Policy } from '@openanalytics/domain'
 import type { Redis } from 'ioredis'
-import { EVENT_STREAM_KEY, daysToSeconds, dedupKey, siteQueueIndexKey, utcDayOf } from './keys.ts'
-import type { EnqueueBatchResult, EnqueueInput, EnqueueResult, EventStreamQueue } from './queue.ts'
+import {
+  EVENT_STREAM_KEY,
+  daysToSeconds,
+  dedupKey,
+  excludedRecordKey,
+  siteQueueIndexKey,
+  utcDayOf,
+} from './keys.ts'
+import type {
+  EnqueueBatchResult,
+  EnqueueInput,
+  EnqueueResult,
+  EventStreamQueue,
+  ExcludedEnqueueInput,
+} from './queue.ts'
 
 /**
  * Collector side of docs snapshot 05, D-209 step 1 — and of the all-or-nothing
@@ -41,13 +54,25 @@ local index_ttl_seconds = tonumber(ARGV[3])
 -- Pass one: read every dedup record before writing anything. Docs snapshot 02
 -- §7.3 — one same-ID/different-hash conflict rejects the whole request, and no
 -- part of it may already be enqueued when that answer is returned.
+--
+-- An event the site excluded has a record of its own (payload hash and time,
+-- no stream entry), read here beside the counted one so the two answer alike:
+-- a retry is a duplicate and a changed body is a conflict whichever list the
+-- first delivery landed on.
 local existing = {}
 for i = 1, count do
-  local dedup_key = KEYS[2 * i]
-  local base = 3 + (i - 1) * 5
+  local dedup_key = KEYS[3 * i - 1]
+  local excluded_key = KEYS[3 * i + 1]
+  local base = 3 + (i - 1) * 6
   local payload_hash = ARGV[base + 3]
 
   local record = redis.call('HMGET', dedup_key, 'payload_hash', 'stream_id', 'accepted_at')
+  if not record[1] then
+    local remembered = redis.call('HMGET', excluded_key, 'payload_hash', 'accepted_at')
+    if remembered[1] then
+      record = { remembered[1], '', remembered[2] }
+    end
+  end
   if record[1] then
     -- Same ID, different bytes: the caller reused an event ID for new data. The
     -- original acceptance is reported back, along with the batch position, so
@@ -63,6 +88,7 @@ end
 local reply = { 'ok' }
 for i = 1, count do
   local prior = existing[i]
+  local base = 3 + (i - 1) * 6
 
   if prior then
     -- Same ID, same bytes: an honest retry. No second stream row, and the first
@@ -71,10 +97,22 @@ for i = 1, count do
     reply[#reply + 1] = 'duplicate'
     reply[#reply + 1] = prior[2]
     reply[#reply + 1] = prior[3]
+  elseif ARGV[base + 6] == '1' then
+    -- Excluded by the site: remembered for the dedup window as a hash and a
+    -- time, and nothing else. No stream entry, no index entry, no payload.
+    local excluded_key = KEYS[3 * i + 1]
+    local payload_hash = ARGV[base + 3]
+    local accepted_at = ARGV[base + 5]
+
+    redis.call('HSET', excluded_key, 'payload_hash', payload_hash, 'accepted_at', accepted_at)
+    redis.call('EXPIRE', excluded_key, dedup_ttl_seconds)
+
+    reply[#reply + 1] = 'excluded'
+    reply[#reply + 1] = ''
+    reply[#reply + 1] = accepted_at
   else
-    local dedup_key = KEYS[2 * i]
-    local index_key = KEYS[2 * i + 1]
-    local base = 3 + (i - 1) * 5
+    local dedup_key = KEYS[3 * i - 1]
+    local index_key = KEYS[3 * i]
     local site_id = ARGV[base + 1]
     local event_id = ARGV[base + 2]
     local payload_hash = ARGV[base + 3]
@@ -134,7 +172,7 @@ export const ENQUEUE_SCRIPT_SHA1 = createHash('sha1').update(ENQUEUE_SCRIPT).dig
 export type EnqueuePolicy = Pick<Policy, 'INGEST_DEDUP_TTL_DAYS' | 'SITE_QUEUE_INDEX_TTL_DAYS'>
 
 export interface EnqueueScriptCall {
-  /** `[stream, dedup₁, index₁, dedup₂, index₂, …]`. */
+  /** `[stream, dedup₁, index₁, excluded₁, dedup₂, index₂, excluded₂, …]`. */
   readonly keys: readonly string[]
   readonly argv: readonly string[]
 }
@@ -152,11 +190,13 @@ export class EmptyBatchError extends Error {
  * Keys are declared rather than constructed inside Lua so the script stays
  * cluster-analysable and every key it touches is visible at the call site. The
  * stream comes first because there is exactly one of it; each event then
- * contributes its dedup key and its day bucket, in pairs, which is what lets the
- * script address event `i` as `KEYS[2i]` and `KEYS[2i+1]`.
+ * contributes its dedup key, its day bucket and its excluded-record key, in
+ * threes, which is what lets the script address event `i` as `KEYS[3i-1]`,
+ * `KEYS[3i]` and `KEYS[3i+1]`. Every event declares all three whichever list
+ * it is on, because pass one reads both records for every event.
  */
 export function buildEnqueueCall(
-  inputs: readonly EnqueueInput[],
+  inputs: readonly (EnqueueInput | ExcludedEnqueueInput)[],
   options: { readonly policy: EnqueuePolicy; readonly streamKey?: string },
 ): EnqueueScriptCall {
   if (inputs.length === 0) throw new EmptyBatchError()
@@ -171,7 +211,16 @@ export function buildEnqueueCall(
   for (const input of inputs) {
     keys.push(dedupKey(input.siteId, input.eventId))
     keys.push(siteQueueIndexKey(input.siteId, utcDayOf(input.acceptedAt)))
-    argv.push(input.siteId, input.eventId, input.payloadHash, input.payload, input.acceptedAt)
+    keys.push(excludedRecordKey(input.siteId, input.eventId))
+    const excluded = input.excluded === true
+    argv.push(
+      input.siteId,
+      input.eventId,
+      input.payloadHash,
+      excluded ? '' : input.payload,
+      input.acceptedAt,
+      excluded ? '1' : '0',
+    )
   }
 
   return { keys, argv }
@@ -230,7 +279,7 @@ export function parseEnqueueReply(reply: unknown, expected: number): EnqueueBatc
 
     if (outcome === 'enqueued') {
       results.push({ outcome, enqueued: true, streamId, firstAcceptedAt: acceptedAt })
-    } else if (outcome === 'duplicate') {
+    } else if (outcome === 'duplicate' || outcome === 'excluded') {
       results.push({ outcome, enqueued: false, streamId, firstAcceptedAt: acceptedAt })
     } else {
       throw new EnqueueReplyError(reply)
@@ -269,7 +318,9 @@ export function createEventStreamQueue(options: EventStreamQueueOptions): EventS
     }
   }
 
-  const enqueueBatch = async (inputs: readonly EnqueueInput[]): Promise<EnqueueBatchResult> => {
+  const enqueueBatch = async (
+    inputs: readonly (EnqueueInput | ExcludedEnqueueInput)[],
+  ): Promise<EnqueueBatchResult> => {
     const call = buildEnqueueCall(inputs, {
       policy: options.policy,
       ...(options.streamKey === undefined ? {} : { streamKey: options.streamKey }),

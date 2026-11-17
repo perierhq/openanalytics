@@ -13,6 +13,7 @@ import { applyPostgresStreams } from '../support/postgres-streams.ts'
 import { MAX_HEARTBEAT_INTERVAL_SECONDS } from '@openanalytics/contracts'
 import {
   DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
   InvalidHeartbeatIntervalError,
   decideIngestAdmission,
 } from '@openanalytics/domain'
@@ -353,6 +354,62 @@ describeIfPostgres('site ingest config resolution', () => {
         `UPDATE site_ingest_settings SET heartbeat_interval_seconds = 300 WHERE site_id = $1`,
         [siteId],
       ),
+    ).rejects.toThrow()
+  })
+
+  it('stores exclusions, replaces them whole, and bumps config_version (migration 0051)', async () => {
+    const { siteId, trackingKey } = await newSiteWithKey()
+
+    // No row: nothing excluded, and the read surface says so explicitly.
+    expect((await resolveIngestConfig(db, trackingKey))?.exclusions).toEqual(
+      EMPTY_INGEST_EXCLUSIONS,
+    )
+    expect((await readSiteIngestSettings(db, siteId))?.exclusions).toEqual(EMPTY_INGEST_EXCLUSIONS)
+
+    const first = await upsertSiteIngestSettings(db, {
+      siteId,
+      exclusions: {
+        ipRanges: ['203.0.113.0/24'],
+        paths: ['/admin/*'],
+        countries: ['DE'],
+        hostnames: ['*.staging.example.com'],
+      },
+    })
+    const resolved = await resolveIngestConfig(db, trackingKey)
+    expect(resolved?.exclusions).toEqual({
+      ipRanges: ['203.0.113.0/24'],
+      paths: ['/admin/*'],
+      countries: ['DE'],
+      hostnames: ['*.staging.example.com'],
+    })
+    // The collector's cache is keyed by the version, so the write has to move it.
+    expect(resolved?.config.configVersion).toBe(first.configVersion)
+
+    // A write that does not mention exclusions leaves them alone…
+    await upsertSiteIngestSettings(db, { siteId, timezone: 'Asia/Baku' })
+    expect((await readSiteIngestSettings(db, siteId))?.exclusions.paths).toEqual(['/admin/*'])
+
+    // …and one that does replaces all four lists.
+    await upsertSiteIngestSettings(db, {
+      siteId,
+      exclusions: { ipRanges: [], paths: ['/preview'], countries: [], hostnames: [] },
+    })
+    expect((await readSiteIngestSettings(db, siteId))?.exclusions).toEqual({
+      ipRanges: [],
+      paths: ['/preview'],
+      countries: [],
+      hostnames: [],
+    })
+  })
+
+  it('refuses an exclusion list over its bound at the column', async () => {
+    const { siteId } = await newSiteWithKey()
+    await upsertSiteIngestSettings(db, { siteId, timezone: 'UTC' })
+    await expect(
+      pool.query(`UPDATE site_ingest_settings SET exclude_hostnames = $2 WHERE site_id = $1`, [
+        siteId,
+        Array.from({ length: 21 }, (_, index) => `h${index}.example.com`),
+      ]),
     ).rejects.toThrow()
   })
 

@@ -62,6 +62,14 @@ function forwardedForAddress(header: string | undefined): string | null {
 export interface ClientIdentity {
   readonly ipHash: string
   readonly country: string | null
+  /**
+   * Where `country` came from: a platform header (`x-vercel-ip-country`,
+   * `fly-client-country`, `cf-ipcountry`) or this collector's own GeoIP
+   * database. A header is believed only because the fronting proxy is expected
+   * to strip what it does not set itself; nothing here can tell whether one
+   * did, so only `database` is evidence this install resolves countries.
+   */
+  readonly countrySource: 'platform' | 'database' | null
   readonly city: string | null
   /** True when no address could be read; geo and bucketing degrade, not fail. */
   readonly degraded: boolean
@@ -112,6 +120,7 @@ export function readClientIdentity(
     PLATFORM_COUNTRY_HEADERS.map((header) => normalizeCountry(c.req.header(header))).find(
       (value) => value !== null,
     ) ?? null
+  let countrySource: ClientIdentity['countrySource'] = country === null ? null : 'platform'
 
   let city =
     PLATFORM_CITY_HEADERS.map((header) => c.req.header(header)?.trim())
@@ -125,7 +134,10 @@ export function readClientIdentity(
   if (address !== null && geo !== undefined && (country === null || city === null)) {
     const hint = geo(address)
     if (hint !== null) {
-      country ??= hint.country
+      if (country === null && hint.country !== null) {
+        country = hint.country
+        countrySource = 'database'
+      }
       city ??= hint.city
     }
   }
@@ -133,10 +145,16 @@ export function readClientIdentity(
   if (address === null) {
     // A bucket every anonymous caller shares. Coarse on purpose: it still bounds
     // the damage one unidentifiable source can do, and it is not a visitor id.
-    return { ipHash: hashAddress('unknown', options), country, city, degraded: true }
+    return {
+      ipHash: hashAddress('unknown', options),
+      country,
+      countrySource,
+      city,
+      degraded: true,
+    }
   }
 
-  return { ipHash: hashAddress(address, options), country, city, degraded: false }
+  return { ipHash: hashAddress(address, options), country, countrySource, city, degraded: false }
 }
 
 /**

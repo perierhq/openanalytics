@@ -4,10 +4,17 @@ import {
   createFallbackLimiter,
   type CollectorDeps,
 } from '../../apps/collector/src/index.ts'
-import { persistedEventSchema } from '@openanalytics/contracts'
+import type {
+  CloudIngestFacts,
+  CollectorCloudExtension,
+} from '../../apps/collector/src/cloud-extension.ts'
+import { ApiError, persistedEventSchema } from '@openanalytics/contracts'
 import {
   DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
+  compileIngestExclusions,
   loadPolicy,
+  type IngestExclusions,
   type SiteIngestConfig,
   type SiteTrackerSettings,
 } from '@openanalytics/domain'
@@ -22,6 +29,7 @@ import type {
   EnqueueBatchResult,
   EnqueueInput,
   EventStreamQueue,
+  ExcludedEnqueueInput,
   PresenceTouchInput,
   RealtimeCache,
   RecordTagSightingInput,
@@ -69,24 +77,45 @@ const siteConfig = (overrides: Partial<SiteIngestConfig> = {}): SiteIngestConfig
   ...overrides,
 })
 
+/** What a registered plan surface resolved beside the config; the values are
+ * never read by these tests, only carried. */
+const CLOUD_FACTS: CloudIngestFacts = {
+  quotaAnchorAt: null,
+  planTier: null,
+  ingestGraceUntil: null,
+  firstEntitledAt: null,
+}
+
 class FakeQueue implements EventStreamQueue {
-  readonly batches: EnqueueInput[][] = []
-  /** Stream ids by `(site, event)`, so a retry answers like the real dedup. */
+  /** Every batch the route handed the queue, counted and excluded entries alike. */
+  readonly batches: (EnqueueInput | ExcludedEnqueueInput)[][] = []
+  /** Records by `(site, event)`, so a retry answers like the real dedup — an
+   * excluded event's record included, which is what the real script reads. */
   private readonly accepted = new Map<string, { hash: string; streamId: string; at: string }>()
   failWith: Error | null = null
   private sequence = 0
+  private rows = 0
 
-  /** Everything the route handed the queue, across all requests. */
+  /** The counted events the route handed the queue, across all requests. */
   get enqueued(): EnqueueInput[] {
-    return this.batches.flat()
+    return this.batches.flat().filter((input): input is EnqueueInput => input.excluded !== true)
+  }
+
+  /** The excluded events' records: what the route asked the queue to remember. */
+  get excludedRecords(): ExcludedEnqueueInput[] {
+    return this.batches
+      .flat()
+      .filter((input): input is ExcludedEnqueueInput => input.excluded === true)
   }
 
   /** Distinct stream entries created — what a duplicate must *not* add to. */
   get streamRows(): number {
-    return this.accepted.size
+    return this.rows
   }
 
-  async enqueueBatch(inputs: readonly EnqueueInput[]): Promise<EnqueueBatchResult> {
+  async enqueueBatch(
+    inputs: readonly (EnqueueInput | ExcludedEnqueueInput)[],
+  ): Promise<EnqueueBatchResult> {
     if (this.failWith) throw this.failWith
 
     for (const [index, input] of inputs.entries()) {
@@ -112,7 +141,17 @@ class FakeQueue implements EventStreamQueue {
           firstAcceptedAt: prior.at,
         }
       }
+      if (input.excluded === true) {
+        this.accepted.set(key, { hash: input.payloadHash, streamId: '', at: input.acceptedAt })
+        return {
+          outcome: 'excluded' as const,
+          enqueued: false as const,
+          streamId: '',
+          firstAcceptedAt: input.acceptedAt,
+        }
+      }
       this.sequence += 1
+      this.rows += 1
       const streamId = `${this.sequence}-0`
       this.accepted.set(key, { hash: input.payloadHash, streamId, at: input.acceptedAt })
       return {
@@ -227,6 +266,17 @@ class FakeRealtime implements RealtimeCache {
     return []
   }
 
+  /** Every "a country was resolved" mark, for the exclusions geo signal. */
+  readonly geoMarks: string[] = []
+  async markGeoResolved(input: { at: Date }): Promise<void> {
+    this.geoMarks.push(input.at.toISOString())
+  }
+
+  /** The api's read; the collector never calls it. */
+  async readGeoResolvedAt(): Promise<string | null> {
+    return null
+  }
+
   /**
    * Presence read and access-epoch surfaces are the realtime gateway's and the
    * api's (docs snapshot 02 §17, D-213); the collector never calls them. The
@@ -265,6 +315,8 @@ interface Harness {
   readonly queue: FakeQueue
   readonly realtime: FakeRealtime
   readonly metrics: ReturnType<typeof createRecordingMetrics>
+  /** Every log line the app wrote, serialised, for "never logged" assertions. */
+  readonly logs: string[]
   post(path: string, body: unknown, headers?: Record<string, string>): Promise<Response>
 }
 
@@ -282,6 +334,12 @@ function harness(
       trigger: 'click' | 'submit' | 'url_pattern'
       selector?: string
     }[]
+    /** The site's server-side exclusions. */
+    exclusions?: IngestExclusions
+    /** A registered plan surface, for "a refusal does not differ by exclusion". */
+    cloud?: CollectorCloudExtension
+    /** A GeoIP database lookup, for the country-signal tests. */
+    geo?: CollectorDeps['geo']
   } = {},
 ): Harness {
   const queue = new FakeQueue()
@@ -290,11 +348,22 @@ function harness(
   const config = options.config ?? siteConfig()
   const settings = options.settings ?? DEFAULT_TRACKER_SETTINGS
   const noCodeRules = options.noCodeRules ?? []
+  const exclusions = compileIngestExclusions(options.exclusions ?? EMPTY_INGEST_EXCLUSIONS)
+  const logs: string[] = []
 
   const ingest: CollectorDeps = {
     configStore: {
       resolve: async (key: string) =>
-        key === TRACKING_KEY ? { config, settings, slug: 'shop', noCodeRules } : null,
+        key === TRACKING_KEY
+          ? {
+              config,
+              settings,
+              slug: 'shop',
+              noCodeRules,
+              exclusions,
+              ...(options.cloud ? { cloud: CLOUD_FACTS } : {}),
+            }
+          : null,
       invalidate: () => undefined,
     },
     queue,
@@ -304,6 +373,8 @@ function harness(
     metrics: metrics as Metrics,
     fallbackLimiter: createFallbackLimiter({ perMinute: 120, maxEntries: 100 }),
     now: () => options.now ?? NOW,
+    ...(options.cloud ? { cloud: options.cloud } : {}),
+    ...(options.geo ? { geo: options.geo } : {}),
   }
 
   const service = createServiceMetadata({
@@ -314,7 +385,7 @@ function harness(
   })
   const app = createApp({
     service,
-    logger: createLogger({ service, sink: () => undefined }),
+    logger: createLogger({ service, sink: (line) => logs.push(line) }),
     env: { ...POLICY, PORT: 0 } as never,
     ingest,
   })
@@ -324,6 +395,7 @@ function harness(
     queue,
     realtime,
     metrics,
+    logs,
     post: async (path, body, headers = {}) =>
       app.request(path, {
         method: 'POST',
@@ -1412,5 +1484,410 @@ describe('no-code origin is established by the server, not claimed by the client
     )
     expect(response.status).toBe(202)
     expect(billableOf(h)).toBe(1)
+  })
+})
+
+describe('server-side exclusions', () => {
+  const OFFICE = '203.0.113.7'
+  const heartbeat = (page?: { url: string }) => ({
+    schema_version: 1,
+    tracking_key: TRACKING_KEY,
+    sent_at: NOW.toISOString(),
+    context: { sdk: 'web', sdk_version: '2.0.0' },
+    ...(page ? { page } : {}),
+  })
+  const excludedBy = (h: Harness) =>
+    h.metrics.recorded
+      .filter((entry) => entry.name === 'collector_events_excluded')
+      .map((entry): Record<string, unknown> => ({ ...entry.labels, value: entry.value }))
+
+  it('drops a batch from an excluded address before anything is queued', async () => {
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] } })
+
+    const response = await h.post('/v1/events', batchOf([pageView(), pageView()]), {
+      'x-real-ip': OFFICE,
+    })
+
+    // The answer an accepted batch of two gets: the visitor's browser cannot
+    // tell it was excluded.
+    expect(response.status).toBe(202)
+    expect(await response.json()).toEqual({ accepted: 2, duplicate: 0 })
+    expect(h.queue.enqueued).toHaveLength(0)
+    // Not in realtime either.
+    expect(h.realtime.touches).toHaveLength(0)
+    expect(excludedBy(h)).toEqual([
+      { site_id: 'site-1', endpoint: 'events', reason: 'ip', value: 2 },
+    ])
+  })
+
+  it('answers an excluded batch exactly as it answers the same batch accepted', async () => {
+    const rules = { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] }
+    const events = [pageView(), pageView()]
+    const excluded = await harness({ exclusions: rules }).post('/v1/events', batchOf(events), {
+      'x-real-ip': OFFICE,
+    })
+    const accepted = await harness({ exclusions: rules }).post('/v1/events', batchOf(events), {
+      'x-real-ip': '198.51.100.1',
+    })
+
+    expect(excluded.status).toBe(accepted.status)
+    const names = (response: Response) => {
+      const seen: string[] = []
+      response.headers.forEach((_value, name) => seen.push(name))
+      return seen.sort()
+    }
+    expect(names(excluded)).toEqual(names(accepted))
+    expect(excluded.headers.get('content-type')).toBe(accepted.headers.get('content-type'))
+    expect(await excluded.text()).toBe(await accepted.text())
+  })
+
+  it('still refuses an excluded batch the server would refuse anyway', async () => {
+    // The answer must not differ by exclusion in either direction: a batch with
+    // an event past the 24-hour horizon is a 400 whether or not it is excluded.
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] } })
+    const stale = pageView({ occurred_at: new Date(NOW.getTime() - 48 * 3_600_000).toISOString() })
+
+    const response = await h.post('/v1/events', batchOf([stale]), { 'x-real-ip': OFFICE })
+    expect(response.status).toBe(400)
+  })
+
+  it('drops by country when geo resolved one', async () => {
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, countries: ['DE'] } })
+
+    const response = await h.post('/v1/events', batchOf([pageView()]), { 'cf-ipcountry': 'DE' })
+    expect(response.status).toBe(202)
+    expect(h.queue.enqueued).toHaveLength(0)
+    expect(excludedBy(h)).toEqual([
+      { site_id: 'site-1', endpoint: 'events', reason: 'country', value: 1 },
+    ])
+
+    // And a visitor from elsewhere is counted.
+    await h.post('/v1/events', batchOf([pageView()]), { 'cf-ipcountry': 'FR' })
+    expect(h.queue.enqueued).toHaveLength(1)
+  })
+
+  it('drops by the page host, with *. covering subdomains and not the apex', async () => {
+    const h = harness({
+      exclusions: { ...EMPTY_INGEST_EXCLUSIONS, hostnames: ['*.staging.example.com'] },
+    })
+
+    await h.post(
+      '/v1/events',
+      batchOf([pageView({ page: { url: 'https://pr-12.staging.example.com/' } })]),
+    )
+    expect(h.queue.enqueued).toHaveLength(0)
+    expect(excludedBy(h)).toEqual([
+      { site_id: 'site-1', endpoint: 'events', reason: 'hostname', value: 1 },
+    ])
+
+    await h.post(
+      '/v1/events',
+      batchOf([pageView({ page: { url: 'https://staging.example.com/' } })]),
+    )
+    expect(h.queue.enqueued).toHaveLength(1)
+  })
+
+  it('judges an event with no page by the request origin', async () => {
+    const h = harness({
+      exclusions: { ...EMPTY_INGEST_EXCLUSIONS, hostnames: ['staging.example.com'] },
+    })
+    const custom = {
+      event_id: uuidV7(),
+      type: 'custom_event' as const,
+      name: 'signup',
+      occurred_at: NOW.toISOString(),
+    }
+
+    await h.post('/v1/events', batchOf([custom]), { origin: 'https://staging.example.com' })
+    expect(h.queue.enqueued).toHaveLength(0)
+  })
+
+  it('drops only the events on an excluded path and keeps the rest of the batch', async () => {
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] } })
+    const kept = pageView({ page: { url: 'https://shop.example.com/pricing' } })
+
+    const response = await h.post(
+      '/v1/events',
+      batchOf([pageView({ page: { url: 'https://shop.example.com/admin/users/7' } }), kept]),
+    )
+
+    // Two sent, two "accepted" from the browser's side; one stored.
+    expect(await response.json()).toEqual({ accepted: 2, duplicate: 0 })
+    expect(h.queue.enqueued.map((entry) => entry.eventId)).toEqual([kept.event_id])
+    expect(excludedBy(h)).toEqual([
+      { site_id: 'site-1', endpoint: 'events', reason: 'path', value: 1 },
+    ])
+    // Presence reflects the page that was counted, never the excluded one.
+    expect(h.realtime.touches[0]?.page?.path).toBe('/pricing')
+  })
+
+  it('never writes the address, the path or the host to a log or a metric label', async () => {
+    const h = harness({
+      exclusions: {
+        ...EMPTY_INGEST_EXCLUSIONS,
+        ipRanges: ['203.0.113.0/24'],
+        paths: ['/secret-admin/*'],
+        hostnames: ['hidden-staging.example.com'],
+      },
+    })
+    await h.post('/v1/events', batchOf([pageView()]), { 'x-real-ip': OFFICE })
+    await h.post(
+      '/v1/events',
+      batchOf([pageView({ page: { url: 'https://shop.example.com/secret-admin/x' } })]),
+    )
+    await h.post(
+      '/v1/events',
+      batchOf([pageView({ page: { url: 'https://hidden-staging.example.com/' } })]),
+    )
+
+    expect(excludedBy(h).map((entry) => entry['reason'])).toEqual(['ip', 'path', 'hostname'])
+    const written = [...h.logs, JSON.stringify(h.metrics.recorded)].join('\n')
+    for (const secret of [OFFICE, '203.0.113', 'secret-admin', 'hidden-staging']) {
+      expect(written).not.toContain(secret)
+    }
+  })
+
+  it('filters bots first, so an excluded crawler still counts as a bot', async () => {
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] } })
+    await h.post('/v1/events', batchOf([pageView()]), {
+      'x-real-ip': OFFICE,
+      'user-agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+    })
+    expect(h.metrics.countOf('collector_bot_filtered')).toBe(1)
+    expect(excludedBy(h)).toEqual([])
+  })
+
+  it('keeps an excluded heartbeat out of realtime and answers 204', async () => {
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] } })
+
+    const response = await h.post('/v1/realtime/heartbeat', heartbeat(), { 'x-real-ip': OFFICE })
+
+    expect(response.status).toBe(204)
+    expect(h.realtime.visitors).toHaveLength(0)
+    expect(h.metrics.countOf('collector_heartbeat_accepted')).toBe(0)
+    expect(excludedBy(h)).toEqual([
+      { site_id: 'site-1', endpoint: 'heartbeat', reason: 'ip', value: 1 },
+    ])
+  })
+
+  it('keeps a heartbeat on an excluded page out of realtime', async () => {
+    const h = harness({ exclusions: { ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] } })
+
+    const response = await h.post(
+      '/v1/realtime/heartbeat',
+      heartbeat({ url: 'https://shop.example.com/admin/' }),
+    )
+    expect(response.status).toBe(204)
+    expect(h.realtime.visitors).toHaveLength(0)
+
+    await h.post('/v1/realtime/heartbeat', heartbeat({ url: 'https://shop.example.com/' }))
+    expect(h.realtime.visitors).toHaveLength(1)
+  })
+
+  describe('a repeated or refused request answers as it would counted', () => {
+    const OFFICE_RULES = { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] }
+    const COUNTED_IP = '198.51.100.1'
+
+    /** Status, `Retry-After` and body, with the per-request id taken out. */
+    const answerOf = async (response: Response) => {
+      const body = (await response.json()) as Record<string, unknown>
+      const error = body['error'] as Record<string, unknown> | undefined
+      if (error) delete error['request_id']
+      return { status: response.status, retryAfter: response.headers.get('retry-after'), body }
+    }
+
+    /**
+     * The same requests, sent once from an excluded address and once from an
+     * address the site counts, each to a fresh collector with the same rules.
+     */
+    const twins = async (
+      bodies: readonly unknown[],
+      options: Parameters<typeof harness>[0] = {},
+      prepare: (h: Harness) => void = () => undefined,
+    ) => {
+      const run = async (ip: string) => {
+        const h = harness({ exclusions: OFFICE_RULES, ...options })
+        prepare(h)
+        const answers = []
+        for (const body of bodies) {
+          answers.push(await answerOf(await h.post('/v1/events', body, { 'x-real-ip': ip })))
+        }
+        return { h, answers }
+      }
+      return { excluded: await run(OFFICE), counted: await run(COUNTED_IP) }
+    }
+
+    it('answers a fully excluded batch sent twice with duplicate the second time', async () => {
+      const batch = batchOf([pageView()])
+      const { excluded, counted } = await twins([batch, batch])
+
+      expect(excluded.answers.map((answer) => answer.body)).toEqual([
+        { accepted: 1, duplicate: 0 },
+        { accepted: 0, duplicate: 1 },
+      ])
+      expect(excluded.answers).toEqual(counted.answers)
+      // Remembered as a hash, not stored: nothing reached the stream.
+      expect(excluded.h.queue.streamRows).toBe(0)
+      expect(excluded.h.queue.enqueued).toHaveLength(0)
+    })
+
+    it('answers a mixed batch sent twice the way an all-counted one is answered', async () => {
+      const rules = { ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] }
+      const batch = batchOf([
+        pageView({ page: { url: 'https://shop.example.com/admin/users/7' } }),
+        pageView(),
+      ])
+      const mixed = harness({ exclusions: rules })
+      const plain = harness()
+
+      const mixedAnswers = [
+        await answerOf(await mixed.post('/v1/events', batch)),
+        await answerOf(await mixed.post('/v1/events', batch)),
+      ]
+      const plainAnswers = [
+        await answerOf(await plain.post('/v1/events', batch)),
+        await answerOf(await plain.post('/v1/events', batch)),
+      ]
+
+      expect(mixedAnswers.map((answer) => answer.body)).toEqual([
+        { accepted: 2, duplicate: 0 },
+        { accepted: 0, duplicate: 2 },
+      ])
+      expect(mixedAnswers).toEqual(plainAnswers)
+      expect(mixed.queue.streamRows).toBe(1)
+    })
+
+    it('refuses a changed body under the same event id with 409, excluded or not', async () => {
+      const first = pageView()
+      const changed = { ...first, page: { url: 'https://shop.example.com/changed' } }
+      const { excluded, counted } = await twins([batchOf([first]), batchOf([changed])])
+
+      expect(excluded.answers[1]?.status).toBe(409)
+      expect(excluded.answers).toEqual(counted.answers)
+    })
+
+    it('answers 503 when the queue is down, excluded or not', async () => {
+      const { excluded, counted } = await twins([batchOf([pageView()])], {}, (h) => {
+        h.queue.failWith = new Error('ECONNRESET')
+      })
+
+      expect(excluded.answers[0]?.status).toBe(503)
+      expect(excluded.answers[0]?.retryAfter).toBe(String(POLICY.QUEUE_FAILURE_RETRY_AFTER_SECONDS))
+      expect(excluded.answers).toEqual(counted.answers)
+    })
+
+    it('refuses a batch over the plan limit, excluded or not', async () => {
+      // Only the quota check is reached; the rest of the surface is inert.
+      const refusing = {
+        name: 'test-plans',
+        decorateConfig: async (resolved: unknown) => resolved,
+        admitSuspended: () => {
+          throw new Error('not reached: the site is active')
+        },
+        checkUsage: async () => {
+          throw new ApiError('RATE_LIMITED', 'The plan window is spent.', { status: 402 })
+        },
+        recordUsage: async () => undefined,
+      } as unknown as CollectorCloudExtension
+      const { excluded, counted } = await twins([batchOf([pageView()])], { cloud: refusing })
+
+      expect(excluded.answers[0]?.status).toBe(402)
+      expect(excluded.answers).toEqual(counted.answers)
+    })
+
+    it('remembers an excluded event by hashes alone, never the address or the payload', async () => {
+      const event = pageView({ page: { url: 'https://shop.example.com/very-private-page' } })
+      const { excluded } = await twins([batchOf([event])])
+
+      const records = excluded.h.queue.excludedRecords
+      expect(records).toHaveLength(1)
+      expect(records[0]).not.toHaveProperty('payload')
+      const written = JSON.stringify(records)
+      for (const secret of [OFFICE, 'very-private-page', 'shop.example.com']) {
+        expect(written).not.toContain(secret)
+      }
+    })
+  })
+
+  describe('usage', () => {
+    /** A plan surface that always has a window and records every increment. */
+    const recordingPlans = () => {
+      const recorded: number[] = []
+      const extension = {
+        name: 'test-plans',
+        decorateConfig: async (resolved: unknown) => resolved,
+        admitSuspended: () => {
+          throw new Error('not reached: the site is active')
+        },
+        checkUsage: async () => ({
+          startsAt: new Date('2026-01-01T00:00:00.000Z'),
+          endsAt: new Date('2026-02-01T00:00:00.000Z'),
+        }),
+        recordUsage: async (input: { newlyBillable: number }) => {
+          recorded.push(input.newlyBillable)
+        },
+      } as unknown as CollectorCloudExtension
+      return { extension, recorded }
+    }
+    const billed = (recorded: readonly number[]) =>
+      recorded.reduce((total, count) => total + count, 0)
+
+    it('bills nothing for a fully excluded batch', async () => {
+      const plans = recordingPlans()
+      const h = harness({
+        exclusions: { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] },
+        cloud: plans.extension,
+      })
+
+      const response = await h.post('/v1/events', batchOf([pageView(), pageView()]), {
+        'x-real-ip': OFFICE,
+      })
+
+      expect(response.status).toBe(202)
+      // `recordUsage` is skipped at zero; either way nothing is billed.
+      expect(billed(plans.recorded)).toBe(0)
+      expect(plans.recorded.every((count) => count === 0)).toBe(true)
+    })
+
+    it('bills only the counted events of a mixed batch', async () => {
+      const plans = recordingPlans()
+      const h = harness({
+        exclusions: { ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] },
+        cloud: plans.extension,
+      })
+
+      await h.post(
+        '/v1/events',
+        batchOf([
+          pageView({ page: { url: 'https://shop.example.com/admin/users/7' } }),
+          pageView({ page: { url: 'https://shop.example.com/admin/users/8' } }),
+          pageView(),
+        ]),
+      )
+
+      expect(plans.recorded).toEqual([1])
+    })
+  })
+
+  it('records that countries resolve from the GeoIP database, at most once in a while', async () => {
+    const geo = () => ({ country: 'DE', city: null })
+    const h = harness({ geo })
+    await h.post('/v1/events', batchOf([pageView()]), { 'x-real-ip': '198.51.100.1' })
+    await h.post('/v1/events', batchOf([pageView()]), { 'x-real-ip': '198.51.100.1' })
+    expect(h.realtime.geoMarks).toEqual([NOW.toISOString()])
+
+    const none = harness()
+    await none.post('/v1/events', batchOf([pageView()]), { 'x-real-ip': '198.51.100.1' })
+    expect(none.realtime.geoMarks).toEqual([])
+  })
+
+  it('does not take a country header as proof that countries resolve', async () => {
+    // A platform header is believed only because the fronting proxy is
+    // expected to strip it; nothing tells the collector a proxy vouched for
+    // it, so a visitor sending one cannot switch the settings signal on.
+    const h = harness()
+    await h.post('/v1/events', batchOf([pageView()]), { 'cf-ipcountry': 'DE' })
+    await h.post('/v1/events', batchOf([pageView()]), { 'x-vercel-ip-country': 'FR' })
+    expect(h.realtime.geoMarks).toEqual([])
   })
 })

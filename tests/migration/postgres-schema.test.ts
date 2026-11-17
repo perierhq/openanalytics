@@ -62,6 +62,12 @@ const EXPECTED_CONSTRAINTS = [
   // them fails at the database rather than reaching a browser.
   'site_ingest_settings_interaction_sampling_check',
   'site_ingest_settings_heartbeat_interval_seconds_check',
+  // Migration 0051: the exclusion lists' bounds mirror `IngestExclusions`, so a
+  // list nobody could have entered through the API cannot reach the collector.
+  'site_ingest_settings_exclude_ip_ranges_check',
+  'site_ingest_settings_exclude_paths_check',
+  'site_ingest_settings_exclude_countries_check',
+  'site_ingest_settings_exclude_hostnames_check',
   // M6: one queue message belongs to exactly one manifest (D-209 step 3), row
   // order inside a batch is a set of distinct positions (02 §7.5), and a site is
   // registered at most once per batch in the write fence (D-210).

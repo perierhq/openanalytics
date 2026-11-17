@@ -37,6 +37,24 @@ export const siteIngestSettings = pgTable(
     // keeps: it decides whether the browser sends the `order_id` linking hint,
     // which is why it is the one column here that defaults `false`.
     attributedRevenue: boolean('attributed_revenue').notNull().default(false),
+    // Server-side exclusions (migration 0051). Read by the collector through
+    // `resolveIngestConfig` and never projected into the tracker config.
+    excludeIpRanges: text('exclude_ip_ranges')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    excludePaths: text('exclude_paths')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    excludeCountries: text('exclude_countries')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
+    excludeHostnames: text('exclude_hostnames')
+      .array()
+      .notNull()
+      .default(sql`'{}'`),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -48,6 +66,19 @@ export const siteIngestSettings = pgTable(
     check(
       'site_ingest_settings_heartbeat_interval_seconds_check',
       sql`${t.heartbeatIntervalSeconds} BETWEEN 5 AND 300`,
+    ),
+    check(
+      'site_ingest_settings_exclude_ip_ranges_check',
+      sql`cardinality(${t.excludeIpRanges}) <= 50`,
+    ),
+    check('site_ingest_settings_exclude_paths_check', sql`cardinality(${t.excludePaths}) <= 50`),
+    check(
+      'site_ingest_settings_exclude_countries_check',
+      sql`cardinality(${t.excludeCountries}) <= 250`,
+    ),
+    check(
+      'site_ingest_settings_exclude_hostnames_check',
+      sql`cardinality(${t.excludeHostnames}) <= 20`,
     ),
   ],
 )

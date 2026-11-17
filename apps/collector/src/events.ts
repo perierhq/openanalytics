@@ -25,7 +25,7 @@ import {
   type ClassificationCandidate,
   type SiteIngestConfig,
 } from '@openanalytics/domain'
-import type { EnqueueInput } from '@openanalytics/redis'
+import type { EnqueueInput, ExcludedEnqueueInput } from '@openanalytics/redis'
 import { Hono } from 'hono'
 import { readIngestBody } from './body.ts'
 import { readRawClientAddress } from './client-identity.ts'
@@ -85,6 +85,32 @@ function payloadHashOf(event: ClientEvent): string {
   return createHash('sha256').update(stableStringify(event)).digest('hex')
 }
 
+/**
+ * Every event's time, decided before anything is written. §7.3: one invalid
+ * event rejects the request, and "invalid" includes an event past the 24-hour
+ * horizon (§7.2), so a partial enqueue is not reachable. Excluded events are
+ * judged too: a batch that would be refused if counted is refused when
+ * excluded.
+ */
+function resolveBatchTimes(batch: EventBatch, acceptedAt: Date) {
+  const times = batch.events.map((event) => ({
+    event,
+    time: resolveEventTime({ occurredAt: event.occurred_at, acceptedAt }),
+  }))
+
+  const rejected = times.findIndex((entry) => !entry.time.accepted)
+  if (rejected !== -1) {
+    const entry = times[rejected]
+    throw new ApiError('VALIDATION_FAILED', 'The batch contains an event the server refuses.', {
+      details: {
+        reason: entry?.time.accepted === false ? entry.time.reason : 'invalid_timestamp',
+        index: rejected,
+      },
+    })
+  }
+  return times
+}
+
 /** Key-ordered JSON, so two encodings of one event hash the same. */
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
@@ -113,6 +139,7 @@ export function createEventRoutes(deps: CollectorDeps, limiter: IngestLimiter) {
         cost: batch.events.length,
         receivedAt,
         endpoint: 'events',
+        pages: batch.events.map((event) => event.page?.url ?? null),
       })
     } catch (error) {
       if (error instanceof BotRequest || error instanceof GpcOptOut) {
@@ -129,24 +156,16 @@ export function createEventRoutes(deps: CollectorDeps, limiter: IngestLimiter) {
 
     const { config, settings, acceptedAt } = gate
 
-    // Every event's time is decided before anything is written. §7.3: one
-    // invalid event rejects the request, and "invalid" includes an event past
-    // the 24-hour horizon (§7.2), so a partial enqueue is not reachable.
-    const times = batch.events.map((event) => ({
-      event,
-      time: resolveEventTime({ occurredAt: event.occurred_at, acceptedAt }),
-    }))
+    const times = resolveBatchTimes(batch, acceptedAt)
 
-    const rejected = times.findIndex((entry) => !entry.time.accepted)
-    if (rejected !== -1) {
-      const entry = times[rejected]
-      throw new ApiError('VALIDATION_FAILED', 'The batch contains an event the server refuses.', {
-        details: {
-          reason: entry?.time.accepted === false ? entry.time.reason : 'invalid_timestamp',
-          index: rejected,
-        },
-      })
-    }
+    // The site's own exclusions (IP, country, host, path). An excluded event
+    // takes the whole road below except the parts that store or show it: it is
+    // classified and weighed by the quota check, and handed to the same enqueue
+    // script — as a payload hash, so a retry is a `duplicate`, a changed body a
+    // `409` and a queue outage a `503` — but it gets no envelope, no stream
+    // entry, no usage increment and no realtime touch. That is what keeps the
+    // answer identical to the one the same batch gets counted (exclusions.ts).
+    const excluded = (index: number): boolean => gate.excluded[index] === true
 
     // ADR-0034, D5: `no_code_rule` origin is *established* from the site's own
     // published rule set, never believed from the wire. Three conditions, all
@@ -191,6 +210,10 @@ export function createEventRoutes(deps: CollectorDeps, limiter: IngestLimiter) {
       ...(event.action_id === undefined ? {} : { actionId: event.action_id }),
     }))
     const classifications = classifyEvents(candidates)
+    // Excluded events are in this count on purpose. Where a plan applies, they
+    // weigh on its quota check like counted events, so an excluded batch is
+    // refused exactly when the same batch counted would be; only the increment
+    // after the enqueue leaves them out. A self-hosted install has no quota.
     const billable = billableCount(classifications)
 
     /**
@@ -227,12 +250,25 @@ export function createEventRoutes(deps: CollectorDeps, limiter: IngestLimiter) {
     // as Direct on the live feed while the report the feed is the leading edge
     // of named the source. One derivation, read twice.
     const envelopes: PersistedEvent[] = []
-    const enqueueInputs: EnqueueInput[] = batch.events.map((event, index) => {
+    const enqueueInputs = batch.events.map((event, index): EnqueueInput | ExcludedEnqueueInput => {
       const time = times[index]?.time
       if (time === undefined || !time.accepted) {
         throw new ApiError('INTERNAL_ERROR', 'Event time missing after validation.', {
           expose: false,
         })
+      }
+
+      if (excluded(index)) {
+        // Hashes only: the payload hash the duplicate check compares, and the
+        // record key the queue derives from (site, event). No envelope is built,
+        // so nothing derived from the address or the page exists for it.
+        return {
+          siteId: config.siteId,
+          eventId: event.event_id,
+          payloadHash: payloadHashOf(event),
+          acceptedAt: acceptedAt.toISOString(),
+          excluded: true,
+        }
       }
 
       const persisted = buildPersistedEvent({
@@ -296,10 +332,14 @@ export function createEventRoutes(deps: CollectorDeps, limiter: IngestLimiter) {
       )
     }
 
-    const accepted = result.results.filter((entry) => entry.enqueued).length
+    // From the browser's side an excluded event seen for the first time was
+    // accepted, which is what it is told; only a real stream entry is counted
+    // as enqueued, billed or fed to realtime.
+    const accepted = result.results.filter((entry) => entry.outcome !== 'duplicate').length
     const duplicate = result.results.length - accepted
+    const enqueued = result.results.filter((entry) => entry.enqueued).length
 
-    deps.metrics.increment(COLLECTOR_METRICS.eventsEnqueued, { site_id: config.siteId }, accepted)
+    deps.metrics.increment(COLLECTOR_METRICS.eventsEnqueued, { site_id: config.siteId }, enqueued)
     if (duplicate > 0) {
       deps.metrics.increment(
         COLLECTOR_METRICS.eventsDuplicate,
@@ -333,13 +373,25 @@ export function createEventRoutes(deps: CollectorDeps, limiter: IngestLimiter) {
     // a single-page checkout for four minutes was, to presence, somebody who
     // left after their first pageview. Umami reads its whole event table for
     // exactly this reason; page-view-only was the unusual shape, not this.
+    //
+    // An excluded event is invisible here: presence and the feed are built from
+    // the counted events alone, and a batch with none touches nothing.
+    const countedIndexes = batch.events.flatMap((_, index) => (excluded(index) ? [] : [index]))
+    if (countedIndexes.length === 0) return c.json({ accepted, duplicate }, 202)
     try {
       // The *feed* stays page-view-only, which is ADR-0024 D3's rule and not
       // this ADR's to revisit: custom events on a live feed would need a
       // billing-class-aware decision nobody has asked for. So a batch with no
       // page view refreshes presence and writes no feed entry — the shape the
       // heartbeat path has always had.
-      const lastPageView = lastPageViewOf(batch)
+      const counted = lastPageViewOf({
+        ...batch,
+        events: countedIndexes.map((index) => batch.events[index] as ClientEvent),
+      })
+      const lastPageView =
+        counted === null
+          ? null
+          : { event: counted.event, index: countedIndexes[counted.index] ?? -1 }
 
       // A retry the queue recognised as a duplicate contributes nothing to the
       // feed — the visitor is still present (the touch below runs either way),

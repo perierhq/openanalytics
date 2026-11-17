@@ -881,3 +881,27 @@ export {
   type ChartNoteTextIssue,
   type ChartNoteTextResult,
 } from './chart-notes.ts'
+
+/**
+ * Server-side ingest exclusions: IP ranges, paths, countries and hostnames a
+ * site's owner asked not to count. Normalised for storage by the API and
+ * compiled once per config version for matching by the collector.
+ */
+export {
+  EMPTY_INGEST_EXCLUSIONS,
+  EXCLUSION_REASONS,
+  INGEST_EXCLUSION_LIMITS,
+  compileIngestExclusions,
+  exclusionHostnameMatches,
+  normalizeExclusionCountry,
+  normalizeExclusionHostname,
+  normalizeExclusionIpRange,
+  normalizeExclusionPath,
+  normalizeIngestExclusions,
+  type CompiledIngestExclusions,
+  type ExclusionReason,
+  type ExclusionSubject,
+  type IngestExclusions,
+  type IngestExclusionsIssue,
+  type IngestExclusionsResult,
+} from './ingest-exclusions.ts'
