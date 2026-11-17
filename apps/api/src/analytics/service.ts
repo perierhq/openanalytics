@@ -47,6 +47,7 @@ import {
   resolveRevenue,
   resolveSession,
   resolveTimeseries,
+  snapStepMsForRollup,
   type ReportSlug,
 } from './resolve.ts'
 import { encodeRevenueCursor, type RevenueCursor } from './revenue-cursor.ts'
@@ -480,6 +481,12 @@ export class AnalyticsService {
     resolution: Schemas['Resolution']
     freshness: FreshnessResult
     comparisonRange: { from: string; to: string } | null
+    /**
+     * The instant the read was answered at, when the caller already took it
+     * (a comparison cut on it, `derivePreviousPeriod`): `as_of` must be that
+     * same instant, or the window it claims to be cut at would not be.
+     */
+    asOf?: Date
     truncated: boolean
     cached: boolean
     /** Absent on the surfaces that have no imported branch at all (sessions,
@@ -506,7 +513,7 @@ export class AnalyticsService {
       freshness: {
         state: input.freshness.state,
         watermark: input.freshness.watermark,
-        as_of: this.#now().toISOString(),
+        as_of: (input.asOf ?? this.#now()).toISOString(),
       },
       comparison_range: input.comparisonRange,
       truncated: input.truncated,
@@ -632,8 +639,12 @@ export class AnalyticsService {
 
     let comparison: Schemas['AnalyticsOverviewResponse']['comparison'] = null
     let comparisonRange: { from: string; to: string } | null = null
+    const asOf = this.#now()
     if (req.compare) {
-      const prev = derivePreviousPeriod({ from: resolved.effectiveFrom, to: resolved.effectiveTo })
+      const prev = derivePreviousPeriod(
+        { from: resolved.effectiveFrom, to: resolved.effectiveTo },
+        { asOf: asOf.toISOString(), stepMs: snapStepMsForRollup(resolved.sourceRollup) },
+      )
       if (prev) {
         comparisonRange = prev
         const prevTotals = await this.#queryOverview(
@@ -658,6 +669,7 @@ export class AnalyticsService {
         resolution: resolved.grain,
         freshness,
         comparisonRange,
+        asOf,
         truncated: primary.truncated,
         cached: primary.cached,
         // A filtered total reads live rows only, so it claims nothing about the
@@ -776,8 +788,14 @@ export class AnalyticsService {
 
     let comparison: Schemas['AnalyticsTimeseriesResponse']['comparison'] = null
     let comparisonRange: { from: string; to: string } | null = null
+    const asOf = this.#now()
     if (req.compare) {
-      const prev = derivePreviousPeriod({ from: resolved.effectiveFrom, to: resolved.effectiveTo })
+      // Cut like the overview's, so the previous series stops at the bucket
+      // the current one has reached instead of running to a finished end.
+      const prev = derivePreviousPeriod(
+        { from: resolved.effectiveFrom, to: resolved.effectiveTo },
+        { asOf: asOf.toISOString(), stepMs: snapStepMsForRollup(resolved.sourceRollup) },
+      )
       if (prev) {
         comparisonRange = prev
         const prevSeries = await this.#queryTimeseries(
@@ -802,6 +820,7 @@ export class AnalyticsService {
         resolution: resolved.grain,
         freshness,
         comparisonRange,
+        asOf,
         truncated: primary.truncated,
         cached: primary.cached,
         partial:
@@ -1972,8 +1991,17 @@ export class AnalyticsService {
 
     let comparison: Schemas['RevenueSummaryResponse']['comparison'] = null
     let comparisonRange: { from: string; to: string } | null = null
+    const asOf = this.#now()
     if (req.compare) {
-      const prev = derivePreviousPeriod({ from: resolved.effectiveFrom, to: resolved.effectiveTo })
+      // Revenue reads the day rollup without a zone and the quarter-hour one
+      // with it; the cut lands on whichever boundary this read is snapped to.
+      const prev = derivePreviousPeriod(
+        { from: resolved.effectiveFrom, to: resolved.effectiveTo },
+        {
+          asOf: asOf.toISOString(),
+          stepMs: snapStepMsForRollup(resolved.withTimezone ? '15m' : '1d'),
+        },
+      )
       if (prev) {
         comparisonRange = prev
         comparison = {
@@ -1991,6 +2019,7 @@ export class AnalyticsService {
           resolution: resolved.grain,
           freshness: this.#revenueFreshness(freshness, req.connection),
           comparisonRange,
+          asOf,
           truncated: primary.truncated,
           cached: primary.cached,
           // The remainder read degraded. The totals are still the answer that

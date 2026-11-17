@@ -60,6 +60,21 @@ const snapForRollup: Record<RollupResolution, SnapUnit> = {
   '1d': 'day',
 }
 
+const SNAP_UNIT_MS: Record<SnapUnit, number> = {
+  minute: 60_000,
+  quarter: 900_000,
+  day: MS_PER_DAY,
+}
+
+/**
+ * The length of the bucket a read over `rollup` is snapped to: the step a
+ * comparison of a period still in progress is cut on (`derivePreviousPeriod`),
+ * so its end lands on a boundary the gateway accepts.
+ */
+export function snapStepMsForRollup(rollup: RollupResolution): number {
+  return SNAP_UNIT_MS[snapForRollup[rollup]]
+}
+
 function snapRange(
   from: string,
   to: string,

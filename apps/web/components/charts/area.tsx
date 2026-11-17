@@ -99,6 +99,12 @@ export interface AreaProps {
    * area. Default: `"pulse"`.
    */
   loadingStyle?: LoadingStyle;
+  /**
+   * Break the line (and its fill) where a point has no number for `dataKey`
+   * instead of drawing it at zero: for series where a missing value means
+   * "not measured", not "none". Default: false.
+   */
+  gapsForMissing?: boolean;
 }
 
 function useAreaLoadingPulseState(
@@ -165,6 +171,7 @@ export function Area({
   loadingStrokeWidth,
   loadingPulseMode,
   loadingStyle = "pulse",
+  gapsForMissing = false,
 }: AreaProps) {
   // Stable slice only: hover state lives inside `<SeriesHoverDim>` and
   // `<SeriesHighlightLayer>` so this component (and its expensive
@@ -235,6 +242,12 @@ export function Area({
     [dataKey, yScale]
   );
 
+  const defined = useCallback(
+    (d: Record<string, unknown>) => typeof d[dataKey] === "number",
+    [dataKey]
+  );
+  const definedProp = gapsForMissing ? { defined } : {};
+
   const hasDashTail = resolveDashTailBounds(dashFromIndex, data.length);
   // The stroke gradient is only emitted when at least one edge fades, so fall
   // back to the resolved solid color otherwise — avoids an invalid url(#...).
@@ -257,6 +270,7 @@ export function Area({
     <>
       {showSeriesContent && showAreaFill ? (
         <AreaClosed
+          {...definedProp}
           curve={curve}
           data={renderData}
           fill={areaFill}
@@ -269,6 +283,7 @@ export function Area({
       {shouldMeasurePath ? (
         <>
           <LinePath
+            {...definedProp}
             curve={curve}
             data={renderData}
             innerRef={pathRef}

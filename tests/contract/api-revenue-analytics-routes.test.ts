@@ -531,9 +531,11 @@ describe('summary', () => {
       comparison: { totals: Record<string, number> } | null
     }
     expect(body.comparison?.totals['net_minor']).toBe(91_000)
+    // The range is "today" as of 12:00, still in progress: the previous day
+    // is cut at the same point, 00:00-12:00, not compared whole.
     expect(body.meta.comparison_range).toEqual({
       from: '2026-07-19T00:00:00.000Z',
-      to: '2026-07-20T00:00:00.000Z',
+      to: '2026-07-19T12:00:00.000Z',
     })
     expect(gatewayCalls.filter((op) => op === 'analytics.revenue_unconverted')).toHaveLength(1)
   })

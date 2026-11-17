@@ -178,6 +178,13 @@ authors, and changes nothing that exists; nothing to do by hand.
 
 ### Added
 
+- **Compare and chartable tiles on the overview.** A Compare toggle next to the
+  range picker shows the previous period on every tile (as a change chip and the
+  previous value; bounce rate in points) and as dashed lines on the chart. Each
+  tile, Visitors, Pageviews, Bounce rate, Avg. visit and Revenue (owners), now
+  switches the chart to that metric. Both are kept in the URL (`?compare=1`,
+  `?metric=`). The public share board is unchanged.
+
 - **X mentions.** An owner or admin can turn on mention watching for a site.
   The worker then searches X for the site's domain and up to five extra terms
   through an fxtwitter-compatible service, and stores the public posts it finds
@@ -218,6 +225,14 @@ authors, and changes nothing that exists; nothing to do by hand.
 
 ### Changed
 
+- **`compare=true` uses an equal-length previous window for a period still in
+  progress.** The overview, timeseries and revenue summary reads used to set an
+  unfinished range against the whole period before it, so at 09:00 "today"
+  was compared with all of yesterday. The previous period now starts where it
+  did and is cut at the same point the current one has reached by
+  `meta.freshness.as_of` (rounded up to the read's bucket): 00:00–09:00 today
+  against 00:00–09:00 yesterday. A finished range compares exactly as before,
+  and `meta.comparison_range` names the window either way. No operator action.
 - **The optional object storage is RustFS, not MinIO.** MinIO stopped
   publishing images — Docker Hub on 2026-09-16, then Quay on 2026-09-25 —
   so `docker compose --profile object-storage up` could no longer pull it.

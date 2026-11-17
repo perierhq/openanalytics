@@ -5,9 +5,9 @@ import { AnimatePresence } from "motion/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
-import { useSiteAnalytics } from "@/components/dashboard/analytics-card";
 import { anonName } from "@/components/dashboard/anon-identity";
 import { useAnalyticsInterval } from "@/components/dashboard/interval-context";
+import { useOverviewRevenueSummary } from "@/components/dashboard/overview-revenue-summary";
 import { relativeTime } from "@/components/dashboard/data-state";
 import { ApiErrorPanel } from "@/components/dashboard/api-error";
 import {
@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { SkeletonBar, SkeletonReveal } from "@/components/ui/skeleton-reveal";
 import { SquircleCard } from "@/components/ui/squircle-card";
 import { UserAvatar } from "@/components/ui/user-avatar";
-import { useApiResource } from "@/hooks/use-api-resource";
+import { useApiResource, type ApiResource } from "@/hooks/use-api-resource";
 import {
   errorCodeOf,
   getRecentVisitors,
@@ -33,7 +33,7 @@ import {
   type RevenueTotals,
 } from "@/lib/api";
 import { formatMoney } from "@/lib/currencies";
-import { MOCK_PAYING_VISITORS, MOCK_REVENUE_SUMMARY } from "@/lib/mock";
+import { MOCK_PAYING_VISITORS } from "@/lib/mock";
 
 /**
  * Revenue on the overview grid (M12, ADR-0033; frontend_tasks §23).
@@ -115,7 +115,8 @@ export function RevenueCard() {
   const params = useParams<{ site: string }>();
   const slug = params.site ? decodeURIComponent(params.site) : "";
 
-  const summary = useSiteAnalytics(revenue.summary, MOCK_REVENUE_SUMMARY);
+  // The overview's one summary read, shared with the Revenue stat tile.
+  const { resource: summary } = useOverviewRevenueSummary();
 
   /**
    * The summary's understudy, racing it. On a not-connected site the
@@ -372,7 +373,7 @@ function RevenueBody({
   resource,
   slug,
 }: {
-  resource: ReturnType<typeof useSiteAnalytics<RevenueSummaryResponse>>;
+  resource: ApiResource<RevenueSummaryResponse>;
   slug: string;
 }) {
   if (resource.status === "error") {

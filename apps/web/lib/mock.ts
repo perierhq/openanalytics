@@ -16,6 +16,7 @@ import type {
   AnalyticsMeta,
   AnalyticsPagesResponse,
   AnalyticsPerformanceResponse,
+  AnalyticsSessionsResponse,
   AnalyticsSourcesResponse,
   ApiKeySummary,
   ConnectedApp,
@@ -251,6 +252,74 @@ export const MOCK_OVERVIEW = analyticsOverviewFixture;
 export const MOCK_PUBLIC_OVERVIEW = publicOverviewFixture;
 export const MOCK_PUBLIC_GEOGRAPHY = publicGeographyFixture;
 export const MOCK_SESSIONS = analyticsSessionsFixture;
+/**
+ * The overview's sessions read in mock mode: one point per day over the same
+ * 30 days the mock traffic chart draws (from 2026-06-20), and the 30 days
+ * before it for Compare. Deterministic, and the totals are derived from the
+ * series so the tiles and the chart agree.
+ */
+function mockSessionsSeries(
+  startMs: number,
+  seed: number,
+  bounceBase: number,
+  durationBase: number
+): AnalyticsSessionsResponse {
+  const jitter = (i: number) => {
+    const x = Math.sin((i + seed) * 12.9898 + 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
+  const series = Array.from({ length: 30 }, (_, i) => {
+    const sessions = Math.round(240 + i * 4 + jitter(i) * 90);
+    const bounceRate = bounceBase + (jitter(i + 50) - 0.5) * 0.12;
+    const bounced = Math.round(sessions * bounceRate);
+    const avg = Math.round(durationBase + (jitter(i + 90) - 0.5) * 36_000);
+    return {
+      bucket: new Date(startMs + i * 86_400_000).toISOString(),
+      sessions,
+      engaged_sessions: sessions - bounced,
+      bounced_sessions: bounced,
+      bounce_rate: bounced / sessions,
+      pageviews: Math.round(sessions * 2.4),
+      avg_session_duration_ms: avg,
+      avg_active_duration_ms: Math.round(avg * 0.5),
+    };
+  });
+  const sum = (pick: (point: (typeof series)[number]) => number) =>
+    series.reduce((total, point) => total + pick(point), 0);
+  const sessions = sum((point) => point.sessions);
+  const bounced = sum((point) => point.bounced_sessions);
+  return {
+    ...analyticsSessionsFixture,
+    meta: { ...analyticsSessionsFixture.meta, resolution: "day" },
+    totals: {
+      sessions,
+      engaged_sessions: sessions - bounced,
+      bounced_sessions: bounced,
+      bounce_rate: bounced / sessions,
+      pageviews: sum((point) => point.pageviews),
+      avg_session_duration_ms:
+        sum((point) => point.avg_session_duration_ms * point.sessions) / sessions,
+      avg_active_duration_ms:
+        sum((point) => point.avg_active_duration_ms * point.sessions) / sessions,
+    },
+    series,
+  };
+}
+
+const MOCK_SESSIONS_START_MS = Date.parse("2026-06-20T00:00:00.000Z");
+export const MOCK_OVERVIEW_SESSIONS = mockSessionsSeries(
+  MOCK_SESSIONS_START_MS,
+  0,
+  0.36,
+  84_000
+);
+/** The 30 days before: a bouncier, slightly shorter month. */
+export const MOCK_OVERVIEW_SESSIONS_PREVIOUS = mockSessionsSeries(
+  MOCK_SESSIONS_START_MS - 30 * 86_400_000,
+  7,
+  0.39,
+  79_000
+);
 
 /* Analytics panel mocks — the series the overview screen was designed on,
    typed by the contract so they cannot drift from what the api sends. */

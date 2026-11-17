@@ -9471,7 +9471,13 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DateRange'
             - type: 'null'
-          description: The preceding equal-length period, present only when compared.
+          description: |
+            The previous period the comparison was read over, present only when
+            compared: from one range-length before `effective_range.from`, as
+            long as the part of the range that had happened by
+            `freshness.as_of` (see the `compare` parameter). For a finished
+            range that is the whole equal-length period ending at
+            `effective_range.from`.
         truncated:
           type: boolean
           description: True when the gateway capped the row set.
@@ -9616,7 +9622,10 @@ components:
         totals:
           $ref: '#/components/schemas/OverviewTotals'
         comparison:
-          description: Totals for the preceding equal-length period, or null.
+          description: |
+            Totals for the previous period (`meta.comparison_range`), or null.
+            For a range still in progress the previous period is cut at the
+            same point, so the two cover equal stretches.
           oneOf:
             - type: object
               additionalProperties: false
@@ -9710,6 +9719,10 @@ components:
           items:
             $ref: '#/components/schemas/TimeseriesPoint'
         comparison:
+          description: |
+            The previous period's buckets (`meta.comparison_range`), or null.
+            For a range still in progress they stop at the same offset the
+            current buckets have reached.
           oneOf:
             - type: object
               additionalProperties: false
@@ -11306,7 +11319,10 @@ components:
         totals:
           $ref: '#/components/schemas/RevenueTotals'
         comparison:
-          description: Totals for the preceding equal-length period, or null.
+          description: |
+            Totals for the previous period (`meta.comparison_range`), or null.
+            For a range still in progress the previous period is cut at the
+            same point, so the two cover equal stretches.
           oneOf:
             - type: object
               additionalProperties: false
@@ -13732,7 +13748,18 @@ components:
       name: compare
       in: query
       required: false
-      description: When true, also return the equal-length preceding period.
+      description: |
+        When true, also return the previous period. It starts one range-length
+        before `from` and is as long as the part of the range that has
+        happened by `meta.freshness.as_of`: a finished range is compared with
+        the whole equal-length period before it, and a range still in progress
+        with the same stretch of the period before it — at 09:00, "today"
+        (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+        all of yesterday. The cut is rounded up to the end of the read's own
+        bucket (minute, quarter-hour, or UTC day for reads served from the day
+        rollup), and `meta.comparison_range` names the exact window. A range
+        that has not started yet has nothing to compare: `comparison` and
+        `meta.comparison_range` are `null`.
       schema:
         type: boolean
         default: false

@@ -17,6 +17,10 @@ import { MentionAvatar } from "./mention-avatar";
 // Our palette: visitors in the brand primary, pageviews a quiet slate underlay.
 export const VISITORS_COLOR = "#296FF0";
 export const PAGEVIEWS_COLOR = "#94a3b8";
+// The session metrics, when their tile drives the chart: two chart tokens
+// apart from the traffic blue and the revenue green.
+export const BOUNCE_RATE_COLOR = "var(--chart-5)";
+export const AVG_VISIT_COLOR = "var(--chart-2)";
 
 const intFmt = new Intl.NumberFormat("en-US");
 
@@ -50,6 +54,38 @@ export type OverviewTooltipContentProps = {
   mentionAuthors?: ReadonlyArray<Pick<Mention["author"], "handle" | "name" | "avatar_url">>;
   /** A dashboard filter narrows the traffic; revenue stays site-wide. */
   filtered?: boolean;
+  /**
+   * Which traffic series the chart is drawing, and so which rows the traffic
+   * section has. Both by default; one when a tile drives the chart; none when
+   * revenue does, and the section goes.
+   */
+  series?: readonly TrafficSeries[];
+  /**
+   * The previous period's bucket that sits under this one (bucket i with
+   * bucket i), while the overview compares. `label` names that bucket's own
+   * date, since it is not the date in the title.
+   */
+  previous?: { label: string; visitors: number; pageviews: number } | null;
+  /**
+   * A session metric (bounce rate, average visit) when its tile drives the
+   * chart: one row, already formatted, and its previous-period value while
+   * comparing. Shown in the traffic section's place.
+   */
+  session?: {
+    label: string;
+    color: string;
+    value: string;
+    previous: { label: string; value: string } | null;
+  } | null;
+};
+
+export type TrafficSeries = "visitors" | "pageviews";
+
+const ALL_SERIES: readonly TrafficSeries[] = ["visitors", "pageviews"];
+
+const SERIES_ROWS: Record<TrafficSeries, { label: string; color: string }> = {
+  visitors: { label: "Visitors", color: VISITORS_COLOR },
+  pageviews: { label: "Pageviews", color: PAGEVIEWS_COLOR },
 };
 
 function Section({ children }: { children: ReactNode }) {
@@ -60,16 +96,26 @@ function Row({
   label,
   value,
   dot,
+  dash,
 }: {
   label: ReactNode;
   value: string;
   dot?: string;
+  /** A short dashed stroke in the series colour: the previous period's line. */
+  dash?: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
       <span className="flex min-w-0 items-center gap-2 text-chart-tooltip-muted">
         {dot ? (
           <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: dot }} />
+        ) : null}
+        {dash ? (
+          <span
+            aria-hidden="true"
+            className="w-2 shrink-0 border-t-[1.5px] border-dashed"
+            style={{ borderColor: dash }}
+          />
         ) : null}
         <span className="truncate">{label}</span>
       </span>
@@ -90,7 +136,11 @@ export function OverviewTooltipContent({
   saleVisitors = [],
   mentionAuthors = [],
   filtered = false,
+  series = ALL_SERIES,
+  previous = null,
+  session = null,
 }: OverviewTooltipContentProps) {
+  const counts: Record<TrafficSeries, number> = { visitors, pageviews };
   const money = revenue ? revenueTooltipModel(revenue, visitors, { filtered }) : null;
   const hasMarkers = sales > 0 || mentions > 0;
 
@@ -98,12 +148,43 @@ export function OverviewTooltipContent({
     <div className="w-56 select-none text-xs text-chart-tooltip-foreground">
       <div className="px-3 pt-2.5 pb-2 font-medium">{title}</div>
 
-      <Section>
-        <div className="flex flex-col gap-1.5">
-          <Row dot={VISITORS_COLOR} label="Visitors" value={intFmt.format(visitors)} />
-          <Row dot={PAGEVIEWS_COLOR} label="Pageviews" value={intFmt.format(pageviews)} />
-        </div>
-      </Section>
+      {series.length > 0 ? (
+        <Section>
+          <div className="flex flex-col gap-1.5">
+            {series.map((key) => (
+              <div className="flex flex-col gap-1" key={key}>
+                <Row
+                  dot={SERIES_ROWS[key].color}
+                  label={SERIES_ROWS[key].label}
+                  value={intFmt.format(counts[key])}
+                />
+                {previous ? (
+                  <Row
+                    dash={SERIES_ROWS[key].color}
+                    label={`Previous · ${previous.label}`}
+                    value={intFmt.format(previous[key])}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </Section>
+      ) : null}
+
+      {session ? (
+        <Section>
+          <div className="flex flex-col gap-1">
+            <Row dot={session.color} label={session.label} value={session.value} />
+            {session.previous ? (
+              <Row
+                dash={session.color}
+                label={`Previous · ${session.previous.label}`}
+                value={session.previous.value}
+              />
+            ) : null}
+          </div>
+        </Section>
+      ) : null}
 
       {money ? (
         <Section>

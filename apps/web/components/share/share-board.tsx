@@ -41,13 +41,16 @@ import {
 import { IntervalSelect } from "@/components/dashboard/interval-select";
 import { TimezonePill } from "@/components/dashboard/timezone-pill";
 import {
-  AVG_VISIT_INFO,
-  BOUNCE_INFO,
-  durationLabel,
   InfoTip,
   StatCard,
   type Stat,
-} from "@/components/dashboard/overview-stats";
+} from "@/components/dashboard/stat-card";
+// The dashboard's own wording and formats: one source for both boards.
+import {
+  AVG_VISIT_INFO,
+  BOUNCE_INFO,
+  durationLabel,
+} from "@/lib/stat-format";
 import { LiveBadge } from "@/components/dashboard/realtime-card";
 import { Favicon } from "@/components/dashboard/site-favicon";
 import {

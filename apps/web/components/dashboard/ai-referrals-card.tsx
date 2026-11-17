@@ -10,7 +10,7 @@ import {
 } from "@/components/dashboard/analytics-card";
 import { useAnalyticsFilters } from "@/components/dashboard/filter-context";
 import { HoverList } from "@/components/dashboard/hover-list";
-import { InfoTip } from "@/components/dashboard/overview-stats";
+import { InfoTip } from "@/components/dashboard/stat-card";
 import {
   SeeAllModal,
   SeeAllSkeleton,

@@ -52,8 +52,11 @@ export default function ReadApiDocsPage() {
           Ranges are full ISO-8601 UTC instants; date-only strings are a
           400. <Code>timezone</Code> is an IANA name and decides how days
           are bucketed. Optional: <Code>compare=true</Code> for the
-          preceding period, <Code>resolution</Code> (hour, day; the
-          timeseries adds week) to pick the grain explicitly.
+          preceding period (for a range still in progress, the same stretch
+          of the period before: at 09:00, today against 00:00–09:00 yesterday; the window is
+          in <Code>meta.comparison_range</Code>), <Code>resolution</Code>
+          (hour, day; the timeseries adds week) to pick the grain
+          explicitly.
         </DocNote>
       </DocSection>
 

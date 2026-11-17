@@ -138,4 +138,50 @@ describe("the overview chart's day tooltip", () => {
   it("has no buyer faces when no sale matched a visitor", () => {
     expect(render({ sales: 2 })).not.toContain("width:16px;height:16px")
   })
+
+  it("adds a Previous line under each series, named by the previous bucket's date", () => {
+    const out = text(
+      render({ previous: { label: "Sat, Jul 4", visitors: 2980, pageviews: 5102 } })
+    )
+    expect(out).toBe(
+      "Sat, Jul 11 Visitors 3,165 Previous · Sat, Jul 4 2,980 Pageviews 6,406 Previous · Sat, Jul 4 5,102"
+    )
+  })
+
+  it("has no Previous lines without a comparison", () => {
+    expect(text(render({ previous: null }))).not.toContain("Previous")
+  })
+
+  it("shows only the charted series when one tile drives the chart", () => {
+    const out = text(
+      render({
+        series: ["pageviews"],
+        previous: { label: "Sat, Jul 4", visitors: 2980, pageviews: 5102 },
+      })
+    )
+    expect(out).toBe("Sat, Jul 11 Pageviews 6,406 Previous · Sat, Jul 4 5,102")
+  })
+
+  it("drops the traffic section when revenue drives the chart", () => {
+    const out = text(
+      render({ series: [], revenue: bucket({ netMinor: 3800, grossMinor: 3800, sales: 2 }) })
+    )
+    expect(out).toMatch(/^Sat, Jul 11 Revenue €38.00/)
+    expect(out).not.toContain("Pageviews")
+  })
+
+  it("shows one session metric, with its previous value, when that tile drives the chart", () => {
+    const out = text(
+      render({
+        series: [],
+        session: {
+          label: "Bounce rate",
+          color: "var(--chart-5)",
+          value: "36%",
+          previous: { label: "Sat, Jul 4", value: "41%" },
+        },
+      })
+    )
+    expect(out).toBe("Sat, Jul 11 Bounce rate 36% Previous · Sat, Jul 4 41%")
+  })
 })
