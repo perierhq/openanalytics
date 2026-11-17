@@ -7,6 +7,12 @@ import { IntervalSelect } from "@/components/dashboard/interval-select";
 import { LocationsCard } from "@/components/dashboard/locations-card";
 import { OverviewChart } from "@/components/dashboard/overview-chart";
 import { OverviewStats } from "@/components/dashboard/overview-stats";
+import { OverviewRevenueSummaryProvider } from "@/components/dashboard/overview-revenue-summary";
+import { OverviewSessionsProvider } from "@/components/dashboard/overview-sessions";
+import {
+  CompareToggle,
+  OverviewViewProvider,
+} from "@/components/dashboard/overview-view";
 import { RefreshButton } from "@/components/dashboard/refresh-button";
 import {
   OverviewLiveBadge,
@@ -33,6 +39,16 @@ export default async function OverviewPage({
   const { site } = await params;
   return (
     <IntervalProvider>
+    {/* Compare and the pressed stat tile, in the URL beside the filters:
+        the header toggle, the tiles and the chart all read it. */}
+    <OverviewViewProvider>
+    {/* One sessions read (and its previous period), shared by the stat
+        tiles and the chart, which draws bounce rate or average visit over
+        time when their tile is pressed. */}
+    <OverviewSessionsProvider>
+    {/* One revenue summary read, shared by the Revenue stat tile and the
+        Revenue panel in the grid. */}
+    <OverviewRevenueSummaryProvider>
     {/* The screen's clock, worn in the dashboard header beside the site
         switcher: it is painted into the header's slot from inside this
         provider, so the pick reaches every panel below. Only this screen
@@ -40,7 +56,10 @@ export default async function OverviewPage({
         changes this visit, never the site. */}
     <HeaderTimezonePill />
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-4">
+      {/* Wraps on a phone: the title group and the three controls do not
+          fit one 390px row, and the controls drop below rather than
+          sliding over the title. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
         {/* Baseline group, not items-center: the badge is text against the
             heading's text, and mixed sizes only look level when they share a
             baseline. Fed by the Realtime card's own stream through a module
@@ -66,6 +85,9 @@ export default async function OverviewPage({
             statement and only the filter has marks. */}
         <div className="flex items-center gap-2">
           <ShareOverviewButton />
+          {/* Beside the range it compares: the previous period is defined
+              by the range, so the two controls read as one statement. */}
+          <CompareToggle />
           <IntervalSelect />
         </div>
       </div>
@@ -132,6 +154,9 @@ export default async function OverviewPage({
       </div>
       </SourcesProvider>
     </div>
+    </OverviewRevenueSummaryProvider>
+    </OverviewSessionsProvider>
+    </OverviewViewProvider>
     </IntervalProvider>
   );
 }

@@ -122,6 +122,7 @@ export {
   type ResolutionInput,
   type RollupResolution,
   type TimezoneAlignment,
+  type PreviousPeriodCut,
   type UtcRange,
 } from './analytics-query.ts'
 

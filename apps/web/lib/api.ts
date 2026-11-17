@@ -1499,9 +1499,13 @@ function analyticsGet<T>(
 export function getAnalyticsOverview(
   siteId: string,
   range: AnalyticsRange,
-  options?: RequestOptions & { resolution?: "hour" | "day"; filters?: string }
+  options?: RequestOptions & {
+    resolution?: "hour" | "day";
+    filters?: string;
+    compare?: boolean;
+  }
 ): Promise<AnalyticsOverviewResponse> {
-  const { resolution, filters, ...rest } = options ?? {};
+  const { resolution, filters, compare, ...rest } = options ?? {};
   return analyticsGet<AnalyticsOverviewResponse>(
     siteId,
     "overview",
@@ -1510,11 +1514,18 @@ export function getAnalyticsOverview(
     {
       ...(resolution ? { resolution } : {}),
       ...(filters ? { filters } : {}),
+      ...(compare ? { compare: "true" } : {}),
     }
   );
 }
 
 /**
+ * `compare` (here and on the overview) asks for the previous period beside
+ * the range: `comparison` and `meta.comparison_range` come back filled
+ * instead of `null`. For a range still in progress the server cuts that
+ * period at the point the range has reached, so read the window from
+ * `meta.comparison_range` rather than computing it.
+ *
  * `resolution` picks the grain explicitly; omitted, the server's span-based
  * selection applies. A grain the range/timezone cannot carry answers
  * `RESOLUTION_NOT_AVAILABLE` (not retryable); forcing one coarser than the
@@ -1523,9 +1534,13 @@ export function getAnalyticsOverview(
 export function getAnalyticsTimeseries(
   siteId: string,
   range: AnalyticsRange,
-  options?: RequestOptions & { resolution?: Resolution; filters?: string }
+  options?: RequestOptions & {
+    resolution?: Resolution;
+    filters?: string;
+    compare?: boolean;
+  }
 ): Promise<AnalyticsTimeseriesResponse> {
-  const { resolution, filters, ...rest } = options ?? {};
+  const { resolution, filters, compare, ...rest } = options ?? {};
   return analyticsGet<AnalyticsTimeseriesResponse>(
     siteId,
     "timeseries",
@@ -1534,6 +1549,7 @@ export function getAnalyticsTimeseries(
     {
       ...(resolution ? { resolution } : {}),
       ...(filters ? { filters } : {}),
+      ...(compare ? { compare: "true" } : {}),
     }
   );
 }

@@ -1,11 +1,8 @@
 "use client";
 
-import { InformationCircleIcon } from "hugeicons-react";
-import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { SkeletonReveal } from "@/components/ui/skeleton-reveal";
 import { ApiErrorPanel } from "@/components/dashboard/api-error";
@@ -23,26 +20,44 @@ import {
 } from "@/components/dashboard/overview-poster-store";
 import { SquircleSurface } from "@/components/ui/squircle-card";
 import { useApiResource } from "@/hooks/use-api-resource";
-import { useSiteAnalytics } from "@/components/dashboard/analytics-card";
+import { useRetainedResource } from "@/hooks/use-retained-resource";
+import { useOverviewView } from "@/components/dashboard/overview-view";
+import { useOverviewRevenueSummary } from "@/components/dashboard/overview-revenue-summary";
+import { useOverviewSessions } from "@/components/dashboard/overview-sessions";
+import {
+  ComparisonLine,
+  StatCard,
+  StatFrame,
+  type Stat,
+  type StatChartControl,
+  type StatComparisonValue,
+} from "@/components/dashboard/stat-card";
 import {
   FilteredRangePanel,
   useAnalyticsFilters,
 } from "@/components/dashboard/filter-context";
 import {
   getAnalyticsOverview,
-  getAnalyticsSessions,
   LIVE_API,
   resolveSiteSlugCached,
-  revenue,
   type AnalyticsOverviewResponse,
-  type AnalyticsSessionsResponse,
 } from "@/lib/api";
 import { formatMoney } from "@/lib/currencies";
+import { MOCK_OVERVIEW } from "@/lib/mock";
 import {
-  MOCK_OVERVIEW,
-  MOCK_REVENUE_SUMMARY,
-  MOCK_SESSIONS,
-} from "@/lib/mock";
+  AVG_VISIT_INFO,
+  BOUNCE_INFO,
+  durationLabel,
+  percentLabel,
+  STAT_DEFINITIONS,
+} from "@/lib/stat-format";
+import {
+  computeDelta,
+  sessionTileComparison,
+  tileChartControl,
+  type PublishedComparison,
+  type StatTile,
+} from "@/lib/overview-compare";
 
 /**
  * The overview stat row — `GET .../analytics/overview` for the counts, and
@@ -63,23 +78,13 @@ import {
  * not take the four counts down with it: the row degrades to four cards.
  */
 
-/** `display: null` means the number's read is still in flight. */
-export type Stat = { label: string; display: string | null; info: string };
-
-/** "1m 42s" — an average duration in words a human reads at a glance. */
-export function durationLabel(ms: number): string {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
 export function OverviewStats() {
   const params = useParams<{ site: string }>();
   const slug = params.site ? decodeURIComponent(params.site) : "";
   const { range, rangePending } = useAnalyticsInterval();
   const { active: filtersActive, filtersParam } = useAnalyticsFilters();
+  const view = useOverviewView();
+  const { compare } = view;
 
   const load = React.useCallback(
     async (signal: AbortSignal): Promise<AnalyticsOverviewResponse> => {
@@ -92,30 +97,56 @@ export function OverviewStats() {
       return getAnalyticsOverview(site_id, range, {
         signal,
         ...(filtersParam !== undefined ? { filters: filtersParam } : {}),
+        ...(compare ? { compare: true } : {}),
       });
     },
-    [slug, range, rangePending, filtersParam]
+    [slug, range, rangePending, filtersParam, compare]
   );
 
-  const overview = useApiResource(load);
-
-  const loadSessions = React.useCallback(
-    async (signal: AbortSignal): Promise<AnalyticsSessionsResponse> => {
-      if (!LIVE_API) return MOCK_SESSIONS;
-      if (rangePending) {
-        return new Promise<AnalyticsSessionsResponse>(() => {});
-      }
-      const { site_id } = await resolveSiteSlugCached(slug);
-      return getAnalyticsSessions(site_id, range, { signal });
-    },
-    [slug, range, rangePending]
+  const asked = useApiResource(load);
+  // Toggling Compare re-reads the same counts with the previous period
+  // beside them: the counts in hand stay up while that read is in flight.
+  const { resource: overview, refreshing } = useRetainedResource(
+    asked,
+    `${slug}|${range.from}|${range.to}|${range.timezone}|${filtersParam ?? ""}`
   );
 
-  const sessions = useApiResource(loadSessions);
+  // Bounce rate and average visit, and their previous period: the reads
+  // the chart shares (`OverviewSessionsProvider`).
+  const sharedSessions = useOverviewSessions();
+  if (sharedSessions === null) {
+    throw new Error("OverviewStats needs an <OverviewSessionsProvider> above it");
+  }
+  const { current: sessions, previous: prevSessions } = sharedSessions;
+  const comparePrevSessions = sharedSessions.comparing;
+
+  // The comparison window, for the sessions read to ask for exactly the
+  // same one: what this read answered with, for the range it was asked
+  // for. Never the retained answer, which may be from before Compare.
+  const comparisonPublished: PublishedComparison | null =
+    !compare || asked.status === "loading"
+      ? null
+      : {
+          forRange: range,
+          window:
+            asked.status === "ready"
+              ? (asked.data.meta.comparison_range ?? null)
+              : null,
+        };
+
+  // Rendered on every branch below, the error panels too: a sessions read
+  // waiting on this window must hear that there is none.
+  const publisher = comparisonPublished ? (
+    <ComparisonPublisher
+      publish={sharedSessions.publishComparison}
+      published={comparisonPublished}
+    />
+  ) : null;
 
   if (LIVE_API && overview.status === "error") {
     return (
       <SquircleSurface className="border border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+        {publisher}
         {overview.error.kind === "filtered_range" ? (
           <FilteredRangePanel className="py-10" />
         ) : (
@@ -141,6 +172,7 @@ export function OverviewStats() {
     if ((state.kind === "stale" || state.kind === "degraded") && isEmpty) {
       return (
         <SquircleSurface className="border border-border shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+          {publisher}
           <DataStatePanel
             className="py-14"
             emptyBody="Nothing has been rolled up for this range yet. Install the snippet, or widen the range."
@@ -152,29 +184,58 @@ export function OverviewStats() {
   }
 
   // Session numbers ride their own read; `null` display = still in flight.
-  const sessionData = !LIVE_API
-    ? MOCK_SESSIONS
-    : sessions.status === "ready"
-      ? sessions.data
-      : null;
+  const sessionData = sessions.status === "ready" ? sessions.data : null;
   // An error is settled: those two cards show an honest em-dash rather than
   // pulsing forever, and the four counts stay up.
-  const sessionsSettled = !LIVE_API || sessions.status !== "loading";
+  const sessionsSettled = sessions.status !== "loading";
 
   // The frames and their labels never wait: all five cards are knowable
   // before any request answers, so the chrome is static and only the numbers
   // come into focus — each when its own read lands. The row's height is
   // constant either way, so the chart underneath never moves by a pixel.
-  const stats: Stat[] = [
+  // The previous period, per tile. The counts arrive with the overview
+  // read itself; a mock (or a retained answer from before the toggle) can
+  // carry a comparison the screen did not ask for, so `compare` gates it.
+  const previousTotals = compare && data ? data.comparison?.totals : undefined;
+  const countComparison = (
+    key: "visitors" | "pageviews"
+  ): StatComparisonValue | null | undefined => {
+    if (!compare) return undefined;
+    if (!data) return null;
+    if (!previousTotals) return refreshing ? null : undefined;
+    return {
+      delta: computeDelta(data.totals[key], previousTotals[key]),
+      previous: previousTotals[key].toLocaleString("en-US"),
+    };
+  };
+  const prevSessionData =
+    prevSessions.status === "ready" ? prevSessions.data : null;
+  const sessionComparison = (
+    tile: "bounce_rate" | "avg_visit"
+  ): StatComparisonValue | null | undefined => {
+    if (!comparePrevSessions) return undefined;
+    // An error on either read settles to no line rather than a pulse.
+    if (sessions.status === "error" || prevSessions.status === "error") {
+      return undefined;
+    }
+    if (!sessionData || !prevSessionData) return null;
+    return sessionTileComparison(tile, sessionData.totals, prevSessionData.totals);
+  };
+
+  const stats: (Stat & { tile: StatTile })[] = [
     {
+      tile: "visitors",
       label: "Visitors",
       display: data ? data.totals.visitors.toLocaleString("en-US") : null,
-      info: "Unique people in this range. A visitor is counted once, no matter how many pages they open.",
+      info: STAT_DEFINITIONS.visitors,
+      comparison: countComparison("visitors"),
     },
     {
+      tile: "pageviews",
       label: "Pageviews",
       display: data ? data.totals.pageviews.toLocaleString("en-US") : null,
-      info: "Every page load. One visitor browsing five pages counts five times.",
+      info: STAT_DEFINITIONS.pageviews,
+      comparison: countComparison("pageviews"),
     },
     /* Under an active filter these two go dark on purpose. They ride the
        sessions read, which does not take a filter in v1, so the number in
@@ -182,17 +243,20 @@ export function OverviewStats() {
        counts would present two populations as one row of facts. A dash is
        not measured-zero here; it is "not measurable on this view". */
     {
+      tile: "bounce_rate",
       label: "Bounce rate",
       display: filtersActive
         ? "–"
         : sessionData
-          ? `${Math.round(sessionData.totals.bounce_rate * 100)}%`
+          ? percentLabel(sessionData.totals.bounce_rate)
           : sessionsSettled
             ? "–"
             : null,
       info: filtersActive ? FILTERED_SESSION_INFO : BOUNCE_INFO,
+      comparison: sessionComparison("bounce_rate"),
     },
     {
+      tile: "avg_visit",
       label: "Avg. visit",
       display: filtersActive
         ? "–"
@@ -202,14 +266,31 @@ export function OverviewStats() {
             ? "–"
             : null,
       info: filtersActive ? FILTERED_SESSION_INFO : AVG_VISIT_INFO,
+      comparison: sessionComparison("avg_visit"),
     },
   ];
+
+  /**
+   * How a tile relates to the chart, on this screen: taken from what the
+   * chart says it draws (`view.chart`), so a tile is pressed only while its
+   * line is the one on the chart, and a button only where pressing it would
+   * put one there. Revenue without bars, a session tile whose series cannot
+   * be drawn (a filter, a grain it cannot fold into) are simply numbers.
+   */
+  const chartControl = (tile: StatTile): StatChartControl | undefined => {
+    if (!view.enabled) return undefined;
+    const control = tileChartControl(tile, view.chart);
+    return control
+      ? { ...control, onPress: () => view.pressMetric(control.metric) }
+      : undefined;
+  };
 
   return (
     <div className="flex flex-col gap-2">
       {/* What this row shows, for the poster: the same totals, and the
           bounce figure exactly as the tile would print it (null where the
           tile shows a dash). */}
+      {publisher}
       <PosterStatsPublisher
         bounceRate={
           filtersActive || !sessionData ? null : sessionData.totals.bounce_rate
@@ -219,9 +300,13 @@ export function OverviewStats() {
       />
       <StatGrid>
         {stats.map((stat) => (
-          <StatCard key={stat.label} stat={stat} />
+          <StatCard
+            chart={chartControl(stat.tile)}
+            key={stat.label}
+            stat={stat}
+          />
         ))}
-        <RevenueCard slug={slug} />
+        <RevenueCard chart={chartControl("revenue")} compare={compare} slug={slug} />
       </StatGrid>
       {/* Where these five numbers came from, per response. The overview is
           the first thing read on the screen, so an imported range says so
@@ -235,7 +320,8 @@ export function OverviewStats() {
  * Revenue on the stat row: one figure, or the door to connecting a provider.
  *
  * It reads the same `revenue/summary` the overview panel does — one request
- * serves both, because the browser dedupes an identical in-flight GET — and
+ * serves both: `OverviewRevenueSummaryProvider` reads it once for the page
+ * (with the previous period while comparing) and both cards fold it — and
  * it takes the same rule the panel takes: a provider that is not connected
  * gets a link, never a `0`. Anything richer than the net figure (the identity
  * parts, the unconverted remainder, the degraded warning) lives on the panel,
@@ -247,8 +333,19 @@ export function OverviewStats() {
  * someone who cannot read the number — the alternative is an error tile in
  * the middle of a working dashboard.
  */
-function RevenueCard({ slug }: { slug: string }) {
-  const summary = useSiteAnalytics(revenue.summary, MOCK_REVENUE_SUMMARY);
+function RevenueCard({
+  slug,
+  compare,
+  chart,
+}: {
+  slug: string;
+  /** Ask for the previous period too, and print it under the figure. */
+  compare: boolean;
+  chart: StatChartControl | undefined;
+}) {
+  // While Compare toggles, the figure in hand stays up (`refreshing`) and
+  // only the comparison line waits.
+  const { resource: summary, refreshing } = useOverviewRevenueSummary();
   // Settled covers error too: a 403 (admin, `revenue:read` is owner-only)
   // resolves to the connect door, not to a pulse that never ends.
   const settled = summary.status !== "loading";
@@ -271,26 +368,46 @@ function RevenueCard({ slug }: { slug: string }) {
     publishPosterRevenue({ key, netMinor, currency });
   }, [key, settled, netMinor, currency]);
 
-  return (
-    <SquircleSurface className="flex flex-col rounded-[24px] border border-border p-1 shadow-[0_1px_2px_rgba(0,0,0,0.06)] [--card-clip-radius:13px] sm:rounded-[30px] sm:[--card-clip-handle:2.5px] sm:[--card-clip-radius:17px]">
-      <p className="flex items-center gap-1.5 pb-1.5 pl-3.5 pr-3 pt-1">
-        <span className="text-sm font-medium text-foreground/80">Revenue</span>
-        <InfoTip text="Money attributed to visits, straight from your payment provider." />
-      </p>
-      <SquircleSurface className="flex-1 rounded-[20px] border border-border bg-[#f6f6f6] px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.06)] [--card-clip-radius:11px] sm:rounded-[26px] sm:[--card-clip-handle:2.5px] sm:[--card-clip-radius:14px]">
-        <SkeletonReveal
-          ready={settled}
-          skeleton={
-            <p className="flex h-7 items-center sm:h-8">
-              <span className="h-5 w-16 rounded bg-muted-foreground/15 sm:h-6" />
-            </p>
+  // The previous period's net, while comparing. Two currencies have no
+  // honest percentage between them (the reporting currency changed), so
+  // that case prints the previous figure with a dash for the change.
+  const previousTotals =
+    compare && connected && summary.status === "ready"
+      ? summary.data.comparison?.totals
+      : undefined;
+  const comparison: StatComparisonValue | null | undefined = !compare
+    ? undefined
+    : !settled || (refreshing && !previousTotals)
+      ? null
+      : totals && previousTotals
+        ? {
+            delta: computeDelta(
+              totals.net_minor,
+              previousTotals.currency === totals.currency
+                ? previousTotals.net_minor
+                : Number.NaN
+            ),
+            previous: formatMoney(previousTotals.net_minor, previousTotals.currency),
           }
-        >
-          {!settled ? null : connected && totals ? (
-            <p className="text-xl font-medium tabular-nums tracking-tight sm:text-2xl">
-              {formatMoney(totals.net_minor, totals.currency)}
-            </p>
-          ) : (
+        : undefined;
+
+  return (
+    <StatFrame chart={chart} info={STAT_DEFINITIONS.revenue} label="Revenue">
+      <SkeletonReveal
+        ready={settled}
+        skeleton={
+          <p className="flex h-7 items-center sm:h-8">
+            <span className="h-5 w-16 rounded bg-muted-foreground/15 sm:h-6" />
+          </p>
+        }
+      >
+        {!settled ? null : connected && totals ? (
+          <p className="text-xl font-medium tabular-nums tracking-tight sm:text-2xl">
+            {formatMoney(totals.net_minor, totals.currency)}
+          </p>
+        ) : (
+          // Above the tile's chart button, so the door stays a door.
+          <span className="pointer-events-auto relative z-[2] inline-flex">
             <Button
               render={
                 <Link
@@ -302,10 +419,11 @@ function RevenueCard({ slug }: { slug: string }) {
               size="xs"
               variant="link"
             />
-          )}
-        </SkeletonReveal>
-      </SquircleSurface>
-    </SquircleSurface>
+          </span>
+        )}
+      </SkeletonReveal>
+      <ComparisonLine comparison={settled && !connected ? undefined : comparison} />
+    </StatFrame>
   );
 }
 
@@ -313,10 +431,6 @@ function RevenueCard({ slug }: { slug: string }) {
 const FILTERED_SESSION_INFO =
   "Session metrics cannot be filtered yet, so this tile pauses while filters are active rather than showing the whole site's number next to filtered ones.";
 
-export const BOUNCE_INFO =
-  "The share of visits that left after a single page. Lower usually means the page delivered.";
-export const AVG_VISIT_INFO =
-  "How long a visit lasts on average, from first page to last activity.";
 
 function StatGrid({ children }: { children: React.ReactNode }) {
   return (
@@ -324,135 +438,23 @@ function StatGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-const emptySubscribe = () => () => {};
-
 /**
- * The little ⓘ beside a card's title: hover (or keyboard focus) pops a short
- * plain-words explanation in the house tooltip language — the dark pill the
- * tab bar uses. Portalled to <body> and opened *upward*: rendered in place
- * it would be trapped inside the card's squircle clip. Exported for the
- * one breakdown card that carries a caveat in its title (AI referrals), so
- * a tip beside any title reads the same.
+ * Tells the sessions read which window this overview read compared against
+ * (`meta.comparison_range`), so the session tiles' previous period is the
+ * server's own. A component for `PosterStatsPublisher`'s reason: it has to
+ * render on the branches that return early.
  */
-export function InfoTip({
-  text,
-  width = "w-52",
+function ComparisonPublisher({
+  published,
+  publish,
 }: {
-  text: string;
-  /** The pill's width class. The stat cards' one-liners fit the default; a
-   *  longer caveat asks for a wider pill rather than a taller one. */
-  width?: string;
+  published: PublishedComparison;
+  publish: (published: PublishedComparison) => void;
 }) {
-  const mounted = React.useSyncExternalStore(
-    emptySubscribe,
-    () => true,
-    () => false
-  );
-  const iconRef = React.useRef<HTMLSpanElement>(null);
-  const [anchor, setAnchor] = React.useState<{ x: number; y: number } | null>(
-    null
-  );
-  const open = () => {
-    const rect = iconRef.current?.getBoundingClientRect();
-    if (rect) setAnchor({ x: rect.left + rect.width / 2, y: rect.top - 8 });
-  };
-  const close = () => setAnchor(null);
-
-  return (
-    <span
-      ref={iconRef}
-      className="inline-flex"
-      onBlur={close}
-      onFocus={open}
-      onMouseEnter={open}
-      onMouseLeave={close}
-      tabIndex={0}
-    >
-      <InformationCircleIcon
-        aria-hidden="true"
-        className="size-3.5 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
-      />
-      <span className="sr-only">{text}</span>
-      {mounted
-        ? createPortal(
-            <AnimatePresence>
-              {anchor ? (
-                <span
-                  className="pointer-events-none fixed z-[70]"
-                  style={{
-                    left: anchor.x,
-                    top: anchor.y,
-                    transform: "translate(-50%, -100%)",
-                  }}
-                >
-                  <motion.span
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    className={`block ${width} rounded-[12px] bg-[#1c1c1f] px-3 py-2 text-[12px] font-normal leading-4.5 text-white shadow-[0_1px_1px_rgba(0,0,0,0.3),0_8px_24px_rgba(0,0,0,0.35)] ring-1 ring-white/10`}
-                    exit={{
-                      opacity: 0,
-                      y: 4,
-                      scale: 0.95,
-                      transition: { duration: 0.1 },
-                    }}
-                    initial={{ opacity: 0, y: 6, scale: 0.9 }}
-                    role="tooltip"
-                    transition={{ type: "spring", stiffness: 550, damping: 40 }}
-                  >
-                    {text}
-                  </motion.span>
-                </span>
-              ) : null}
-            </AnimatePresence>,
-            document.body
-          )
-        : null}
-    </span>
-  );
-}
-
-/**
- * Same anatomy as the mini cards: label in the frame's top strip, value on the
- * inset panel. With no `compare=true` there is no previous period, so the
- * delta chip the mock carried has no honest value to show and is gone.
- *
- * The frame and the label are chrome — real from the first frame, like a
- * settings panel's title. Only the number waits on the network, so only the
- * number gets a stand-in and the blur: the card never reads as a new card
- * arriving, just as its figure coming into focus.
- *
- * Exported for the public share board, which renders the same cards over the
- * public overview read — one anatomy, two audiences.
- */
-export function StatCard({ stat }: { stat: Stat }) {
-  return (
-    <SquircleSurface className="flex flex-col rounded-[24px] border border-border p-1 shadow-[0_1px_2px_rgba(0,0,0,0.06)] [--card-clip-radius:13px] sm:rounded-[30px] sm:[--card-clip-handle:2.5px] sm:[--card-clip-radius:17px]">
-      <p className="flex items-center gap-1.5 pb-1.5 pl-3.5 pr-3 pt-1">
-        <span className="text-sm font-medium text-foreground/80">
-          {stat.label}
-        </span>
-        <InfoTip text={stat.info} />
-      </p>
-      <SquircleSurface className="flex-1 rounded-[20px] border border-border bg-[#f6f6f6] px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.06)] [--card-clip-radius:11px] sm:rounded-[26px] sm:[--card-clip-handle:2.5px] sm:[--card-clip-radius:14px]">
-        <SkeletonReveal
-          ready={stat.display !== null}
-          skeleton={
-            // Exactly the number line's height (text-xl 28px / sm:text-2xl
-            // 32px): a taller skeleton loads the chart a few px low, then
-            // snaps it up when the real number lands.
-            <p className="flex h-7 items-center sm:h-8">
-              <span className="h-5 w-16 rounded bg-muted-foreground/15 sm:h-6" />
-            </p>
-          }
-        >
-          {stat.display === null ? null : (
-            <p className="text-xl font-medium tabular-nums tracking-tight sm:text-2xl">
-              {stat.display}
-            </p>
-          )}
-        </SkeletonReveal>
-      </SquircleSurface>
-    </SquircleSurface>
-  );
+  React.useEffect(() => {
+    publish(published);
+  }, [published, publish]);
+  return null;
 }
 
 /**

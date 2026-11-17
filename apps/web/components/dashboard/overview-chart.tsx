@@ -32,15 +32,24 @@ import {
   useOverviewRevenue,
 } from "@/components/dashboard/chart-revenue";
 import {
+  AVG_VISIT_COLOR,
+  BOUNCE_RATE_COLOR,
   OverviewTooltipContent,
   PAGEVIEWS_COLOR,
   VISITORS_COLOR,
+  type TrafficSeries,
 } from "@/components/dashboard/overview-chart-tooltip";
+import { ChartValueAxis } from "@/components/dashboard/chart-value-axis";
+import { useOverviewSessions } from "@/components/dashboard/overview-sessions";
+import { useOverviewView } from "@/components/dashboard/overview-view";
+import { useSiteSummary } from "@/components/dashboard/site-summary-context";
 import { Area, AreaChart } from "@/components/charts/area-chart";
 import { Background } from "@/components/charts/background";
 import { ChartTooltip } from "@/components/charts/tooltip";
 import { XAxis } from "@/components/charts/x-axis";
 import { useApiResource } from "@/hooks/use-api-resource";
+import { useRetainedResource } from "@/hooks/use-retained-resource";
+import { PREVIOUS_LINE_PROPS, previousFields } from "@/components/dashboard/chart-previous";
 import {
   getAnalyticsTimeseries,
   LIVE_API,
@@ -54,7 +63,29 @@ import {
   revenueLayers,
   type ChartGrain,
 } from "@/lib/chart-revenue";
+import {
+  alignPrevious,
+  fillDailyZeros,
+  fillFixedZeros,
+  fillPreviousGrid,
+  fillWeeklyZeros,
+  type PlotPoint,
+} from "@/lib/chart-fill";
+import { rightAxisMargin } from "@/lib/chart-axis";
 import { chartWindow } from "@/lib/chart-window";
+import {
+  effectiveChartMetric,
+  isRevenueChartable,
+  isSessionMetric,
+  type ChartDrawState,
+  type SessionChartMetric,
+} from "@/lib/overview-compare";
+import {
+  bucketSessions,
+  sessionGrainFits,
+  type SessionBucket,
+} from "@/lib/session-buckets";
+import { durationLabel, percentLabel } from "@/lib/stat-format";
 import { bucketMarkers } from "@/lib/event-markers";
 import { rankMentionAuthors, rankSaleVisitors } from "@/lib/marker-faces";
 import { relativeBucketLabel } from "@/lib/relative-bucket-label";
@@ -145,8 +176,59 @@ const MOCK_RESPONSE: AnalyticsTimeseriesResponse = {
   comparison: null,
 };
 
+/** The 30 days before the mock range, a little quieter: what Compare draws
+ * in mock mode. */
+const MOCK_COMPARED: AnalyticsTimeseriesResponse = {
+  ...MOCK_RESPONSE,
+  meta: {
+    ...MOCK_RESPONSE.meta,
+    comparison_range: {
+      from: new Date(START - 30 * DAY_MS).toISOString(),
+      to: new Date(START).toISOString(),
+    },
+  },
+  comparison: {
+    series: MOCK_DATA.map((point, i) => {
+      const visitors = Math.round(point.visitors * (0.78 + noise(i + 200) * 0.22));
+      return {
+        bucket: new Date(point.date.getTime() - 30 * DAY_MS).toISOString(),
+        events: Math.round(visitors * 2.1),
+        pageviews: Math.round(visitors * 2.1),
+        visitors,
+      };
+    }),
+  },
+};
+
 const VISITORS = VISITORS_COLOR;
 const PAGEVIEWS = PAGEVIEWS_COLOR;
+
+/** A session metric as the chart draws it: its line, its axis, its words. */
+const SESSION_SERIES: Record<
+  SessionChartMetric,
+  {
+    label: string;
+    color: string;
+    format: (value: number) => string;
+    pick: (bucket: SessionBucket) => number | null;
+  }
+> = {
+  bounce_rate: {
+    label: "Bounce rate",
+    color: BOUNCE_RATE_COLOR,
+    format: percentLabel,
+    pick: (bucket) => bucket.bounceRate,
+  },
+  avg_visit: {
+    label: "Avg. visit",
+    color: AVG_VISIT_COLOR,
+    format: durationLabel,
+    pick: (bucket) => bucket.avgDurationMs,
+  },
+};
+/** The previous period's pageviews beside visitors: the slate, fainter,
+ * as the pageviews area is the quieter of the two. */
+const PAGEVIEWS_PREVIOUS_FAINT = `color-mix(in srgb, ${PAGEVIEWS_COLOR} 60%, transparent)`;
 
 /** Scrubbing: the series right of the hovered bucket fade to this. */
 const SCRUB_DIM_OPACITY = 0.3;
@@ -243,93 +325,6 @@ const subscribeMobile = (onChange: () => void) => {
 const readMobile = () => window.matchMedia(MOBILE_QUERY).matches;
 const readMobileServer = () => false;
 
-type PlotPoint = { date: Date; visitors: number; pageviews: number };
-
-/**
- * Zero-fill a fixed-stride grid between `fromMs` and `untilMs` (exclusive): a
- * rolled-up bucket with no row IS zero traffic, and skipping it would let the
- * area jump across the gap. `untilMs` is capped at the server's `as_of`, so
- * buckets that have not happened yet stay absent instead of drawing a false
- * flatline into the future.
- *
- * `stepMs` is the served grain, not an assumed one. Both boards ask for
- * `hour` and get it — except in a sub-hour-offset zone (Kathmandu), where no
- * named grain is available and automatic selection can serve **minute** — and
- * stepping an hourly grid over minute buckets is what turned the share chart
- * into spikes, because every bucket but the top of each hour missed its slot
- * and got zero-filled instead.
- */
-function fillFixedZeros(
-  data: PlotPoint[],
-  fromMs: number,
-  untilMs: number,
-  stepMs: number
-): PlotPoint[] {
-  const byMs = new Map(data.map((point) => [point.date.getTime(), point]));
-  const filled: PlotPoint[] = [];
-  for (let t = fromMs; t < untilMs; t += stepMs) {
-    filled.push(byMs.get(t) ?? { date: new Date(t), visitors: 0, pageviews: 0 });
-  }
-  return filled;
-}
-
-/** Local-calendar-day key — matching by day, not by instant, stays robust to
- * where exactly the served bucket sits within that day. */
-const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-
-/**
- * The daily counterpart of `fillFixedZeros`, stepping local calendar days
- * (DST days are 23/25 hours long — a fixed 24-hour stride would drift off
- * the served midnights). A young site's 90-day view is mostly this: flat
- * zero until the day the tracker went live, then the real line.
- */
-function fillDailyZeros(
-  data: PlotPoint[],
-  fromMs: number,
-  untilMs: number
-): PlotPoint[] {
-  const byDay = new Map(data.map((point) => [dayKey(point.date), point]));
-  const filled: PlotPoint[] = [];
-  for (
-    let d = new Date(fromMs);
-    d.getTime() < untilMs;
-    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)
-  ) {
-    filled.push(byDay.get(dayKey(d)) ?? { date: d, visitors: 0, pageviews: 0 });
-  }
-  return filled;
-}
-
-/** The local Monday of the ISO week containing `d`. */
-function mondayOf(d: Date): Date {
-  const sinceMonday = (d.getDay() + 6) % 7;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - sinceMonday);
-}
-
-/**
- * Weekly grid for the 6/12-month views: server weeks are labelled with the
- * instant their local Monday starts at, so the grid steps local Mondays.
- * The first week of a range that starts mid-week is labelled *before* the
- * range's `from` — the contract's one legitimate outside-the-window label —
- * so the grid anchors on that Monday rather than on `from` itself.
- */
-function fillWeeklyZeros(
-  data: PlotPoint[],
-  fromMs: number,
-  untilMs: number
-): PlotPoint[] {
-  const byDay = new Map(data.map((point) => [dayKey(point.date), point]));
-  const filled: PlotPoint[] = [];
-  for (
-    let d = mondayOf(new Date(fromMs));
-    d.getTime() < untilMs;
-    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)
-  ) {
-    filled.push(byDay.get(dayKey(d)) ?? { date: d, visitors: 0, pageviews: 0 });
-  }
-  return filled;
-}
-
 /**
  * The traffic chart, fed by `GET /v1/sites/{site_id}/analytics/timeseries`
  * over the screen's shared interval. The served grain is the backend's choice
@@ -369,7 +364,25 @@ export function OverviewChart({
   const params = useParams<{ site: string }>();
   const slug = params.site ? decodeURIComponent(params.site) : "";
   const { range, interval, rangePending } = useAnalyticsInterval();
-  const { filtersParam } = useAnalyticsFilters();
+  const { filtersParam, active: filtersActive } = useAnalyticsFilters();
+  // Bounce rate and average visit over time: the sessions reads the stat
+  // tiles already make, shared. `null` on the share board.
+  const sharedSessions = useOverviewSessions();
+  // Compare and the pressed tile: the dashboard's only. The share board
+  // renders this chart without the provider and gets neither (its reads
+  // refuse `compare`).
+  const view = useOverviewView();
+  const compare = view.enabled && loadOverride === undefined && view.compare;
+  const { setChart } = view;
+  // The right-hand axis's widest label, measured where it is drawn: the
+  // plot gives up that much room on the right so no label is cut or sits
+  // over the series (`rightAxisMargin`).
+  const [rightAxisPx, setRightAxisPx] = React.useState<number | null>(null);
+  const reportRightAxis = React.useCallback(
+    (px: number) => setRightAxisPx((current) => (current === px ? current : px)),
+    []
+  );
+  const siteRole = useSiteSummary().site?.role ?? null;
   // Every label on this chart renders in the zone the data was cut in. An
   // unrecognized zone name falls back to the browser's rendering rather
   // than crashing the chart over a label.
@@ -388,7 +401,7 @@ export function OverviewChart({
 
   const loadFromSlug = React.useCallback(
     async (signal: AbortSignal): Promise<AnalyticsTimeseriesResponse> => {
-      if (!LIVE_API) return MOCK_RESPONSE;
+      if (!LIVE_API) return compare ? MOCK_COMPARED : MOCK_RESPONSE;
       // All-time's anchor is still on its way — hold, don't double-fetch.
       if (rangePending) {
         return new Promise<AnalyticsTimeseriesResponse>(() => {});
@@ -406,9 +419,10 @@ export function OverviewChart({
         signal,
         resolution: resolutionForInterval(interval, spanMs),
         ...(filtersParam !== undefined ? { filters: filtersParam } : {}),
+        ...(compare ? { compare: true } : {}),
       });
     },
-    [slug, range, interval, rangePending, filtersParam]
+    [slug, range, interval, rangePending, filtersParam, compare]
   );
 
   // Stamped with the browser's clock when it lands: a share board's meta has
@@ -421,7 +435,14 @@ export function OverviewChart({
     }),
     [loadSeries]
   );
-  const resource = useApiResource<StampedSeries>(loadStamped);
+  const asked = useApiResource<StampedSeries>(loadStamped);
+  // Toggling Compare re-reads the same series with the previous period
+  // beside it: the current lines stay drawn while that read is in flight,
+  // and the dashed lines join them when it lands.
+  const { resource } = useRetainedResource(
+    asked,
+    `${slug}|${range.from}|${range.to}|${range.timezone}|${interval}|${filtersParam ?? ""}`
+  );
 
   // Sales and mentions on the timeline: the dashboard's chart only. A share
   // board has no member and no business showing either.
@@ -439,7 +460,7 @@ export function OverviewChart({
         Date.parse(range.to) - Date.parse(range.from)
       )
     : "day";
-  const revenuePoints = useOverviewRevenue(
+  const { points: revenuePoints, settled: revenueSettled } = useOverviewRevenue(
     range,
     askedGrain,
     rangePending || loadOverride !== undefined
@@ -573,12 +594,13 @@ export function OverviewChart({
     const hadSignal = data.some(
       (point) => point.visitors > 0 || point.pageviews > 0
     );
+    // Days and weeks are the request zone's, never the browser's.
     const filled = subDayView
       ? fillFixedZeros(data, gridFromMs, untilMs, bucketMs)
       : weekView
-        ? fillWeeklyZeros(data, fromMs, untilMs)
+        ? fillWeeklyZeros(data, fromMs, untilMs, range.timezone)
         : dailyView
-          ? fillDailyZeros(data, fromMs, untilMs)
+          ? fillDailyZeros(data, fromMs, untilMs, range.timezone)
           : data;
     const filledIsSilent = filled.every(
       (point) => point.visitors === 0 && point.pageviews === 0
@@ -587,6 +609,52 @@ export function OverviewChart({
     // the expected grid and every grid slot came up empty, plot the raw
     // buckets as they are rather than a fabricated flatline.
     data = hadSignal && filledIsSilent ? data : filled;
+  }
+
+  /*
+   * The previous period, under the current one bucket for bucket. Its grid
+   * is cut exactly like the current one, over the window the server says it
+   * compared against (`meta.comparison_range`), then paired by position
+   * (`alignPrevious`): bucket i of the previous window sits under bucket i
+   * of this one, whatever their dates. Zero-filled for the reason the
+   * current grid is: a bucket with no row was a quiet one.
+   */
+  const comparisonSeries = compare ? (response?.comparison?.series ?? null) : null;
+  let previousPoints: (PlotPoint | null)[] | null = null;
+  // The previous window's own grid and end, kept for the sessions line too.
+  let previousGrid: PlotPoint[] | null = null;
+  let previousEndMs = fromMs;
+  if (comparisonSeries && response) {
+    const prevRaw: PlotPoint[] = comparisonSeries.map((point) => ({
+      date: new Date(point.bucket),
+      visitors: point.visitors,
+      pageviews: point.pageviews,
+    }));
+    const compared = response.meta.comparison_range;
+    const prevFromMs = compared ? Date.parse(compared.from) : fromMs - (toMs - fromMs);
+    const prevToMs = compared ? Date.parse(compared.to) : fromMs;
+    // For a range still in progress the server cut the window at the point
+    // the current one has reached, so this grid stops there too.
+    const prevFilled = !plotWindow
+      ? prevRaw
+      : subDayView
+        ? fillPreviousGrid(prevRaw, {
+            grain: "fixed",
+            fromMs: prevFromMs,
+            untilMs: prevToMs,
+            bucketMs,
+          })
+        : weekView || dailyView
+          ? fillPreviousGrid(prevRaw, {
+              grain: weekView ? "week" : "day",
+              fromMs: prevFromMs,
+              untilMs: prevToMs,
+              timeZone: range.timezone,
+            })
+          : prevRaw;
+    previousPoints = alignPrevious(data, prevFilled);
+    previousGrid = prevFilled;
+    previousEndMs = prevToMs;
   }
 
   /**
@@ -611,6 +679,15 @@ export function OverviewChart({
             ? (date: Date) => `Yesterday, ${fmt.time.format(date)}`
             : fmt.timeTitle.format;
 
+  // The previous bucket's own date, for the tooltip's Previous lines: never
+  // "Today", and short, because it shares a row with a number.
+  const previousLabelFormat =
+    resolution === "week"
+      ? (date: Date) => `Week of ${fmt.shortDate.format(date)}`
+      : resolution === "day"
+        ? fmt.weekdayDate.format
+        : (date: Date) => `${fmt.shortDate.format(date)}, ${fmt.time.format(date)}`;
+
   // The axis ends on the last bucket of the window — 23:00 for a calendar
   // day, the current hour for the rolling one — never on the exclusive
   // `to`, which would conjure one bucket more than the day has.
@@ -633,6 +710,121 @@ export function OverviewChart({
   } = revenueLayers(revenueModel, {
     enabled: loadOverride === undefined && response !== null,
     hidden: hiddenLayers.includes("revenue"),
+  });
+
+  /*
+   * What the chart draws. `null` is the default: both traffic areas, the
+   * revenue bars behind them, the markers. A pressed tile narrows it to one
+   * traffic series, or promotes the revenue bars to the main series. A
+   * linked `metric=revenue` that this reader cannot chart falls back to the
+   * default rather than an empty plot.
+   */
+  const revenueChartable = isRevenueChartable({
+    role: siteRole,
+    hasBars: showRevenue,
+  });
+  /*
+   * The sessions series can be the chart when it has been read, no filter is
+   * on (the sessions read takes none), and it is served at the chart's grain
+   * or finer: it folds into the chart's buckets by summing counts and
+   * re-deriving the rates (`bucketSessions`), never the other way round.
+   */
+  const sessionsRead =
+    sharedSessions?.current.status === "ready" ? sharedSessions.current.data : null;
+  const sessionsChartable =
+    view.enabled &&
+    !filtersActive &&
+    sessionsRead !== null &&
+    sessionGrainFits(sessionsRead.meta.resolution, resolution);
+  const metric = view.enabled
+    ? effectiveChartMetric(view.metric, { revenueChartable, sessionsChartable })
+    : null;
+  // Asked for revenue and its read is still out: hold the skeleton rather
+  // than draw traffic and swap it away a moment later.
+  const holdForRevenue =
+    view.enabled && view.metric === "revenue" && !revenueSettled;
+  // The same for a session metric whose read is out. Not for its previous
+  // period: that read waits on the overview's comparison window, and the
+  // current line is drawn meanwhile, its dashed partner joining it later.
+  const holdForSessions =
+    view.enabled &&
+    isSessionMetric(view.metric) &&
+    !filtersActive &&
+    sharedSessions !== null &&
+    sharedSessions.current.status === "loading";
+  const sessionMetric = isSessionMetric(metric) ? metric : null;
+  const sessionSeries = sessionMetric ? SESSION_SERIES[sessionMetric] : null;
+  const sessionBuckets =
+    sessionMetric && sessionsRead
+      ? bucketSessions(bucketStarts, layerEndMs, sessionsRead.series)
+      : null;
+  // The previous period's sessions on the previous window's grid, then
+  // under the current buckets by position, as the traffic lines are.
+  const previousSessionsRead =
+    sharedSessions?.previous.status === "ready" ? sharedSessions.previous.data : null;
+  const previousSessionBuckets =
+    sessionMetric && previousSessionsRead && previousGrid
+      ? alignPrevious(
+          data,
+          bucketSessions(
+            previousGrid.map((point) => point.date.getTime()),
+            previousEndMs,
+            previousSessionsRead.series
+          )
+        )
+      : null;
+  const previousSessionStarts =
+    previousSessionBuckets && previousGrid
+      ? alignPrevious(data, previousGrid).map((point) => point?.date.getTime() ?? null)
+      : null;
+  const revenueMain = metric === "revenue";
+  const trafficSeries: readonly TrafficSeries[] =
+    metric === "visitors"
+      ? ["visitors"]
+      : metric === "pageviews"
+        ? ["pageviews"]
+        : revenueMain || sessionMetric
+          ? []
+          : ["visitors", "pageviews"];
+  // Revenue and the markers are never compared: only traffic has a
+  // previous line.
+  const comparing = previousPoints !== null && !revenueMain && !sessionMetric;
+  const sessionComparing = previousSessionBuckets !== null;
+  // Every mode with labels on the right: a session metric's values, revenue
+  // as the main series, or the revenue bars' own axis beside the traffic.
+  const rightAxisDrawn =
+    sessionSeries !== null ||
+    revenueMain ||
+    (showRevenue && metric === null && revenueVisible);
+
+  const chartData = data.map((point, index) => {
+    const previous = comparing ? (previousPoints?.[index] ?? null) : null;
+    const bucket = revenueMain ? revenueModel.buckets.get(point.date.getTime()) : undefined;
+    const session = sessionBuckets?.[index];
+    const sessionValue = session && sessionSeries ? sessionSeries.pick(session) : null;
+    const previousSession = previousSessionBuckets?.[index];
+    const previousSessionValue =
+      previousSession && sessionSeries ? sessionSeries.pick(previousSession) : null;
+    const previousSessionAt = previousSessionStarts?.[index] ?? null;
+    return {
+      ...point,
+      // A bucket without sessions carries no value, and the line breaks
+      // there (`gapsForMissing`) rather than claiming 0%.
+      ...(sessionValue !== null ? { session: sessionValue } : {}),
+      ...(previousSessionValue !== null ? { prevSession: previousSessionValue } : {}),
+      ...(previousSessionAt !== null ? { prevSessionAtMs: previousSessionAt } : {}),
+      // No counterpart, no keys: the dashed line breaks there.
+      ...previousFields(previous),
+      // What the bars draw, so the primary axis is sized to them: a net bar
+      // with its refund outline on top.
+      ...(revenueMain
+        ? {
+            revenueTop: bucket
+              ? Math.max(0, bucket.netMinor) + Math.max(0, bucket.refundMinor)
+              : 0,
+          }
+        : {}),
+    };
   });
   const markerBuckets = new Map(
     bucketMarkers(
@@ -691,11 +883,23 @@ export function OverviewChart({
           edge-to-edge, and a chip laid over the series would sit on data. */}
       {/* Top-left, mirroring the provenance chips: the legend only exists
           when the range has markers, and hides either kind for this browser. */}
+      {/* What this chart draws, for the tiles: pressed is the drawn
+          metric's tile, and only what it can draw is a button. Not while it
+          is still finding out (a read in flight, or holding for one). */}
+      {loadOverride === undefined && view.enabled ? (
+        <ChartStatePublisher
+          publish={setChart}
+          settled={response !== null && !holdForRevenue && !holdForSessions}
+          state={{ drawn: metric, revenueChartable, sessionsChartable }}
+        />
+      ) : null}
       {loadOverride === undefined && response ? (
         <OverviewMarkersLegend
           className="absolute left-3 top-0 z-10"
           items={markers}
-          revenue={showRevenue}
+          // Only beside traffic can the bars be hidden: as the main series
+          // they are the chart, and a single traffic series draws none.
+          revenue={showRevenue && metric === null}
         />
       ) : null}
       {response ? (
@@ -712,16 +916,27 @@ export function OverviewChart({
       // y-domain tween is zeroed deliberately — it used to run between
       // those two moments on a plot with nothing drawn on it, which read
       // as the chart blinking out after the skeleton.
-      data={data}
-      status={resource.status === "loading" ? "loading" : "ready"}
+      data={chartData}
+      status={
+        resource.status === "loading" || holdForRevenue || holdForSessions
+          ? "loading"
+          : "ready"
+      }
       aspectRatio="auto"
       animationDuration={500}
       yDomainTweenDuration={0}
       enterTransition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
       // Zero side margins: the plot fills the card edge-to-edge. The x-axis
       // labels clamp themselves inside the plot (see XAxisLabel) so they never
-      // spill past the card even though the chart itself is flush.
-      margin={{ top: 12, right: 0, bottom: 24, left: 0 }}
+      // spill past the card even though the chart itself is flush. A right
+      // axis (a session metric's values, the revenue bars' money) gets its
+      // own room instead of being laid over the series' right end.
+      margin={{
+        top: 12,
+        right: rightAxisMargin(rightAxisDrawn, rightAxisPx),
+        bottom: 24,
+        left: 0,
+      }}
       className={PLOT_HEIGHT}
       scrubDimOpacity={SCRUB_DIM_OPACITY}
       xLabelFormat={xLabelFormat}
@@ -732,44 +947,132 @@ export function OverviewChart({
       }
     >
       <Background pattern="dots" opacity={0.4} />
-      {/* Behind the traffic: the bars come first among the series layers,
-          and their axis sits outside the reveal clip like the x-axis. */}
-      {showRevenue ? (
-        <RevenueAxis model={revenueModel} visible={revenueVisible} />
+      {revenueMain ? (
+        <RevenueAxis
+          model={revenueModel}
+          onWidth={reportRightAxis}
+          placement="primary"
+          visible
+        />
       ) : null}
-      {showRevenue ? (
+      {revenueMain ? (
+        <RevenueBars model={revenueModel} placement="primary" visible />
+      ) : null}
+      {revenueMain ? (
+        // Never drawn: it sizes the chart's primary axis to the bars and
+        // gives the hover something to track. The bars are the picture.
+        <Area
+          dataKey="revenueTop"
+          fill="var(--success)"
+          fillOpacity={0}
+          showHighlight={false}
+          showLine={false}
+          dimOpacity={1}
+          loadingStyle="sweep"
+          loadingStrokeWidth={0.6}
+          loadingStroke="var(--muted-foreground)"
+          loadingStrokeOpacity={0.35}
+        />
+      ) : null}
+      {sessionSeries ? (
+        <ChartValueAxis format={sessionSeries.format} onWidth={reportRightAxis} />
+      ) : null}
+      {sessionSeries ? (
+        <Area
+          dataKey="session"
+          dimOpacity={1}
+          fadeEdges
+          fill={sessionSeries.color}
+          fillOpacity={0.1}
+          gapsForMissing
+          loadingStroke="var(--muted-foreground)"
+          loadingStrokeOpacity={0.35}
+          loadingStrokeWidth={0.6}
+          loadingStyle="sweep"
+          strokeOpacity={0.9}
+          strokeWidth={2}
+        />
+      ) : null}
+      {sessionSeries && sessionComparing ? (
+        <Area
+          {...PREVIOUS_LINE_PROPS}
+          dashArray="4,4"
+          dataKey="prevSession"
+          fill={sessionSeries.color}
+          strokeWidth={1.5}
+        />
+      ) : null}
+      {/* Behind the traffic: the bars come first among the series layers,
+          and their axis sits outside the reveal clip like the x-axis. Only
+          on the default chart: a single traffic series stands alone. */}
+      {showRevenue && metric === null ? (
+        <RevenueAxis
+          model={revenueModel}
+          onWidth={reportRightAxis}
+          visible={revenueVisible}
+        />
+      ) : null}
+      {showRevenue && metric === null ? (
         <RevenueBars model={revenueModel} visible={revenueVisible} />
       ) : null}
-      <Area
-        dataKey="pageviews"
-        fill={PAGEVIEWS}
-        fillOpacity={0.08}
-        strokeWidth={1.5}
-        strokeOpacity={0.45}
-        // No whole-series dim on hover: scrubbing dims only what lies right
-        // of the cursor (`scrubDimOpacity`), and the highlight still traces
-        // the hovered stretch.
-        dimOpacity={1}
-        fadeEdges
-        loadingStyle="sweep"
-        // a thin, soft-grey loading line instead of a bold black one
-        loadingStrokeWidth={0.6}
-        loadingStroke="var(--muted-foreground)"
-        loadingStrokeOpacity={0.35}
-      />
-      <Area
-        dataKey="visitors"
-        fill={VISITORS}
-        fillOpacity={0.14}
-        strokeWidth={2}
-        strokeOpacity={0.4}
-        dimOpacity={1}
-        fadeEdges
-        loadingStyle="sweep"
-        loadingStrokeWidth={0.6}
-        loadingStroke="var(--muted-foreground)"
-        loadingStrokeOpacity={0.35}
-      />
+      {trafficSeries.includes("pageviews") ? (
+        <Area
+          dataKey="pageviews"
+          fill={PAGEVIEWS}
+          // Alone on the chart, pageviews is the subject rather than the
+          // underlay, and takes the visitors area's weight.
+          fillOpacity={metric === "pageviews" ? 0.16 : 0.08}
+          strokeWidth={metric === "pageviews" ? 2 : 1.5}
+          strokeOpacity={metric === "pageviews" ? 0.8 : 0.45}
+          // No whole-series dim on hover: scrubbing dims only what lies right
+          // of the cursor (`scrubDimOpacity`), and the highlight still traces
+          // the hovered stretch.
+          dimOpacity={1}
+          fadeEdges
+          loadingStyle="sweep"
+          // a thin, soft-grey loading line instead of a bold black one
+          loadingStrokeWidth={0.6}
+          loadingStroke="var(--muted-foreground)"
+          loadingStrokeOpacity={0.35}
+        />
+      ) : null}
+      {trafficSeries.includes("visitors") ? (
+        <Area
+          dataKey="visitors"
+          fill={VISITORS}
+          fillOpacity={0.14}
+          strokeWidth={2}
+          strokeOpacity={0.4}
+          dimOpacity={1}
+          fadeEdges
+          loadingStyle="sweep"
+          loadingStrokeWidth={0.6}
+          loadingStroke="var(--muted-foreground)"
+          loadingStrokeOpacity={0.35}
+        />
+      ) : null}
+      {/* The previous period: a dashed line per series, no fill, over the
+          areas so the fills never hide it. Pageviews' line stays faint
+          beside visitors, as its area does. */}
+      {comparing && trafficSeries.includes("pageviews") ? (
+        <Area
+          {...PREVIOUS_LINE_PROPS}
+          dashArray="3,4"
+          dataKey="prevPageviews"
+          fill={PAGEVIEWS}
+          stroke={metric === "pageviews" ? PAGEVIEWS : PAGEVIEWS_PREVIOUS_FAINT}
+          strokeWidth={metric === "pageviews" ? 1.5 : 1.25}
+        />
+      ) : null}
+      {comparing && trafficSeries.includes("visitors") ? (
+        <Area
+          {...PREVIOUS_LINE_PROPS}
+          dashArray="4,4"
+          dataKey="prevVisitors"
+          fill={VISITORS}
+          strokeWidth={1.5}
+        />
+      ) : null}
       <XAxis tickDates={tickDates} />
       <ChartTooltip
         content={({ point }) => {
@@ -777,16 +1080,56 @@ export function OverviewChart({
           const visitors = Number(point.visitors) || 0;
           const bucket = markerBuckets.get(date.getTime());
           const counts = bucket?.counts;
+          const prevAtMs = Number(point.prevAtMs);
+          const previous =
+            comparing && Number.isFinite(prevAtMs)
+              ? {
+                  label: previousLabelFormat(new Date(prevAtMs)),
+                  visitors: Number(point.prevVisitors) || 0,
+                  pageviews: Number(point.prevPageviews) || 0,
+                }
+              : null;
+          const sessionAt = Number(point.prevSessionAtMs);
+          const sessionValue = point.session;
+          const previousSessionValue = point.prevSession;
+          const session = sessionSeries
+            ? {
+                label: sessionSeries.label,
+                color: sessionSeries.color,
+                // No sessions in the bucket: nothing measured, not zero.
+                value:
+                  typeof sessionValue === "number"
+                    ? sessionSeries.format(sessionValue)
+                    : "—",
+                previous:
+                  sessionComparing && Number.isFinite(sessionAt)
+                    ? {
+                        label: previousLabelFormat(new Date(sessionAt)),
+                        value:
+                          typeof previousSessionValue === "number"
+                            ? sessionSeries.format(previousSessionValue)
+                            : "—",
+                      }
+                    : null,
+              }
+            : null;
           return (
             <OverviewTooltipContent
               // Revenue is site-wide; a filter narrows only the traffic.
               filtered={filtersParam !== undefined}
+              previous={previous}
+              session={session}
+              series={trafficSeries}
               mentionAuthors={bucket?.mentionAuthors}
               mentions={counts?.mention ?? 0}
               saleVisitors={bucket?.saleVisitors}
               pageviews={Number(point.pageviews) || 0}
+              // Revenue rides the tooltip where it is drawn: beside the
+              // default chart's bars, or as the main series. A single
+              // traffic or session line draws no bars, so it says nothing
+              // about money either.
               revenue={
-                revenueInTooltip
+                (revenueInTooltip && metric === null) || revenueMain
                   ? (revenueModel.buckets.get(date.getTime()) ?? null)
                   : null
               }
@@ -797,6 +1140,9 @@ export function OverviewChart({
           );
         }}
         datePillFormat={datePillFormat}
+        // The bars mark their own buckets; a dot on the invisible sizing
+        // series would float over them.
+        showDots={!revenueMain}
         titleFormat={titleFormat}
       />
       {loadOverride === undefined && response ? (
@@ -811,6 +1157,35 @@ export function OverviewChart({
       </AreaChart>
     </div>
   );
+}
+
+/**
+ * Tells the overview's view what this chart draws and could draw
+ * (`ChartDrawState`), so the tiles take "pressed" and "is a button" from the
+ * chart rather than from the URL. A component for `PosterSeriesPublisher`'s
+ * reason: the answer exists only past the chart's early returns. Unmounting
+ * (an error or empty panel in its place) takes it back to the default.
+ */
+function ChartStatePublisher({
+  state,
+  settled,
+  publish,
+}: {
+  state: ChartDrawState;
+  /** False while a read is out: the last answer stands until it lands. */
+  settled: boolean;
+  publish: (state: ChartDrawState) => void;
+}) {
+  const { drawn, revenueChartable, sessionsChartable } = state;
+  React.useEffect(() => {
+    if (settled) publish({ drawn, revenueChartable, sessionsChartable });
+  }, [settled, drawn, revenueChartable, sessionsChartable, publish]);
+  React.useEffect(
+    () => () =>
+      publish({ drawn: null, revenueChartable: false, sessionsChartable: false }),
+    [publish]
+  );
+  return null;
 }
 
 /**

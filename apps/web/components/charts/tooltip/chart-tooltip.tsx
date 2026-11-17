@@ -20,6 +20,7 @@ import { DateTicker } from "./date-ticker";
 import { TooltipBox } from "./tooltip-box";
 import { TooltipContent, type TooltipRow } from "./tooltip-content";
 import { TooltipDot } from "./tooltip-dot";
+import { linesWithDots } from "./tooltip-dots";
 import { TooltipIndicator } from "./tooltip-indicator";
 
 export interface ChartTooltipProps {
@@ -201,6 +202,9 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
   ]);
 
   const visible = tooltipData !== null;
+  const dotted = new Set(
+    linesWithDots(lines, tooltipData?.yPositions).map((line) => line.dataKey)
+  );
   const x = tooltipData?.x ?? 0;
   const xWithMargin = x + margin.left;
 
@@ -313,7 +317,11 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
           width="100%"
         >
           <g transform={`translate(${margin.left},${margin.top})`}>
-            {lines.map((line, index) => (
+            {/* Only series with a value here: one without has no position,
+                and its dot would sit on the top edge. The index stays the
+                line's own, which the colour lookup is keyed on. */}
+            {lines.map((line, index) =>
+              dotted.has(line.dataKey) ? (
               <TooltipDot
                 color={resolveDotColor(line, index)}
                 cornerRadiusFraction={
@@ -329,7 +337,8 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
                 x={tooltipData?.xPositions?.[line.dataKey] ?? x}
                 y={tooltipData?.yPositions[line.dataKey] ?? 0}
               />
-            ))}
+              ) : null
+            )}
           </g>
         </svg>
       )}

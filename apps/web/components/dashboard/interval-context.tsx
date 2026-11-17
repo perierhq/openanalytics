@@ -16,6 +16,7 @@ import {
   resolveViewingTimezone,
   sessionTimezone,
 } from "@/lib/timezone";
+import { zonedDayStart } from "@/lib/zoned-day";
 
 /**
  * The overview screen's shared time range. One provider per screen; every
@@ -145,64 +146,8 @@ function readStoredZone(slug: string): string | null {
 }
 
 /* --------------------------------------------------------------------- */
-/* Calendar math in an arbitrary IANA zone                                */
+/* Calendar math in an arbitrary IANA zone (`@/lib/zoned-day`)            */
 /* --------------------------------------------------------------------- */
-
-/** The zone's UTC offset at `at`, in milliseconds. */
-function tzOffsetMs(timezone: string, at: Date): number {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    })
-      .formatToParts(at)
-      .map((part) => [part.type, part.value])
-  );
-  const asUtc = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    Number(parts.hour) % 24,
-    Number(parts.minute),
-    Number(parts.second)
-  );
-  return asUtc - at.getTime();
-}
-
-/**
- * The UTC instant at which the calendar day containing `base` — shifted by
- * whole years/months/days *on that zone's calendar* — starts in `timezone`.
- * Two offset passes converge across DST transitions.
- */
-function zonedDayStart(
-  base: Date,
-  timezone: string,
-  shift: { years?: number; months?: number; days?: number } = {}
-): Date {
-  const [y, m, d] = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-    .format(base)
-    .split("-")
-    .map(Number);
-  const target = Date.UTC(
-    y + (shift.years ?? 0),
-    m - 1 + (shift.months ?? 0),
-    d + (shift.days ?? 0)
-  );
-  let instant = target - tzOffsetMs(timezone, new Date(target));
-  instant = target - tzOffsetMs(timezone, new Date(instant));
-  return new Date(instant);
-}
 
 /**
  * Half-open `[from, to)` for an interval, cut at the resolved zone's calendar

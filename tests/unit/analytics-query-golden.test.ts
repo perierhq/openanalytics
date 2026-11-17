@@ -155,6 +155,87 @@ describe('comparison-range derivation', () => {
     expect(spanMs).toBe(7 * 86_400_000)
   })
 
+  // A period still in progress compares like for like: the previous period
+  // starts where it always did (one span before `from`) and covers only as
+  // much as the current period has had so far, so 09:00 today is set against
+  // 00:00-09:00 yesterday rather than all of yesterday.
+  it('cuts an unfinished day at the elapsed point: 00:00-09:00 today vs 00:00-09:00 yesterday', () => {
+    const previous = derivePreviousPeriod(
+      { from: '2026-07-23T00:00:00.000Z', to: '2026-07-24T00:00:00.000Z' },
+      { asOf: '2026-07-23T09:00:00.000Z', stepMs: 15 * 60_000 },
+    )
+    expect(previous).toEqual({
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-07-22T09:00:00.000Z',
+    })
+  })
+
+  it('cuts an unfinished day in a non-UTC zone at the same elapsed point', () => {
+    // Tokyo's today is 15:00Z the day before to 15:00Z; as of 09:07 Tokyo
+    // (00:07Z) the read has reached into its 09:00 quarter, so the previous
+    // day is cut at the end of that quarter: 00:00-09:15 Tokyo yesterday.
+    const previous = derivePreviousPeriod(
+      { from: '2026-07-22T15:00:00.000Z', to: '2026-07-23T15:00:00.000Z' },
+      { asOf: '2026-07-23T00:07:00.000Z', stepMs: 15 * 60_000 },
+    )
+    expect(previous).toEqual({
+      from: '2026-07-21T15:00:00.000Z',
+      to: '2026-07-22T00:15:00.000Z',
+    })
+  })
+
+  it('cuts an unfinished 7 days at the same offset into the previous 7', () => {
+    const previous = derivePreviousPeriod(
+      { from: '2026-07-17T00:00:00.000Z', to: '2026-07-24T00:00:00.000Z' },
+      { asOf: '2026-07-23T14:40:00.000Z', stepMs: 15 * 60_000 },
+    )
+    expect(previous).toEqual({
+      from: '2026-07-10T00:00:00.000Z',
+      to: '2026-07-16T14:45:00.000Z',
+    })
+  })
+
+  it('leaves a finished period whole', () => {
+    const previous = derivePreviousPeriod(
+      { from: '2026-07-22T00:00:00.000Z', to: '2026-07-23T00:00:00.000Z' },
+      { asOf: '2026-07-23T09:00:00.000Z', stepMs: 15 * 60_000 },
+    )
+    expect(previous).toEqual({
+      from: '2026-07-21T00:00:00.000Z',
+      to: '2026-07-22T00:00:00.000Z',
+    })
+  })
+
+  it('compares whole days where the read can only resolve whole days', () => {
+    // A UTC-day rollup has no bucket smaller than a day: the cut rounds up to
+    // the end of the day `as_of` is in, which is the full period here.
+    const previous = derivePreviousPeriod(
+      { from: '2026-05-25T00:00:00.000Z', to: '2026-07-24T00:00:00.000Z' },
+      { asOf: '2026-07-23T09:00:00.000Z', stepMs: 86_400_000 },
+    )
+    expect(previous).toEqual({
+      from: '2026-03-26T00:00:00.000Z',
+      to: '2026-05-25T00:00:00.000Z',
+    })
+  })
+
+  it('keeps the whole previous period when as_of is unknown', () => {
+    const range = { from: '2026-07-23T00:00:00.000Z', to: '2026-07-24T00:00:00.000Z' }
+    const whole = { from: '2026-07-22T00:00:00.000Z', to: '2026-07-23T00:00:00.000Z' }
+    expect(derivePreviousPeriod(range, { asOf: null, stepMs: 900_000 })).toEqual(whole)
+    expect(derivePreviousPeriod(range, { stepMs: 900_000 })).toEqual(whole)
+    expect(derivePreviousPeriod(range, { asOf: 'garbage', stepMs: 900_000 })).toEqual(whole)
+  })
+
+  it('has nothing to compare when the period has not started', () => {
+    expect(
+      derivePreviousPeriod(
+        { from: '2026-07-24T00:00:00.000Z', to: '2026-07-25T00:00:00.000Z' },
+        { asOf: '2026-07-23T09:00:00.000Z', stepMs: 900_000 },
+      ),
+    ).toBeNull()
+  })
+
   it('returns null for a malformed or inverted range', () => {
     expect(derivePreviousPeriod({ from: 'not-a-date', to: '2026-07-01T00:00:00.000Z' })).toBeNull()
     expect(

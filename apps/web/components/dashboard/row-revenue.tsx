@@ -5,7 +5,7 @@ import * as React from "react";
 import { liveRevenueState } from "@/components/dashboard/chart-markers";
 import { useAnalyticsFilters } from "@/components/dashboard/filter-context";
 import { useAnalyticsInterval } from "@/components/dashboard/interval-context";
-import { InfoTip } from "@/components/dashboard/overview-stats";
+import { InfoTip } from "@/components/dashboard/stat-card";
 import { useSiteSummary } from "@/components/dashboard/site-summary-context";
 import { useApiResource } from "@/hooks/use-api-resource";
 import {

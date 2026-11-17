@@ -117,6 +117,116 @@ describe('overview mapping and metadata', () => {
   })
 })
 
+/**
+ * A period still in progress (`as_of` inside it) compares like for like: the
+ * previous period starts one span before `from`, as ever, and covers only as
+ * much as the current one has had, rounded up to the read's own bucket. NOW is
+ * 2026-07-23T14:40Z, so the cut lands at 14:45.
+ */
+describe('comparison of a period still in progress', () => {
+  const freshOk = (op: string) =>
+    op === 'analytics.freshness' ? [{ watermark: '2026-07-23 14:35:00.000', buckets: '10' }] : null
+
+  it('compares unfinished today with the same hours of yesterday', async () => {
+    const { service, gateway } = serviceWith(
+      (op) => freshOk(op) ?? [{ events: '5', pageviews: '5', visitors: '5', billable_events: '5' }],
+    )
+    const res = await service.overview({
+      siteId: SITE,
+      from: '2026-07-23T00:00:00.000Z',
+      to: '2026-07-24T00:00:00.000Z',
+      timezone: 'UTC',
+      compare: true,
+    })
+    expect(res.meta.comparison_range).toEqual({
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-07-22T14:45:00.000Z',
+    })
+    // `as_of` is the instant the cut was taken at.
+    expect(res.meta.freshness.as_of).toBe(NOW.toISOString())
+    const previousCall = gateway.calls.filter((c) => c.operation === 'analytics.overview_hour')[1]
+    expect(previousCall?.params['from']).toBe('2026-07-22T00:00:00.000Z')
+    expect(previousCall?.params['to']).toBe('2026-07-22T14:45:00.000Z')
+  })
+
+  it('compares unfinished 7 days with the same stretch of the 7 before', async () => {
+    const { service } = serviceWith(
+      (op) => freshOk(op) ?? [{ events: '5', pageviews: '5', visitors: '5', billable_events: '5' }],
+    )
+    const res = await service.overview({
+      siteId: SITE,
+      from: '2026-07-17T00:00:00.000Z',
+      to: '2026-07-24T00:00:00.000Z',
+      timezone: 'UTC',
+      compare: true,
+    })
+    expect(res.meta.comparison_range).toEqual({
+      from: '2026-07-10T00:00:00.000Z',
+      to: '2026-07-16T14:45:00.000Z',
+    })
+  })
+
+  it('leaves a finished yesterday compared with the whole day before', async () => {
+    const { service } = serviceWith(
+      (op) => freshOk(op) ?? [{ events: '5', pageviews: '5', visitors: '5', billable_events: '5' }],
+    )
+    const res = await service.overview({
+      siteId: SITE,
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-07-23T00:00:00.000Z',
+      timezone: 'UTC',
+      compare: true,
+    })
+    expect(res.meta.comparison_range).toEqual({
+      from: '2026-07-21T00:00:00.000Z',
+      to: '2026-07-22T00:00:00.000Z',
+    })
+  })
+
+  it('cuts the previous timeseries the same way, so its buckets stop where today’s do', async () => {
+    const { service, gateway } = serviceWith((op) => freshOk(op) ?? [])
+    const res = await service.timeseries({
+      siteId: SITE,
+      from: '2026-07-23T00:00:00.000Z',
+      to: '2026-07-24T00:00:00.000Z',
+      timezone: 'UTC',
+      compare: true,
+      resolution: 'hour',
+    })
+    expect(res.meta.comparison_range).toEqual({
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-07-22T14:45:00.000Z',
+    })
+    const reads = gateway.calls.filter((c) => c.operation !== 'analytics.freshness')
+    expect(reads).toHaveLength(2)
+    expect(reads[1]?.params['from']).toBe('2026-07-22T00:00:00.000Z')
+    expect(reads[1]?.params['to']).toBe('2026-07-22T14:45:00.000Z')
+  })
+
+  it('cuts the revenue summary’s previous period the same way', async () => {
+    const { service } = serviceWith((op) => freshOk(op) ?? [])
+    const res = await service.revenueSummary({
+      siteId: SITE,
+      from: '2026-07-23T00:00:00.000Z',
+      to: '2026-07-24T00:00:00.000Z',
+      timezone: 'UTC',
+      reportingCurrency: 'USD',
+      connection: {
+        provider: 'stripe',
+        connectionStatus: 'connected',
+        lastSyncedAt: null,
+        lastWebhookAt: null,
+        rollupThrough: null,
+      },
+      compare: true,
+    })
+    expect(res.meta.comparison_range).toEqual({
+      from: '2026-07-22T00:00:00.000Z',
+      to: '2026-07-22T14:45:00.000Z',
+    })
+  })
+})
+
 describe('freshness interpretation', () => {
   it('distinguishes no_data from stale from ok', async () => {
     const empty = serviceWith((op) =>

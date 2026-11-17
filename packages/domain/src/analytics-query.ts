@@ -624,13 +624,34 @@ export interface UtcRange {
 }
 
 /**
+ * Where a period still in progress is cut for its comparison.
+ *
+ * `asOf` is the instant the read is answered at (the response's
+ * `meta.freshness.as_of`); `stepMs` is the read's own bucket, the unit its
+ * effective range is snapped to (a minute, a quarter-hour, a UTC day). An
+ * absent or unparseable `asOf` means the period's progress is unknown, and the
+ * whole previous period is compared, as it was before this cut existed.
+ */
+export interface PreviousPeriodCut {
+  readonly asOf?: string | null | undefined
+  readonly stepMs: number
+}
+
+/**
  * The comparison range for a `[from, to)` request (docs snapshot 02 §18:
  * "comparison interval"; plan Milestone 7 item 9).
  *
- * The previous period is the equal-length half-open range that ends exactly where
- * the current one begins: `[from - span, from)`. It is derived here, in domain
- * code, so the API and any future caller compute the same comparison from the
- * same inputs rather than each doing date maths at the edge.
+ * The previous period starts one span before the current one, `from - span`,
+ * and is as long as the part of the current period that has happened: for a
+ * finished period that is all of it, `[from - span, from)`; for a period still
+ * in progress (`asOf` inside it) it is cut at the same offset, so 09:00 on
+ * "today" compares 00:00-09:00 today with 00:00-09:00 yesterday rather than
+ * with all of yesterday. The cut rounds `asOf` up to the read's bucket
+ * (`stepMs`), because the current period's partial bucket is already counted
+ * and its counterpart must be too; a read that can only resolve whole UTC days
+ * therefore compares whole days. It is derived here, in domain code, so the API
+ * and any future caller compute the same comparison from the same inputs rather
+ * than each doing date maths at the edge.
  *
  * The definition is span-based, not calendar-based, and that is deliberate: an
  * equal-UTC-span preceding window is exact and reversible, and it lines up bucket
@@ -640,17 +661,23 @@ export interface UtcRange {
  * metadata already carries the comparison range explicitly so a client is never
  * left guessing which window a comparison number came from.
  *
- * Returns `null` for a malformed or non-positive range, mirroring
- * `chooseResolution`'s total, throw-free contract.
+ * Returns `null` for a malformed or non-positive range, and for a period that
+ * has not started yet (nothing of it has happened, so there is nothing to set
+ * against it), mirroring `chooseResolution`'s total, throw-free contract.
  */
-export function derivePreviousPeriod(range: UtcRange): UtcRange | null {
+export function derivePreviousPeriod(range: UtcRange, cut?: PreviousPeriodCut): UtcRange | null {
   const fromMs = Date.parse(range.from)
   const toMs = Date.parse(range.to)
   if (Number.isNaN(fromMs) || Number.isNaN(toMs) || toMs <= fromMs) return null
   const span = toMs - fromMs
+  const asOfMs = cut?.asOf ? Date.parse(cut.asOf) : Number.NaN
+  const step = cut && cut.stepMs > 0 ? cut.stepMs : 1
+  const elapsedEndMs = Number.isNaN(asOfMs) ? toMs : Math.min(toMs, Math.ceil(asOfMs / step) * step)
+  const elapsed = elapsedEndMs - fromMs
+  if (elapsed <= 0) return null
   return {
     from: new Date(fromMs - span).toISOString(),
-    to: new Date(fromMs).toISOString(),
+    to: new Date(fromMs - span + elapsed).toISOString(),
   }
 }
 

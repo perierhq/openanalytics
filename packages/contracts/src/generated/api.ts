@@ -830,7 +830,19 @@ export interface paths {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Forces the revenue bucket grain. `hour` or `day` only — those are the two
@@ -1288,7 +1300,19 @@ export interface paths {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the rollup the totals are read from. Absent = automatic selection.
@@ -1411,7 +1435,19 @@ export interface paths {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the bucket grain. Absent = automatic selection. A grain the
@@ -2862,7 +2898,19 @@ export interface paths {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the rollup the totals are read from. Absent = automatic selection.
@@ -2956,7 +3004,19 @@ export interface paths {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the bucket grain. Absent = automatic selection. A grain the
@@ -5157,7 +5217,19 @@ export interface paths {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Forces the revenue bucket grain. `hour` or `day` only — those are the two
@@ -7712,7 +7784,14 @@ export interface components {
             data_sources: components["schemas"]["DataSource"][];
             accuracy: components["schemas"]["Accuracy"];
             freshness: components["schemas"]["AnalyticsFreshness"];
-            /** @description The preceding equal-length period, present only when compared. */
+            /**
+             * @description The previous period the comparison was read over, present only when
+             *     compared: from one range-length before `effective_range.from`, as
+             *     long as the part of the range that had happened by
+             *     `freshness.as_of` (see the `compare` parameter). For a finished
+             *     range that is the whole equal-length period ending at
+             *     `effective_range.from`.
+             */
             comparison_range: components["schemas"]["DateRange"] | null;
             /** @description True when the gateway capped the row set. */
             truncated: boolean;
@@ -7816,7 +7895,11 @@ export interface components {
         AnalyticsOverviewResponse: {
             meta: components["schemas"]["AnalyticsMeta"];
             totals: components["schemas"]["OverviewTotals"];
-            /** @description Totals for the preceding equal-length period, or null. */
+            /**
+             * @description Totals for the previous period (`meta.comparison_range`), or null.
+             *     For a range still in progress the previous period is cut at the
+             *     same point, so the two cover equal stretches.
+             */
             comparison: {
                 totals: components["schemas"]["OverviewTotals"];
             } | null;
@@ -7883,6 +7966,11 @@ export interface components {
         AnalyticsTimeseriesResponse: {
             meta: components["schemas"]["AnalyticsMeta"];
             series: components["schemas"]["TimeseriesPoint"][];
+            /**
+             * @description The previous period's buckets (`meta.comparison_range`), or null.
+             *     For a range still in progress they stop at the same offset the
+             *     current buckets have reached.
+             */
             comparison: {
                 series: components["schemas"]["TimeseriesPoint"][];
             } | null;
@@ -8903,7 +8991,11 @@ export interface components {
         RevenueSummaryResponse: {
             meta: components["schemas"]["AnalyticsMeta"];
             totals: components["schemas"]["RevenueTotals"];
-            /** @description Totals for the preceding equal-length period, or null. */
+            /**
+             * @description Totals for the previous period (`meta.comparison_range`), or null.
+             *     For a range still in progress the previous period is cut at the
+             *     same point, so the two cover equal stretches.
+             */
             comparison: {
                 totals: components["schemas"]["RevenueTotals"];
             } | null;
@@ -10789,7 +10881,19 @@ export interface components {
         RangeTo: components["schemas"]["UtcInstant"];
         /** @description IANA timezone the calendar boundaries are expressed in. */
         QueryTimezone: components["schemas"]["Timezone"];
-        /** @description When true, also return the equal-length preceding period. */
+        /**
+         * @description When true, also return the previous period. It starts one range-length
+         *     before `from` and is as long as the part of the range that has
+         *     happened by `meta.freshness.as_of`: a finished range is compared with
+         *     the whole equal-length period before it, and a range still in progress
+         *     with the same stretch of the period before it — at 09:00, "today"
+         *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+         *     all of yesterday. The cut is rounded up to the end of the read's own
+         *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+         *     rollup), and `meta.comparison_range` names the exact window. A range
+         *     that has not started yet has nothing to compare: `comparison` and
+         *     `meta.comparison_range` are `null`.
+         */
         Compare: boolean;
         /**
          * @description Force the bucket grain. Absent = automatic selection. A grain the
@@ -12013,7 +12117,19 @@ export interface operations {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Forces the revenue bucket grain. `hour` or `day` only — those are the two
@@ -12471,7 +12587,19 @@ export interface operations {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the rollup the totals are read from. Absent = automatic selection.
@@ -12594,7 +12722,19 @@ export interface operations {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the bucket grain. Absent = automatic selection. A grain the
@@ -14272,7 +14412,19 @@ export interface operations {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the rollup the totals are read from. Absent = automatic selection.
@@ -14369,7 +14521,19 @@ export interface operations {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Force the bucket grain. Absent = automatic selection. A grain the
@@ -17003,7 +17167,19 @@ export interface operations {
                 to: components["parameters"]["RangeTo"];
                 /** @description IANA timezone the calendar boundaries are expressed in. */
                 timezone: components["parameters"]["QueryTimezone"];
-                /** @description When true, also return the equal-length preceding period. */
+                /**
+                 * @description When true, also return the previous period. It starts one range-length
+                 *     before `from` and is as long as the part of the range that has
+                 *     happened by `meta.freshness.as_of`: a finished range is compared with
+                 *     the whole equal-length period before it, and a range still in progress
+                 *     with the same stretch of the period before it — at 09:00, "today"
+                 *     (00:00–09:00 so far) is compared with 00:00–09:00 yesterday, not with
+                 *     all of yesterday. The cut is rounded up to the end of the read's own
+                 *     bucket (minute, quarter-hour, or UTC day for reads served from the day
+                 *     rollup), and `meta.comparison_range` names the exact window. A range
+                 *     that has not started yet has nothing to compare: `comparison` and
+                 *     `meta.comparison_range` are `null`.
+                 */
                 compare?: components["parameters"]["Compare"];
                 /**
                  * @description Forces the revenue bucket grain. `hour` or `day` only — those are the two
