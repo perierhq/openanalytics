@@ -8,7 +8,11 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
-## [Unreleased]
+## [0.10.1] - 2026-11-22 (perierhq fork)
+
+**Upgrade notes: none.** Dashboard only; no migration and no new setting. Run
+`OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.10.1` from
+the `v0.10.1` checkout.
 
 ### Changed
 
