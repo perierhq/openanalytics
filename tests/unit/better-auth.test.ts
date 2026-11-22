@@ -54,6 +54,7 @@ const EXPECTED_SUPPORTED_SCOPES = [
   'events:write',
   'widgets:write',
   'share:write',
+  'notes:write',
 ]
 
 /** One configured plugin, by its Better Auth id. */

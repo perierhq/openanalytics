@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 
 import type { RevenueBucket } from "@/lib/chart-revenue"
-import { MentionGlyph, SaleGlyph } from "./chart-marker-glyphs"
+import { MentionGlyph, NoteGlyph, SaleGlyph } from "./chart-marker-glyphs"
 import { OverviewTooltipContent } from "./overview-chart-tooltip"
 
 const bucket = (overrides: Partial<RevenueBucket> = {}): RevenueBucket => ({
@@ -91,6 +91,18 @@ describe("the overview chart's day tooltip", () => {
     const out = text(render({ sales: 3, mentions: 1 }))
     expect(out).toContain("3 sales")
     expect(out).toContain("1 mention")
+  })
+
+  it("summarises notes in a line of their own, after sales and mentions", () => {
+    const one = text(render({ sales: 1, mentions: 1, notes: 1 }))
+    expect(one).toContain("1 note")
+    expect(one.indexOf("1 mention")).toBeLessThan(one.indexOf("1 note"))
+    expect(text(render({ notes: 2 }))).toContain("2 notes")
+    expect(text(render())).not.toContain("note")
+    // The flag in its dark variant: light ink, no white halo.
+    const html = render({ notes: 1 })
+    expect(html).toContain(renderToStaticMarkup(createElement(NoteGlyph, { tone: "dark" })))
+    expect(html).not.toContain(renderToStaticMarkup(createElement(NoteGlyph)))
   })
 
   it("draws the chart's glyphs in their dark-surface variant, filled, not hollow", () => {

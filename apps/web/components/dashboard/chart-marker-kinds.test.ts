@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 
 import type { Mention, RevenueTransaction } from "@/lib/api"
-import { SaleGlyph } from "./chart-marker-glyphs"
+import { MentionGlyph, NoteGlyph, SaleGlyph } from "./chart-marker-glyphs"
 import { OVERVIEW_MARKER_KINDS, type OverviewMarkerItem } from "./chart-marker-kinds"
 
 const markup = (node: ReactNode) => renderToStaticMarkup(createElement("div", null, node))
@@ -44,7 +44,25 @@ const saleItem = (id: number, visitor: string | null): OverviewMarkerItem => {
 
 describe("the overview chart's marker kinds", () => {
   it("stacks sales first, nearest the axis, so a buyer's face sits under a mention's", () => {
-    expect(Object.keys(OVERVIEW_MARKER_KINDS)).toEqual(["sale", "mention"])
+    expect(Object.keys(OVERVIEW_MARKER_KINDS)).toEqual(["sale", "mention", "note"])
+  })
+
+  it("draws a note as its own glyph, a different shape from the diamond and the dot, and never a face", () => {
+    const note = renderToStaticMarkup(createElement(NoteGlyph))
+    expect(markup(OVERVIEW_MARKER_KINDS.note.glyph)).toContain(note)
+    expect(note).not.toBe(renderToStaticMarkup(createElement(SaleGlyph)))
+    expect(note).not.toBe(renderToStaticMarkup(createElement(MentionGlyph)))
+    // A drawn flag, not a round or rotated box.
+    expect(note).toContain("<svg")
+    expect(note).not.toContain("rounded-full")
+    expect(note).not.toContain("rotate-45")
+    // Faces mode keeps notes as glyphs: the kind has no face at all.
+    expect(OVERVIEW_MARKER_KINDS.note.face).toBeUndefined()
+  })
+
+  it("counts notes in words", () => {
+    expect(OVERVIEW_MARKER_KINDS.note.describe(1)).toBe("1 note")
+    expect(OVERVIEW_MARKER_KINDS.note.describe(3)).toBe("3 notes")
   })
 
   it("gives a sale its buyer's face, in the green ring with a diamond", () => {

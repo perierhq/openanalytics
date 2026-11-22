@@ -916,15 +916,20 @@ they do in the dashboard. The read tools:
 | `recent_visitors`, `visitor`                                                                       | `analytics:read` | Visitors of the last 1–24 hours, and one visitor's page trail          |
 | `list_funnels`, `list_event_definitions`, `list_widgets`, `share_settings`                         | `analytics:read` | A site's saved funnels, event definitions, widgets and share settings  |
 | `list_mentions`                                                                                    | `analytics:read` | Public X posts that mention a site, newest first                       |
+| `list_notes`                                                                                       | `analytics:read` | Notes the team pinned to moments on a site's chart, newest first       |
 | `revenue_summary`, `revenue_timeseries`                                                            | `revenue:read`   | Revenue totals and buckets. Owners only                                |
 | `revenue_by_source`, `events_before_purchase`                                                      | `revenue:read`   | Revenue by source or entry page; events before buying. Owners only     |
 | `subscription_summary`, `subscription_timeseries`                                                  | `revenue:read`   | MRR, churn, trials and new vs renewal charges. Owners only             |
 | `team_members`                                                                                     | `team:read`      | A site's members, with email addresses                                 |
 
 The write tools need the matching write scope (`sites:write`, `funnels:write`,
-`events:write`, `widgets:write`, `share:write`) and the role the dashboard
-would need. None of them deletes data; `archive_funnel` hides a funnel and can
-be undone.
+`events:write`, `widgets:write`, `share:write`, `notes:write`) and the role the
+dashboard would need. None of them deletes collected data; `archive_funnel` hides a
+funnel and can be undone. `delete_note` removes a chart note for good, so it is
+marked destructive and an MCP client asks you before it runs. A note is text
+your team wrote, not collected data. `create_note`, `update_note` and
+`delete_note` need `notes:write`, so an application authorized before this
+scope existed has to be authorized again to use them.
 
 `custom_events`, `custom_event_properties`, `performance`, `funnel_results`,
 `recent_visitors` and `visitor` read `/v1/read/analytics/*` routes that only a person's credential

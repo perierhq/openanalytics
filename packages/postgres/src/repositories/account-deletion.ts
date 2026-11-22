@@ -9,6 +9,7 @@ import { enqueueOutbox } from './outbox.ts'
 import { revokeAccountRevenueCredentials } from './revenue-credentials.ts'
 import { assistantUsageLedger } from '../schema/assistant-usage.ts'
 import { accounts, sessions, users, verifications } from '../schema/auth.ts'
+import { chartNotes } from '../schema/chart-notes.ts'
 import { credentialSources } from '../schema/credential-sources.ts'
 import { idempotencyKeys } from '../schema/idempotency.ts'
 import { deviceCodes, oauthAccessTokens, oauthConsents } from '../schema/oauth.ts'
@@ -34,7 +35,8 @@ import { siteInvites, siteMembers, sites, type SiteStatus } from '../schema/site
  * not to purge anything but to establish that the sites are already being
  * handled — either handed to somebody else, or deleted by their own jobs with
  * their own targets. That is what the gate below is, and it is the reason
- * account deletion has eighteen Postgres targets and no ClickHouse ones at all.
+ * account deletion has sixteen Postgres targets in this build and no ClickHouse
+ * ones at all.
  *
  * **The users row is scrubbed, not deleted, and that is not a shortcut.**
  * `site_billing_assignments.billing_user_id` is `NOT NULL` with the default
@@ -507,7 +509,7 @@ export function accountTombstoneEmail(userId: string): string {
 
 /**
  * The `postgres_teardown` phase (ADR-0030, D8): one transaction, every
- * Postgres target (`ACCOUNT_DELETION_POSTGRES_TARGETS` — eighteen today).
+ * Postgres target (`ACCOUNT_DELETION_POSTGRES_TARGETS` — sixteen today).
  *
  * One transaction because the ownership triggers are `DEFERRABLE INITIALLY
  * DEFERRED` and fire at commit: the membership deletions and everything that
@@ -811,6 +813,19 @@ export async function purgeAccountPostgres(
       .where(eq(credentialSources.userId, input.userId))
       .returning({ id: credentialSources.id })
     affected['credential_sources_user'] = removedCredentialSources.length
+
+    // The chart notes this person wrote (migration 0050) keep their text and
+    // lose their author. The note is the site's record of a moment and the site
+    // outlives this account; the authorship is the person's. The column's
+    // `ON DELETE SET NULL` cannot do this — the scrub below keeps the `users`
+    // row alive — so without this statement every note would go on naming a
+    // tombstone as its author.
+    const unlinkedNotes = await tx
+      .update(chartNotes)
+      .set({ createdByUserId: null })
+      .where(eq(chartNotes.createdByUserId, input.userId))
+      .returning({ id: chartNotes.id })
+    affected['chart_notes_unlink'] = unlinkedNotes.length
 
     const scrubbed = await tx
       .update(users)

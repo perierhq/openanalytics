@@ -176,6 +176,13 @@ nothing to do by hand.
 Postgres migration 0049 adds one table, for the profile pictures of mention
 authors, and changes nothing that exists; nothing to do by hand.
 
+Postgres migration 0050 adds one table, for chart notes, and changes nothing
+that exists; nothing to do by hand. Existing `analytics:read` grants (MCP
+clients, the CLI) can now read the text of a site's chart notes and their
+authors' display names. Writing notes needs the new `notes:write` scope, which
+no existing grant has, so an MCP client has to connect again before it can
+add, edit or delete notes.
+
 ### Added
 
 - **Compare and chartable tiles on the overview.** A Compare toggle next to the
@@ -214,6 +221,21 @@ authors, and changes nothing that exists; nothing to do by hand.
   generated face. It rotates daily; two charges share it only when they share
   a last-touch session. Null when the charge matched no visitor. Never the
   `identify()` hash.
+
+- **Notes on the overview chart.** Owners and admins can pin a short note
+  (up to 280 characters) to a moment on the chart, such as a launch or a
+  pricing change, with "Add note" beside the chart's legend or from a
+  marker's popover. Every member sees notes as a small flag under the chart,
+  in the popover with the author's name and time, and as a line in the day
+  tooltip; the legend hides them like sales and mentions. Owners and admins
+  edit and delete them in the popover. The API is
+  `GET`/`POST /v1/sites/{site_id}/notes` and
+  `PATCH`/`DELETE /v1/sites/{site_id}/notes/{note_id}`; a note names its
+  author by display name only. MCP gains `list_notes` (`analytics:read`) and
+  `create_note`, `update_note` and `delete_note` under the new `notes:write`
+  scope. `delete_note` is the one MCP tool that deletes something, so it is
+  marked destructive and clients ask before running it. Deleting a site
+  deletes its notes.
 
 - **Postgres on Neon.** `infra/selfhost/NEON.md` walks a new install, and
   moving an existing one, onto [Neon](https://neon.com);

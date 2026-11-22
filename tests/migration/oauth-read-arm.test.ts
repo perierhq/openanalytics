@@ -1055,6 +1055,7 @@ describeIfPostgres('the OAuth read arm', () => {
         'events:write',
         'widgets:write',
         'share:write',
+        'notes:write',
       ])
     })
 

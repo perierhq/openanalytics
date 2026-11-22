@@ -4,10 +4,11 @@ import { cn } from "@/lib/utils";
  * The overview chart's marker glyphs, shared by the marker layer, its legend
  * and the day tooltip so a sale looks the same everywhere it is mentioned.
  *
- * Two shapes as well as two colours, so the kinds tell apart without colour
+ * Three shapes as well as colours, so the kinds tell apart without colour
  * vision: a sale is a diamond in the success green the app uses for money that
- * landed, a mention a round dot in ink. On the plot a white ring lifts both
- * off what is behind them.
+ * landed, a mention a round dot in ink, and a note a small flag in a lighter
+ * ink (a note is the team's own, so it stays neutral). On the plot a white
+ * ring lifts each one off what is behind it.
  *
  * `tone="dark"` is the same two filled shapes for the dark tooltip. The light
  * ring and the ink fill read there as a hollow white ring (the dark fill
@@ -41,6 +42,41 @@ export function MentionGlyph({ muted = false, tone = "light" }: GlyphProps) {
           : cn("ring-white", muted ? "bg-foreground/25" : "bg-foreground/75")
       )}
     />
+  );
+}
+
+/**
+ * A note: a flag on a short pole. Drawn rather than boxed, because a flag is
+ * the one shape here that is neither round nor square, and it reads as
+ * "someone marked this moment". The white halo is the stroke under the fill.
+ */
+export function NoteGlyph({ muted = false, tone = "light" }: GlyphProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={cn(
+        "block shrink-0 overflow-visible",
+        tone === "dark"
+          ? muted
+            ? "text-white/35"
+            : "text-white/85"
+          : muted
+            ? "text-foreground/25"
+            : "text-foreground/65"
+      )}
+      height={9}
+      viewBox="0 0 8 9"
+      width={8}
+    >
+      <path
+        d="M1 0.5h1.25v8H1z M2.25 0.75L7.5 2.9L2.25 5.05z"
+        fill="currentColor"
+        paintOrder="stroke"
+        stroke={tone === "dark" ? "none" : "white"}
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+      />
+    </svg>
   );
 }
 

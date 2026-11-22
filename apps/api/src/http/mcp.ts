@@ -335,6 +335,36 @@ const EVENT_DEFINITION_CONTENT_PROPERTIES = {
   },
 } as const
 
+/** A chart note's fields, as the notes routes validate them (migration 0050). */
+const CHART_NOTE_PROPERTIES = {
+  at: {
+    type: 'string',
+    format: 'date-time',
+    description: 'The moment the note is pinned to, ISO-8601 UTC ending in Z.',
+  },
+  text: {
+    type: 'string',
+    minLength: 1,
+    maxLength: 280,
+    description:
+      'The note, 1 to 280 characters after trimming. Newlines are kept; other control characters are refused.',
+  },
+} as const
+
+const CHART_NOTE_BODY_SCHEMA_CREATE = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['at', 'text'],
+  properties: CHART_NOTE_PROPERTIES,
+}
+
+const CHART_NOTE_BODY_SCHEMA_UPDATE = {
+  type: 'object',
+  additionalProperties: false,
+  minProperties: 1,
+  properties: CHART_NOTE_PROPERTIES,
+}
+
 /**
  * The tools, as data.
  *
@@ -775,9 +805,25 @@ const mcpTools: McpToolDefinition[] = [
     scope: 'analytics:read',
     annotations: READ_ONLY,
   },
+  {
+    name: 'list_notes',
+    title: 'List Notes',
+    description:
+      'Notes the site’s team pinned to moments on its overview chart (a launch, a pricing change), newest first, with `at` in the half-open range [from, to). At most 500 come back; narrow the range for more. Each note carries its text, the moment it is pinned to, and its author’s display name (`created_by.name`), or `created_by: null` once the author’s account is gone. Read these before explaining a change in traffic: a note often says what caused it.',
+    path: '/sites/{site_id}/notes',
+    params: [
+      { name: 'from', description: 'Range start, ISO-8601 UTC (inclusive).', required: true },
+      { name: 'to', description: 'Range end, ISO-8601 UTC (exclusive).', required: true },
+    ],
+    needsSite: false,
+    scope: 'analytics:read',
+    annotations: READ_ONLY,
+  },
 
-  // --- Writes (ADR-0048 D3): narrow, additive, reversible. A client that is
-  // not read-only prompts the human for confirmation before each of these.
+  // --- Writes (ADR-0048 D3): narrow, and none deletes collected data. All are
+  // additive or reversible except `delete_note`, which removes a chart note
+  // (text people wrote by hand) for good and is annotated destructive. A client
+  // that is not read-only prompts the human for confirmation before each one.
   {
     name: 'create_site',
     title: 'Create Site',
@@ -1026,6 +1072,50 @@ const mcpTools: McpToolDefinition[] = [
       description:
         'The full set of share flags (an omitted surface is turned off), plus rotate_slug:true to rotate the link. See share_settings for the current state.',
     },
+  },
+
+  // Chart notes (migration 0050; allowlist rows in `grant-arm.ts`). Every
+  // member of the site sees a note on the overview chart, so the text should
+  // be something the team would write themselves.
+  {
+    name: 'create_note',
+    title: 'Create Note',
+    description:
+      'Pin a short note to a moment on one site’s overview chart, such as "Launched v2" or "Raised prices". Every member of the site sees it on the chart. The note is credited to the person who authorized this application. Requires owner or admin on the site.',
+    path: '/sites/{site_id}/notes',
+    method: 'POST',
+    params: [],
+    needsSite: false,
+    scope: 'notes:write',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    bodySchema: CHART_NOTE_BODY_SCHEMA_CREATE,
+  },
+  {
+    name: 'update_note',
+    title: 'Update Note',
+    description:
+      'Move a chart note to another moment, or change its text. Send only the fields to change. Get the note id from list_notes.',
+    path: '/sites/{site_id}/notes/{note_id}',
+    method: 'PATCH',
+    params: [],
+    needsSite: false,
+    scope: 'notes:write',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    bodySchema: CHART_NOTE_BODY_SCHEMA_UPDATE,
+  },
+  {
+    name: 'delete_note',
+    title: 'Delete Note',
+    description:
+      'Delete a chart note for good. It cannot be undone; to correct a note, use update_note instead. Get the note id from list_notes.',
+    path: '/sites/{site_id}/notes/{note_id}',
+    method: 'DELETE',
+    params: [],
+    needsSite: false,
+    scope: 'notes:write',
+    // The only destructive tool: the note is gone, not archived. The hint is
+    // what makes a client ask the human before every call.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   },
 ]
 

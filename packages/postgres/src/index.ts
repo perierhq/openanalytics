@@ -482,6 +482,18 @@ export {
 } from './repositories/mentions.ts'
 
 export {
+  createChartNote,
+  deleteChartNote,
+  listChartNotes,
+  updateChartNote,
+  type ChartNoteAuthorRecord,
+  type ChartNoteRecord,
+  type CreateChartNoteInput,
+  type ListChartNotesInput,
+  type UpdateChartNoteInput,
+} from './repositories/chart-notes.ts'
+
+export {
   countWidgets,
   createWidget,
   deleteWidget,

@@ -444,9 +444,9 @@ export function OverviewChart({
     `${slug}|${range.from}|${range.to}|${range.timezone}|${interval}|${filtersParam ?? ""}`
   );
 
-  // Sales and mentions on the timeline: the dashboard's chart only. A share
-  // board has no member and no business showing either.
-  const markers = useOverviewMarkers(
+  // Sales, mentions and notes on the timeline: the dashboard's chart only. A
+  // share board has no member and no business showing any of them.
+  const { items: markers, noteActions } = useOverviewMarkers(
     range,
     rangePending || loadOverride !== undefined
   );
@@ -831,7 +831,7 @@ export function OverviewChart({
       bucketStarts,
       layerEndMs,
       markers.filter((item) => !hiddenLayers.includes(item.kind)),
-      ["sale", "mention"]
+      ["sale", "mention", "note"]
     ).map((bucket) => [
       bucket.startMs,
       {
@@ -881,8 +881,6 @@ export function OverviewChart({
       ) : null}
       {/* Above the plot rather than inside it: the chart fills its card
           edge-to-edge, and a chip laid over the series would sit on data. */}
-      {/* Top-left, mirroring the provenance chips: the legend only exists
-          when the range has markers, and hides either kind for this browser. */}
       {/* What this chart draws, for the tiles: pressed is the drawn
           metric's tile, and only what it can draw is a button. Not while it
           is still finding out (a read in flight, or holding for one). */}
@@ -893,10 +891,14 @@ export function OverviewChart({
           state={{ drawn: metric, revenueChartable, sessionsChartable }}
         />
       ) : null}
+      {/* Top-left, mirroring the provenance chips: the legend only exists
+          when the range has markers (or the member may add a note), and hides
+          any kind for this browser. */}
       {loadOverride === undefined && response ? (
         <OverviewMarkersLegend
           className="absolute left-3 top-0 z-10"
           items={markers}
+          noteActions={noteActions}
           // Only beside traffic can the bars be hidden: as the main series
           // they are the chart, and a single traffic series draws none.
           revenue={showRevenue && metric === null}
@@ -1122,6 +1124,7 @@ export function OverviewChart({
               series={trafficSeries}
               mentionAuthors={bucket?.mentionAuthors}
               mentions={counts?.mention ?? 0}
+              notes={counts?.note ?? 0}
               saleVisitors={bucket?.saleVisitors}
               pageviews={Number(point.pageviews) || 0}
               // Revenue rides the tooltip where it is drawn: beside the
@@ -1150,6 +1153,7 @@ export function OverviewChart({
           bucketLabel={titleFormat}
           endMs={layerEndMs}
           items={markers}
+          noteActions={noteActions}
           slug={slug}
           timeLabel={weekView ? fmt.timeTitle.format : fmt.time.format}
         />

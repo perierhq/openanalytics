@@ -232,6 +232,11 @@ const EXPECTED_CONSTRAINTS = [
   'mention_avatars_content_type_check',
   'mention_avatars_bytes_size_check',
   'mention_avatars_source_url_check',
+  // Chart notes (migration 0050): 1–280 characters, already trimmed, and no
+  // control character but the newline.
+  'chart_notes_text_length_check',
+  'chart_notes_text_trimmed_check',
+  'chart_notes_text_control_check',
 ]
 
 const declaredTables = schemaTableColumns()

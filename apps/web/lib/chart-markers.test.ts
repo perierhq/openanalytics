@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest"
 
-import type { Mention, RevenueConnectionState, RevenueTransaction } from "./api"
+import type { ChartNote, Mention, RevenueConnectionState, RevenueTransaction } from "./api"
 import {
   canReadRevenue,
   isSale,
   loadChartMarkers,
+  loadChartNotes,
   parseHiddenLayers,
   saleAmount,
   sharedRevenueState,
@@ -207,6 +208,15 @@ describe("the remembered legend choice", () => {
     expect(parseHiddenLayers('["sale"]')).toEqual(["sale"])
   })
 
+  it("reads a choice saved before notes existed, and remembers notes hidden", () => {
+    expect(parseHiddenLayers('["sale","mention","revenue"]')).toEqual([
+      "sale",
+      "mention",
+      "revenue",
+    ])
+    expect(parseHiddenLayers('["note","revenue"]')).toEqual(["note", "revenue"])
+  })
+
   it("keeps the layers it knows and drops the rest", () => {
     expect(parseHiddenLayers('["revenue","x"]')).toEqual(["revenue"])
   })
@@ -214,5 +224,25 @@ describe("the remembered legend choice", () => {
   it("treats a broken value as nothing hidden", () => {
     expect(parseHiddenLayers("{not json")).toEqual([])
     expect(parseHiddenLayers('{"sale":true}')).toEqual([])
+  })
+})
+
+describe("the notes on the chart", () => {
+  const note = { id: "n1", at: "2026-07-01T10:00:00.000Z", text: "Launch" } as ChartNote
+
+  it("are read in the chart range, with no role to gate on: every member reads", async () => {
+    const listNotes = vi.fn(async () => ({ items: [note] }))
+    const notes = await loadChartNotes({ siteId: "s", range: RANGE }, { listNotes })
+    expect(listNotes).toHaveBeenCalledWith("s", RANGE, expect.objectContaining({}))
+    expect(notes).toEqual([note])
+  })
+
+  it("turn a failed read into no notes, never a broken chart", async () => {
+    const listNotes = vi.fn(async () => {
+      throw new Error("500")
+    })
+    expect(await loadChartNotes({ siteId: "s", range: RANGE }, { listNotes })).toEqual(
+      []
+    )
   })
 })

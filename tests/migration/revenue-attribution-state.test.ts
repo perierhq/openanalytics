@@ -455,7 +455,7 @@ describeIfPostgres('revenue attribution state', () => {
       const names = SITE_DELETION_TARGETS.map((target) => `${target.store}:${target.target}`)
       expect(names).toContain('postgres:revenue_attribution_state')
       expect(names).toContain('clickhouse:revenue_attributions')
-      expect(SITE_DELETION_TARGETS).toHaveLength(72)
+      expect(SITE_DELETION_TARGETS).toHaveLength(73)
     })
 
     it('purges the control row with the site and leaves another site alone', async () => {
@@ -471,8 +471,8 @@ describeIfPostgres('revenue attribution state', () => {
       const targets = await listDeletionTargets(db, {
         deletionRequestId: started.deletionRequestId,
       })
-      // 72, not 73 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031, the two mentions tables of Postgres 0048 and the mention avatars table of Postgres 0049): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
-      expect(targets).toHaveLength(72)
+      // 73, not 74 (62 + the two custom-event property tables of ClickHouse 0030, the three subscription lifecycle tables of Postgres 0047, the two of ClickHouse 0031, the two mentions tables of Postgres 0048, the mention avatars table of Postgres 0049 and the chart notes table of Postgres 0050): `billing_transfer_offers` is a target the hosted surface registers (`CLOUD_DELETION_EXTENSION`), so this is the set a build without it erases.
+      expect(targets).toHaveLength(73)
 
       const result = await purgeSitePostgres(db, { siteId: doomed })
 

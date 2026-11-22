@@ -30,7 +30,8 @@ import { bearerToken } from './middleware.ts'
  * member and invite management, API keys, billing movement, imports/exports,
  * event and widget *deletion* — none has a row, so none is reachable however
  * the grant's scope string reads. The Vercel/Stripe/Supabase line (no
- * deletion, no members, no money) is this table.
+ * deletion, no members, no money) is this table. The one deletion it carries
+ * is a chart note's: hand-written text, not collected data.
  *
  * A matched request is then indistinguishable from a session request to every
  * downstream handler: `siteMembership` re-reads live membership,
@@ -88,6 +89,15 @@ const allowlist: GrantAllowRow[] = [
   // have no row: what this install sends to a third-party search service is
   // not something a grant may change.
   { method: 'GET', path: '/v1/sites/:site/mentions', scope: 'analytics:read' },
+
+  // Chart notes — the list (`list_notes`) and create / edit / delete. The one
+  // DELETE on this table that removes a row for good: a note is a line of text
+  // people wrote by hand, and removing it touches no collected data, no
+  // configuration a visitor depends on and no money.
+  { method: 'GET', path: '/v1/sites/:site/notes', scope: 'analytics:read' },
+  { method: 'POST', path: '/v1/sites/:site/notes', scope: 'notes:write' },
+  { method: 'PATCH', path: '/v1/sites/:site/notes/:note', scope: 'notes:write' },
+  { method: 'DELETE', path: '/v1/sites/:site/notes/:note', scope: 'notes:write' },
 
   // Event definitions — create / draft / publish / rollback (publish is
   // reversible because rollback exists); no DELETE.
