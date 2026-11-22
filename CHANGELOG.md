@@ -8,6 +8,15 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
+## [Unreleased]
+
+### Changed
+
+- **Chart markers sit on the line.** Sales, mentions and notes are pinned to
+  their day's point on the chart's line with a thin stem, and follow whichever
+  metric the chart shows, instead of a row along the bottom. Busy charts show
+  small icons on the line without stems.
+
 ## [0.10.0] - 2026-11-22 (perierhq fork)
 
 New on the overview: X mentions, sales, buyer faces and notes on the chart,

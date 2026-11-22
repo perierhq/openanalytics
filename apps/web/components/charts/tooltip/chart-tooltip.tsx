@@ -279,11 +279,13 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
 
   const tooltipContent = (
     <>
-      {/* Crosshair indicator - rendered as SVG overlay */}
+      {/* Crosshair indicator - rendered as SVG overlay. It and the dots sit
+          above the event markers' layer (z-1), so a marker on the line never
+          covers the hovered point. */}
       {showCrosshair && (
         <svg
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-2"
           height="100%"
           width="100%"
         >
@@ -312,7 +314,7 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
       {showDots && visible && !isHorizontal && (
         <svg
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-2"
           height="100%"
           width="100%"
         >

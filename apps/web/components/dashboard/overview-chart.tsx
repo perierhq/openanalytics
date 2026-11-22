@@ -87,6 +87,7 @@ import {
 } from "@/lib/session-buckets";
 import { durationLabel, percentLabel } from "@/lib/stat-format";
 import { bucketMarkers } from "@/lib/event-markers";
+import { markerAnchorKey } from "@/lib/marker-placement";
 import { rankMentionAuthors, rankSaleVisitors } from "@/lib/marker-faces";
 import { relativeBucketLabel } from "@/lib/relative-bucket-label";
 
@@ -1150,7 +1151,11 @@ export function OverviewChart({
       />
       {loadOverride === undefined && response ? (
         <OverviewMarkers
+          // On the drawn series: the bars' tops as the main series, the
+          // pressed metric's line, or visitors on the default chart.
+          anchorKey={markerAnchorKey(metric)}
           bucketLabel={titleFormat}
+          dimOpacity={SCRUB_DIM_OPACITY}
           endMs={layerEndMs}
           items={markers}
           noteActions={noteActions}

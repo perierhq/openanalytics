@@ -3,7 +3,7 @@ import { MentionGlyph, NoteGlyph, SaleGlyph } from "@/components/dashboard/chart
 import { MentionAvatar } from "@/components/dashboard/mention-avatar";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import type { ChartNote, Mention, RevenueTransaction } from "@/lib/api";
-import type { EventMarkerItem } from "@/lib/event-markers";
+import { MARKER_BADGE, type EventMarkerItem } from "@/lib/event-markers";
 import { mentionFace, type SaleFace, saleFace } from "@/lib/marker-faces";
 
 /**
@@ -11,7 +11,9 @@ import { mentionFace, type SaleFace, saleFace } from "@/lib/marker-faces";
  * faces. Shared by the marker layer (`chart-markers.tsx`) and its tests.
  *
  * **A note never wears a face.** It is the team's own words, not a person
- * arriving from outside, so it keeps its flag in faces mode too.
+ * arriving from outside, so it keeps its flag in faces mode too. Its flag has
+ * a pole of its own, so a bucket with only a note sits just above the line
+ * without a stem (`stemless`).
  *
  * **A sale wears its buyer's face** when it matched a visitor: `UserAvatar`
  * seeded with the transaction's `visitor`, the same seed the realtime views
@@ -35,6 +37,22 @@ export const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 
 /**
+ * A face's "+N": on its right edge, centred on the face, `MARKER_BADGE` tall,
+ * so the stack (`markerStack`) can keep two faces' badges apart.
+ */
+function FaceBadge({ more }: { more: number }) {
+  if (more <= 0) return null;
+  return (
+    <span
+      className="absolute top-1/2 -right-2 -translate-y-1/2 rounded-full bg-white px-0.75 text-center text-[9px] font-medium tabular-nums text-foreground/80 ring-1 ring-black/15"
+      style={{ height: MARKER_BADGE, minWidth: MARKER_BADGE, lineHeight: `${MARKER_BADGE}px` }}
+    >
+      +{more}
+    </span>
+  );
+}
+
+/**
  * A bucket's mentions as one face: the most followed author's picture (or
  * initials), in a neutral ring, with "+N" for the other mentions. The ring is
  * the kind's mark without colour: a sale's is green and comes with a diamond.
@@ -51,11 +69,7 @@ function MentionMarkerFace({ mentions }: { mentions: readonly Mention[] }) {
         className="bg-[color-mix(in_srgb,var(--ink)_6%,white)] shadow-[0_0_0_2.5px_white] ring-1 ring-black/20"
         size={20}
       />
-      {face.more > 0 ? (
-        <span className="absolute top-1/2 -right-2 h-3.5 min-w-3.5 -translate-y-1/2 rounded-full bg-white px-0.75 text-center text-[9px] font-medium leading-3.5 tabular-nums text-foreground/80 ring-1 ring-black/15">
-          +{face.more}
-        </span>
-      ) : null}
+      <FaceBadge more={face.more} />
     </span>
   );
 }
@@ -76,11 +90,7 @@ function SaleMarkerFace({ face }: { face: SaleFace }) {
       <span className="absolute -bottom-0.5 -left-0.5 flex">
         <SaleGlyph />
       </span>
-      {face.more > 0 ? (
-        <span className="absolute top-1/2 -right-2 h-3.5 min-w-3.5 -translate-y-1/2 rounded-full bg-white px-0.75 text-center text-[9px] font-medium leading-3.5 tabular-nums text-foreground/80 ring-1 ring-black/15">
-          +{face.more}
-        </span>
-      ) : null}
+      <FaceBadge more={face.more} />
     </span>
   );
 }
@@ -114,5 +124,6 @@ export const OVERVIEW_MARKER_KINDS: Record<
   note: {
     describe: (count) => plural(count, "note", "notes"),
     glyph: <NoteGlyph />,
+    stemless: true,
   },
 };
