@@ -20,6 +20,7 @@ import {
   type ReadScope,
   type RevenueAdapterRegistry,
   type ServiceEnv,
+  type IngestExclusions,
   type SiteTrackerSettings,
 } from '@openanalytics/domain'
 import {
@@ -1455,10 +1456,14 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
    * (ADR-0048): a settings toggle that changes what every visitor's browser does
    * is not a thing to hand to an agent on the strength of a scope name.
    */
-  const ingestSettingsJson = (result: {
-    settings: SiteTrackerSettings
-    configVersion: number
-  }) => ({
+  const ingestSettingsJson = (
+    result: {
+      settings: SiteTrackerSettings
+      exclusions: IngestExclusions
+      configVersion: number
+    },
+    countryActive: boolean | null,
+  ) => ({
     config_version: result.configVersion,
     timezone: result.settings.timezone,
     redact_query_keys: [...result.settings.redactQueryKeys],
@@ -1466,7 +1471,41 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
     heartbeat_interval_seconds: result.settings.heartbeatIntervalSeconds,
     features: { ...result.settings.features },
     attributed_revenue: result.settings.attributedRevenue,
+    exclusions: {
+      ip_ranges: [...result.exclusions.ipRanges],
+      paths: [...result.exclusions.paths],
+      countries: [...result.exclusions.countries],
+      hostnames: [...result.exclusions.hostnames],
+    },
+    exclusions_country_active: countryActive,
   })
+
+  /**
+   * Whether a country exclusion can match anything on this install.
+   *
+   * Countries are the collector's fact, and it leaves a deployment-wide mark
+   * in the realtime store when its own GeoIP database resolves one, the way it
+   * leaves tag sightings. A platform-header country leaves no mark (the
+   * collector cannot tell a proxy's header from a visitor's), so a deployment
+   * that gets countries only from a header reads `false` here; the contract
+   * says so. `null` is "could not tell":
+   * no realtime store here, or it did not answer. Never a reason to fail the
+   * read, and never reported as `false`, which would state as fact that geo
+   * is off.
+   */
+  const countryExclusionsActive = async (
+    logger: Logger | undefined,
+    siteId: string,
+  ): Promise<boolean | null> => {
+    const cache = deps.realtime?.cache
+    if (!cache) return null
+    try {
+      return (await cache.readGeoResolvedAt()) !== null
+    } catch (err) {
+      logger?.warn('geo_resolved_read_failed', { err, site_id: siteId, retryable: true })
+      return null
+    }
+  }
 
   authed.get(
     '/sites/:site_id/ingest-settings',
@@ -1478,7 +1517,9 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
       // The membership middleware already proved the site exists and the caller
       // is party to it, so a null here is a site deleted between the two reads.
       if (!current) throw new ApiError('SITE_NOT_FOUND', 'No such site')
-      return c.json(ingestSettingsJson(current))
+      return c.json(
+        ingestSettingsJson(current, await countryExclusionsActive(c.get('logger'), siteId)),
+      )
     },
   )
 
@@ -1508,7 +1549,9 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
 
       const current = await readSiteIngestSettings(db, siteId)
       if (!current) throw new ApiError('SITE_NOT_FOUND', 'No such site')
-      return c.json(ingestSettingsJson(current))
+      return c.json(
+        ingestSettingsJson(current, await countryExclusionsActive(c.get('logger'), siteId)),
+      )
     },
   )
 

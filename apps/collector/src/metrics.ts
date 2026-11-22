@@ -53,6 +53,13 @@ export const COLLECTOR_METRICS = {
    * means a site disabled `data-respect-gpc` or a stale bundle is in the wild. */
   gpcFiltered: 'collector_gpc_filtered',
 
+  /** Units dropped by the site's own server-side exclusions before anything
+   * was queued or written to realtime. Labelled by `site_id`, `endpoint` and
+   * `reason` — `ip`, `country`, `hostname` or `path` — and never by the
+   * address, the country, the host or the path that matched: the label says
+   * which list did it, the settings page says what is on the list. */
+  eventsExcluded: 'collector_events_excluded',
+
   /** An event arrived carrying a linking hint (`order_id`) for a site whose
    * `attributed_revenue` is off; the property was removed and the event kept
    * (ADR-0064 D4a, server half). Labelled by `site_id`: the tracker strips the

@@ -38,6 +38,7 @@ import type {
   RevenueAttributionDimension,
   RevenueAttributionResponse,
   RevenueAttributionRow,
+  SiteIngestSettings,
   SiteMentionSettings,
   ChartNote,
 } from "@/lib/api";
@@ -622,6 +623,34 @@ export function mockMentionSettings(domain: string): SiteMentionSettings {
     terms: ["OpenAnalytics"],
     last_polled_at: new Date(Date.now() - 12 * 60_000).toISOString(),
     last_error: null,
+  };
+}
+
+/**
+ * A site's ingest settings in mock mode, with a few exclusions in place so the
+ * Exclusions block shows its lists rather than four empty ones.
+ */
+export function mockIngestSettings(): SiteIngestSettings {
+  return {
+    config_version: 7,
+    timezone: "Europe/Berlin",
+    redact_query_keys: [],
+    interaction_sampling: 1,
+    heartbeat_interval_seconds: 15,
+    features: {
+      web_vitals: true,
+      engagement: true,
+      interactions: true,
+      heartbeat: true,
+    },
+    attributed_revenue: false,
+    exclusions: {
+      ip_ranges: ["203.0.113.0/24", "2001:db8:85a3::/48"],
+      paths: ["/admin/*", "/preview"],
+      countries: ["DE"],
+      hostnames: ["staging.example.com", "*.preview.example.com"],
+    },
+    exclusions_country_active: true,
   };
 }
 

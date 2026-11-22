@@ -582,7 +582,10 @@ chooses:
   limiter never fires, which is the whole of the ingest flood defence;
 - their own anonymous visitor identity, since the daily-rotating hash is derived
   from that address — so one client can appear as any number of visitors;
-- their own country and city in your analytics.
+- their own country and city in your analytics;
+- whether a site's IP and country exclusions (Settings › General ›
+  Exclusions) apply to them. Those match the same address and country, so an
+  office range only works when `X-Real-IP` is the visitor's real address.
 
 The fix is two directives: assert `X-Real-IP` from the real connection, and
 **delete every other header in that list**. Both configs do it; keep both parts.
@@ -1081,6 +1084,14 @@ draining — usually a ClickHouse credential or a missing grant on a new table.
 `CLICKHOUSE_MAINTENANCE_USER` and `CLICKHOUSE_MAINTENANCE_PASSWORD`, and the
 `oa_maintenance` user must exist in ClickHouse — which needs a container
 recreate, not a restart.
+
+**An excluded IP address is still counted.** IP exclusions match the address
+the collector reads from `X-Real-IP`, the same one geo uses. If every visitor
+arrives as one proxy or bridge address (see the next entry), no visitor matches
+an office range, and if your exclusion covers that address, every visitor
+does. Fix the address first; the exclusion then works as entered. A change to
+the lists reaches the collector within `INGEST_CONFIG_CACHE_TTL_SECONDS`
+(30 seconds by default).
 
 **Every country is Unknown, with a database loaded.** The collector logs
 `geoip_loaded` or `geoip_not_configured` when it starts. If it loaded one and

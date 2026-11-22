@@ -4201,6 +4201,9 @@ export interface paths {
          *     query keys stripped in the browser, the heatmap sampling fraction, the
          *     realtime interval, the signal feature flags and `attributed_revenue`.
          *
+         *     It also carries the site's server-side `exclusions`, which are never
+         *     part of the tracker config: the collector reads them, no browser does.
+         *
          *     A site that has never written these has no settings row at all, and this
          *     endpoint answers with the product defaults rather than a 404 — that is
          *     the state most sites are in, and it is not an error.
@@ -4229,6 +4232,13 @@ export interface paths {
          *     no browser sends the `order_id` linking hint, from anybody. It is off by
          *     default for every site created after 2026-08-13; sites that had already
          *     connected a revenue provider were backfilled to `true` (Postgres 0045).
+         *
+         *     `exclusions`, when present, **replaces the whole set** — all four lists
+         *     are required, and an empty list clears that kind. Entries are
+         *     normalised (IP addresses become CIDR, hosts are lowercased, countries
+         *     uppercased) and de-duplicated; the response shows them as stored. A bad
+         *     entry is a `400` naming the list and the entry's index, for example
+         *     `exclusions.ip_ranges.2`.
          */
         patch: operations["updateSiteIngestSettings"];
         trace?: never;
@@ -10163,6 +10173,9 @@ export interface components {
          *     /v1/tracker/config` is projected from. A site with no settings row is
          *     served the product defaults, and this shape does not distinguish the two:
          *     what a browser gets is the same either way.
+         *
+         *     `exclusions` and `exclusions_country_active` are the exception: they
+         *     are read by the collector and never projected into the tracker config.
          */
         SiteIngestSettings: {
             /**
@@ -10199,6 +10212,92 @@ export interface components {
              *     that comes with linking a visitor to an order is the site's.
              */
             attributed_revenue: boolean;
+            exclusions: components["schemas"]["IngestExclusions"];
+            /**
+             * @description Whether country exclusions can take effect on this install: `true`
+             *     when the collector's own GeoIP database has resolved a country for
+             *     any request in the last seven days. `false` means it has not, so on
+             *     an install that resolves countries only that way, country
+             *     exclusions are stored but match nothing. `null` when it could not
+             *     be determined (no realtime store configured, or it did not answer).
+             *     Never a reason to refuse a write.
+             *
+             *     A country taken from a platform header (`cf-ipcountry`,
+             *     `x-vercel-ip-country`, `fly-client-country`) does not set this:
+             *     the collector cannot tell whether the deployment's proxy set that
+             *     header or a visitor did. Such a header country is still matched
+             *     against country exclusions, so a deployment that gets countries
+             *     only from a platform header can show `false` while its country
+             *     exclusions apply.
+             */
+            exclusions_country_active: boolean | null;
+        };
+        /**
+         * @description Traffic the site does not count. Enforced in the collector: an event
+         *     that matches any entry is dropped before it is queued or stored, does
+         *     not reach realtime, and is not counted anywhere — not in reports, not
+         *     in usage.
+         *
+         *     `POST /v1/events` answers an excluded event exactly as it answers the
+         *     same event counted. The first delivery counts as `accepted`; a retry
+         *     within the dedup window counts as `duplicate`; a changed body under the
+         *     same `event_id` is a `409`; and when the queue is unavailable or the
+         *     batch is refused, the excluded event gets the same `503` or refusal.
+         *     To make that possible the collector keeps, for the dedup window, a
+         *     payload hash and an acceptance time under a hash of
+         *     `(site_id, event_id)` — never the address or the payload.
+         *
+         *     Two differences remain. A request made only of excluded events skips
+         *     the stream write, the usage increment and the realtime update, so it
+         *     can answer measurably faster than the same request counted. And an
+         *     excluded `POST /v1/realtime/heartbeat` answers `204` without touching
+         *     the realtime store, so while that store is down it is still a `204`
+         *     where a counted heartbeat is a `503`.
+         *
+         *     A change takes effect when the collector's ingest-config cache picks up
+         *     the new `config_version`, the same as every other ingest setting.
+         *
+         *     Independent of the tracker's browser-side opt-out (`#oa-ignore`).
+         */
+        IngestExclusions: {
+            /**
+             * @description IPv4 or IPv6 addresses or CIDR ranges, stored as CIDR with host
+             *     bits cleared (`203.0.113.7` becomes `203.0.113.7/32`). An
+             *     IPv4-mapped IPv6 entry is stored as IPv4. Matched against the
+             *     client address the collector reads from the trusted proxy headers,
+             *     the same address geo uses; the address is never stored.
+             *
+             *     An IPv4 client is matched as IPv4, including one a proxy reports
+             *     as `::ffff:a.b.c.d`, so IPv6 rules never match IPv4 clients. An
+             *     IPv6 range shorter than /96 that covers `::ffff:0:0/96` (such as
+             *     `::/0`) is refused with `covers_ipv4_mapped`.
+             */
+            ip_ranges: string[];
+            /**
+             * @description Page paths, each starting with `/`. `*` matches any run of
+             *     characters including `/`; everything else is literal, and the
+             *     match covers the whole path (`/admin/*` matches `/admin/users` but
+             *     not `/admin`). Query strings and fragments are not part of the path.
+             *     At most 10 `*` per entry; more is refused with `too_many_wildcards`.
+             */
+            paths: string[];
+            /**
+             * @description ISO 3166-1 alpha-2 codes: the officially assigned codes plus `XK`
+             *     (Kosovo, as GeoIP databases report it). Placeholder codes such as
+             *     `XX` and `T1` are refused. Matched against the country the
+             *     collector resolved for the request; with no country source this
+             *     has no effect (see `exclusions_country_active`).
+             */
+            countries: string[];
+            /**
+             * @description Lowercase hosts, matched against the page's host (or the request's
+             *     `Origin` for an event with no page). A leading `*.` matches every
+             *     subdomain and not the domain itself: `*.example.com` matches
+             *     `staging.example.com` but not `example.com`. An internationalised
+             *     host is stored in the ASCII form a URL carries: `bücher.de` is
+             *     stored and returned as `xn--bcher-kva.de`.
+             */
+            hostnames: string[];
         };
         /**
          * @description Every field is optional; absent means "leave it alone", never "reset to
@@ -10217,6 +10316,7 @@ export interface components {
                 heartbeat?: boolean;
             };
             attributed_revenue?: boolean;
+            exclusions?: components["schemas"]["IngestExclusions"];
         };
         /** @description A site's public-dashboard sharing configuration (docs snapshot 02 §20). */
         PublicDashboardSettings: {

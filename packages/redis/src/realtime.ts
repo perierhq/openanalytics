@@ -659,6 +659,27 @@ export interface RealtimeCache {
    * own contract (ADR-0081, D3).
    */
   readTagSightings(input: { siteId: string }): Promise<TagSighting[]>
+
+  /**
+   * Records that the collector resolved a visitor's country (server-side
+   * exclusions).
+   *
+   * One deployment-wide key holding an instant, refreshed by the collector at
+   * most every few minutes: no site, no address and no country is written, so
+   * it states "this install can resolve countries" and nothing else. It is how
+   * the settings surface can say whether a country exclusion will match
+   * anything — geo is the collector's (a GeoIP database or a platform header),
+   * and the api has no other way to know. Best-effort, like the tag sighting
+   * it is modelled on.
+   */
+  markGeoResolved(input: { at: Date }): Promise<void>
+
+  /**
+   * The instant a country was last resolved, or `null` when none was in the
+   * last `GEO_RESOLVED_TTL_SECONDS`. Throws on a failed read; the caller
+   * decides what "unknown" looks like.
+   */
+  readGeoResolvedAt(): Promise<string | null>
 }
 
 /**
@@ -794,6 +815,19 @@ return epoch
  * which is why this is a cache key and not a Postgres row (ADR-0081, D6).
  */
 export const TAG_SIGHTING_TTL_SECONDS = DAY_IN_SECONDS
+
+/**
+ * The deployment-wide "a country was resolved" key (server-side exclusions).
+ * Not site-scoped: whether countries resolve is a property of the collector's
+ * geo source, which is the same for every site it serves.
+ */
+export const GEO_RESOLVED_KEY = 'collector_geo_resolved'
+
+/**
+ * Seven days: long enough that a quiet weekend does not report geo as off,
+ * short enough that removing the GeoIP database shows up within a week.
+ */
+export const GEO_RESOLVED_TTL_SECONDS = 7 * DAY_IN_SECONDS
 
 /**
  * How many distinct origins one site may record (ADR-0081, D2).
@@ -1238,6 +1272,19 @@ export function createRealtimeCache(options: RealtimeCacheOptions): RealtimeCach
     async readTagSightings(input: { siteId: string }): Promise<TagSighting[]> {
       const hash = await client.hgetall(key(tagSightingKey(input.siteId)))
       return parseTagSightings(hash)
+    },
+
+    async markGeoResolved(input: { at: Date }): Promise<void> {
+      await client.set(
+        key(GEO_RESOLVED_KEY),
+        input.at.toISOString(),
+        'EX',
+        GEO_RESOLVED_TTL_SECONDS,
+      )
+    },
+
+    async readGeoResolvedAt(): Promise<string | null> {
+      return client.get(key(GEO_RESOLVED_KEY))
     },
   }
 }

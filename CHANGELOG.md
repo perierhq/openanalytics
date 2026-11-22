@@ -183,6 +183,9 @@ authors' display names. Writing notes needs the new `notes:write` scope, which
 no existing grant has, so an MCP client has to connect again before it can
 add, edit or delete notes.
 
+Postgres migration 0051 adds four empty list columns to `site_ingest_settings`,
+for exclusions, and changes nothing that exists; nothing to do by hand.
+
 ### Added
 
 - **Compare and chartable tiles on the overview.** A Compare toggle next to the
@@ -191,6 +194,36 @@ add, edit or delete notes.
   tile, Visitors, Pageviews, Bounce rate, Avg. visit and Revenue (owners), now
   switches the chart to that metric. Both are kept in the URL (`?compare=1`,
   `?metric=`). The public share board is unchanged.
+
+- **Exclusions.** An owner or admin can stop counting visits from IP addresses
+  or ranges (an office, their own devices), page paths (`/admin/*`), countries
+  and hostnames (a staging site; `*.example.com` covers its subdomains), in
+  Settings › General. The collector drops matching events before they are
+  queued, so they appear in no report, in no usage count and not in Realtime.
+  `POST /v1/events` answers an excluded event as it answers the same event
+  counted: a retry is a `duplicate`, a changed body under the same `event_id`
+  is a `409`, and a queue outage is a `503`. For that, the collector keeps a
+  payload hash and a time for each excluded event, under a hashed key, for the
+  dedup window (`INGEST_DEDUP_TTL_DAYS`); it never keeps the address or the
+  payload. What still differs: a request made only of excluded events can
+  answer faster, and an excluded heartbeat is a `204` even while the realtime
+  store is down. Hostnames are stored in their ASCII form (`bücher.de` becomes
+  `xn--bcher-kva.de`), country codes must name a country (`XX` and `T1` are
+  refused), an IPv6 range that covers `::ffff:0:0/96` is refused because IPv6
+  rules never match IPv4 visitors, and a path takes at most 10 `*`. A change applies
+  once the collector's ingest-config cache refreshes
+  (`INGEST_CONFIG_CACHE_TTL_SECONDS`, 30 seconds by default). The lists are
+  `exclusions` on `GET`/`PATCH /v1/sites/{site_id}/ingest-settings`; a `PATCH`
+  replaces all four. They are never part of the public tracker config.
+  Address exclusions use the same client address as geo, so they need the
+  trusted proxy headers `SELF-HOSTING.md` describes; country exclusions need a
+  country source, and `exclusions_country_active` says whether this install's
+  GeoIP database has resolved one in the last seven days. A country taken from
+  a platform header does not count toward it, because the collector cannot
+  tell a proxy's header from a visitor's, so behind such a platform it can read
+  `false` while country exclusions apply. Dropped events are counted in
+  `collector_events_excluded`, by reason only (`ip`, `country`, `hostname`,
+  `path`).
 
 - **X mentions.** An owner or admin can turn on mention watching for a site.
   The worker then searches X for the site's domain and up to five extra terms

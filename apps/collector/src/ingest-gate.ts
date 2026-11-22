@@ -15,6 +15,7 @@ import { readClientIdentity, readRawClientAddress, type ClientIdentity } from '.
 import type { CollectorDeps } from './deps.ts'
 import { COLLECTOR_METRICS } from './metrics.ts'
 import type { CloudIngestFacts } from './cloud-extension.ts'
+import { countExclusions, noteGeoResolved, originHostname } from './exclusions.ts'
 
 /**
  * The checks every ingest request passes before anything is written, in the
@@ -34,8 +35,11 @@ import type { CloudIngestFacts } from './cloud-extension.ts'
  * - Then the rate limits — charged for *all* traffic including bots, because an
  *   abuse ceiling that exempted anything claiming to be a crawler would be an
  *   abuse ceiling anyone could opt out of by editing a header.
- * - Bot classification last, so a filtered request has already paid its share of
+ * - Bot classification, so a filtered request has already paid its share of
  *   the site's budget and cannot be used to flood one for free.
+ * - Then `Sec-GPC`, and last the site's own exclusions — after the bot check,
+ *   so a crawler from an excluded range is still counted as a crawler, and
+ *   before anything is queued or written to realtime.
  */
 
 export interface IngestGateContext {
@@ -62,6 +66,14 @@ export interface IngestGateContext {
   readonly cloud?: CloudIngestFacts
   /** True when the limiter store did not answer and G-005's ladder applied. */
   readonly limiterDegraded: boolean
+  /**
+   * Per unit, parallel to `GateInput.pages`: true when the site's exclusions
+   * drop it. May be all true. Not an exception like `BotRequest`, because an
+   * excluded unit must be answered exactly as a counted one — the events route
+   * still runs it through the dedup record, the quota check and the queue's
+   * availability, and only leaves out what would store or show it.
+   */
+  readonly excluded: readonly boolean[]
 }
 
 export class BotRequest extends Error {
@@ -113,6 +125,12 @@ export interface GateInput {
   readonly receivedAt: Date
   /** Which route is asking. Two values; see `IngestEndpoint`. */
   readonly endpoint: IngestEndpoint
+  /**
+   * The page URL of each unit the request carries — every event of a batch,
+   * or the heartbeat's one page — `null` for a unit with no page. What the
+   * site's path and hostname exclusions are matched against.
+   */
+  readonly pages: readonly (string | null)[]
 }
 
 /**
@@ -199,6 +217,9 @@ export async function passIngestGate(
     utcDate,
   }
   const client = readClientIdentity(c, identityOptions, deps.geo)
+  // Only a country this collector's own database resolved: a header country
+  // may have been written by the visitor (see `ClientIdentity.countrySource`).
+  if (client.countrySource === 'database') noteGeoResolved(deps, acceptedAt)
   if (client.degraded) {
     deps.metrics.increment(COLLECTOR_METRICS.enrichmentDegraded, {
       site_id: config.siteId,
@@ -272,6 +293,22 @@ export async function passIngestGate(
     throw new GpcOptOut()
   }
 
+  // The site's own exclusions (server-side; independent of the tracker's
+  // `#oa-ignore`). The raw address is the one the limiter bucket above was
+  // derived from, read in memory and dropped with this frame.
+  const excluded = input.pages.map(() => false)
+  const exclusions = resolved.exclusions
+  if (!exclusions.empty) {
+    const fallbackHostname = originHostname(origin)
+    const reasons = input.pages.map((url) =>
+      exclusions.reasonFor({ ip: rawAddress, country: client.country, url, fallbackHostname }),
+    )
+    reasons.forEach((reason, index) => {
+      excluded[index] = reason !== null
+    })
+    countExclusions(deps, { siteId: config.siteId, endpoint: input.endpoint, reasons })
+  }
+
   return {
     config,
     settings,
@@ -288,5 +325,6 @@ export async function passIngestGate(
     grace: admission.mode === 'grace',
     ...(resolved.cloud ? { cloud: resolved.cloud } : {}),
     limiterDegraded: limit.degraded,
+    excluded,
   }
 }

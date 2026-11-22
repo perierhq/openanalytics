@@ -6,7 +6,12 @@
  * depend on the shape of an acceptance without depending on the transport.
  */
 
-export const ENQUEUE_OUTCOMES = ['enqueued', 'duplicate', 'idempotency_conflict'] as const
+export const ENQUEUE_OUTCOMES = [
+  'enqueued',
+  'duplicate',
+  'excluded',
+  'idempotency_conflict',
+] as const
 
 export type EnqueueOutcome = (typeof ENQUEUE_OUTCOMES)[number]
 
@@ -20,9 +25,17 @@ export type EnqueueOutcome = (typeof ENQUEUE_OUTCOMES)[number]
  * retry billed a second time is the legacy defect D-209 exists to prevent.
  */
 export interface EnqueueAccepted {
-  readonly outcome: 'enqueued' | 'duplicate'
-  /** False for `duplicate`: no new stream entry was created. */
+  /**
+   * `excluded` is the third success: an event the site's own exclusions
+   * dropped, seen for the first time. It was remembered — a payload hash and
+   * a time under `excludedRecordKey` — and not appended, so a retry of it is a
+   * `duplicate` and a changed body under its id is a conflict, exactly as for
+   * a counted event.
+   */
+  readonly outcome: 'enqueued' | 'duplicate' | 'excluded'
+  /** True only for `enqueued`: no new stream entry was created otherwise. */
   readonly enqueued: boolean
+  /** Empty for `excluded`, and for a `duplicate` of an excluded event. */
   readonly streamId: string
   /** Acceptance time of the *first* delivery, not of this retry. */
   readonly firstAcceptedAt: string
@@ -78,6 +91,21 @@ export interface EnqueueInput {
   readonly payloadHash: string
   readonly payload: string
   readonly acceptedAt: string
+  readonly excluded?: false
+}
+
+/**
+ * An event the site's exclusions dropped, handed to the same script so its
+ * dedup answer is the counted path's: the same window, the same 409 rule, the
+ * same all-or-nothing batch. It carries no payload — only the hash the
+ * duplicate check compares — and nothing of it reaches the stream.
+ */
+export interface ExcludedEnqueueInput {
+  readonly siteId: string
+  readonly eventId: string
+  readonly payloadHash: string
+  readonly acceptedAt: string
+  readonly excluded: true
 }
 
 export interface EventStreamQueue {
@@ -93,8 +121,14 @@ export interface EventStreamQueue {
    * A matching ID with a *different* payload hash is an `IDEMPOTENCY_CONFLICT`
    * for the request, not a duplicate — it means a client reused an event ID for
    * new data.
+   *
+   * An `ExcludedEnqueueInput` goes through the same two passes: its record is
+   * read with the rest and written with the rest, so excluded and counted
+   * events in one batch share one atomic answer.
    */
-  enqueueBatch(inputs: readonly EnqueueInput[]): Promise<EnqueueBatchResult>
+  enqueueBatch(
+    inputs: readonly (EnqueueInput | ExcludedEnqueueInput)[],
+  ): Promise<EnqueueBatchResult>
 
   /** One event, through the same script. Convenience for callers with one. */
   enqueue(input: EnqueueInput): Promise<EnqueueResult>

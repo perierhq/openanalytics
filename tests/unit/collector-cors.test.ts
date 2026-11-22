@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { healthResponseSchema } from '@openanalytics/contracts'
-import { DEFAULT_TRACKER_SETTINGS, loadPolicy, type SiteIngestConfig } from '@openanalytics/domain'
+import {
+  DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
+  compileIngestExclusions,
+  loadPolicy,
+  type SiteIngestConfig,
+} from '@openanalytics/domain'
 import { createLogger, createServiceMetadata, type Metrics } from '@openanalytics/observability'
 import type { EnqueueInput, EventStreamQueue, RealtimeCache } from '@openanalytics/redis'
 import { describe, expect, it } from 'vitest'
@@ -115,6 +121,7 @@ function harness() {
                 settings: DEFAULT_TRACKER_SETTINGS,
                 slug: 'shop',
                 noCodeRules: [],
+                exclusions: compileIngestExclusions(EMPTY_INGEST_EXCLUSIONS),
               }
             : null,
         ),

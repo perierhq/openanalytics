@@ -20,6 +20,7 @@ import {
   DangerZoneContentSkeleton,
   DeleteSiteSection,
 } from "@/components/dashboard/delete-site-section";
+import { ExclusionsPanel } from "@/components/dashboard/exclusions-panel";
 import { ImportSection } from "@/components/dashboard/import-section";
 import { IntegrationsSection } from "@/components/dashboard/integrations-section";
 import {
@@ -342,7 +343,7 @@ export function SettingsBoard({ slug }: { slug: string }) {
             {active === "general" ? (
               <>
                 <SectionHeading
-                  description={`What ${site.data.name} is called, which origins may send events, and who can see its numbers.`}
+                  description={`What ${site.data.name} is called, which origins may send events, which visits aren't counted, and who can see its numbers.`}
                   title="General"
                 />
                 <General onSaved={acceptSaved} site={site.data} />
@@ -903,6 +904,8 @@ function General({
         )}
         </SkeletonReveal>
       </SettingsPanel>
+
+      <ExclusionsPanel revealed={revealed} site={site} />
 
       <PublicDashboardSection
         loaded={publicSettings}

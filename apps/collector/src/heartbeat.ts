@@ -57,6 +57,7 @@ export function createHeartbeatRoutes(deps: CollectorDeps, limiter: IngestLimite
         cost: 1,
         receivedAt,
         endpoint: 'heartbeat',
+        pages: [heartbeat.page?.url ?? null],
       })
     } catch (error) {
       // A bot's presence is not presence, and a GPC visitor asked not to be
@@ -65,6 +66,12 @@ export function createHeartbeatRoutes(deps: CollectorDeps, limiter: IngestLimite
       if (error instanceof BotRequest || error instanceof GpcOptOut) return c.body(null, 204)
       throw error
     }
+
+    // A visitor the site excluded is not counted in realtime any more than in
+    // history, and gets the 204 a counted heartbeat gets. One difference is
+    // left, and `exclusions.ts` names it: with the realtime store down, a
+    // counted heartbeat is a 503 and an excluded one is still a 204.
+    if (gate.excluded[0] === true) return c.body(null, 204)
 
     const visitor = deriveVisitorContext({
       ip: readRawClientAddress(c) ?? 'unknown',

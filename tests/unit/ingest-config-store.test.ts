@@ -6,7 +6,10 @@ import {
 } from '../../apps/collector/src/index.ts'
 import {
   DEFAULT_TRACKER_SETTINGS,
+  EMPTY_INGEST_EXCLUSIONS,
+  compileIngestExclusions,
   loadPolicy,
+  type IngestExclusions,
   type SiteIngestConfig,
   type SiteState,
 } from '@openanalytics/domain'
@@ -44,6 +47,19 @@ const resolved = (overrides: Partial<SiteIngestConfig> = {}): CachedIngestConfig
   settings: DEFAULT_TRACKER_SETTINGS,
   slug: 'shop',
   noCodeRules: [],
+  exclusions: compileIngestExclusions(EMPTY_INGEST_EXCLUSIONS),
+})
+
+/** What `resolveIngestConfig` itself answers: the exclusions as stored. */
+const fromPostgres = (
+  overrides: Partial<SiteIngestConfig> = {},
+  exclusions: IngestExclusions = EMPTY_INGEST_EXCLUSIONS,
+) => ({
+  config: siteConfig(overrides),
+  settings: DEFAULT_TRACKER_SETTINGS,
+  slug: 'shop',
+  noCodeRules: [],
+  exclusions,
 })
 
 /**
@@ -72,8 +88,55 @@ describe('ingest config store', () => {
       ...(maxEntries === undefined ? {} : { maxEntries }),
     })
 
+  it('compiles exclusions once per config version, not once per read', async () => {
+    const office = { ...EMPTY_INGEST_EXCLUSIONS, ipRanges: ['203.0.113.0/24'] }
+    resolveIngestConfig.mockResolvedValue(fromPostgres({ configVersion: 4 }, office))
+    const cache = store()
+
+    const first = await cache.resolve('oa_pk_live')
+    expect(first?.exclusions.matchesIp('203.0.113.9')).toBe(true)
+
+    // The TTL lapses and the row is re-read, but the version has not moved:
+    // the compiled matcher is the same object, not a recompilation.
+    clock += POLICY.INGEST_CONFIG_CACHE_TTL_SECONDS * 1000 + 1
+    const second = await cache.resolve('oa_pk_live')
+    expect(resolveIngestConfig).toHaveBeenCalledTimes(2)
+    expect(second?.exclusions).toBe(first?.exclusions)
+
+    // A settings write moves the version, and the new lists take effect.
+    resolveIngestConfig.mockResolvedValue(
+      fromPostgres({ configVersion: 5 }, { ...EMPTY_INGEST_EXCLUSIONS, paths: ['/admin/*'] }),
+    )
+    clock += POLICY.INGEST_CONFIG_CACHE_TTL_SECONDS * 1000 + 1
+    const third = await cache.resolve('oa_pk_live')
+    expect(third?.exclusions).not.toBe(first?.exclusions)
+    expect(third?.exclusions.matchesIp('203.0.113.9')).toBe(false)
+    expect(third?.exclusions.matchesPath('/admin/x')).toBe(true)
+  })
+
+  it('never puts exclusions in the configuration a browser is served', async () => {
+    // An office address range is the site's business, not something to publish
+    // to every visitor through the public tracker config.
+    resolveIngestConfig.mockResolvedValue(
+      fromPostgres(
+        {},
+        {
+          ipRanges: ['203.0.113.0/24'],
+          paths: ['/secret-admin/*'],
+          countries: ['DE'],
+          hostnames: ['hidden-staging.example.com'],
+        },
+      ),
+    )
+    const found = await store().resolve('oa_pk_live')
+    const served = JSON.stringify(toTrackerConfig(found as CachedIngestConfig))
+    for (const secret of ['203.0.113', 'secret-admin', 'hidden-staging', 'exclu']) {
+      expect(served).not.toContain(secret)
+    }
+  })
+
   it('resolves through to Postgres on a miss', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
 
     const found = await store().resolve('oa_pk_live')
 
@@ -85,7 +148,7 @@ describe('ingest config store', () => {
     // The reason the cache exists: the collector reaches Postgres over the
     // public internet, so a per-event round trip would dominate the latency of
     // accepting an event.
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
     const cache = store()
 
     await cache.resolve('oa_pk_live')
@@ -95,7 +158,7 @@ describe('ingest config store', () => {
   })
 
   it('re-reads once the TTL has passed', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
     const cache = store()
 
     await cache.resolve('oa_pk_live')
@@ -135,7 +198,7 @@ describe('ingest config store', () => {
     // The expiry travels with the config for exactly this case, and
     // `decideIngestAdmission` is what refuses on it (02 §7.2).
     const keyExpiresAt = new Date(clock + 5_000)
-    resolveIngestConfig.mockResolvedValue(resolved({ keyExpiresAt }))
+    resolveIngestConfig.mockResolvedValue(fromPostgres({ keyExpiresAt }))
     const cache = store()
 
     await cache.resolve('oa_pk_expiring')
@@ -147,7 +210,7 @@ describe('ingest config store', () => {
   })
 
   it('drops an entry on demand', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
     const cache = store()
 
     await cache.resolve('oa_pk_live')
@@ -159,7 +222,7 @@ describe('ingest config store', () => {
 
   it('bounds its size, evicting the least recently used key', async () => {
     resolveIngestConfig.mockImplementation((_db: unknown, key: string) =>
-      Promise.resolve(resolved({ siteId: `site-${key}` })),
+      Promise.resolve(fromPostgres({ siteId: `site-${key}` })),
     )
     const cache = store(2)
 
@@ -215,7 +278,7 @@ describe('tracker config projection', () => {
     // D-210: the same key that no longer ingests must not still hand out
     // configuration, or the tracker keeps collecting into a fence it cannot
     // cross.
-    resolveIngestConfig.mockResolvedValue(resolved({ status: status as SiteState }))
+    resolveIngestConfig.mockResolvedValue(fromPostgres({ status: status as SiteState }))
     const store = createTrackerConfigStore(createIngestConfigStore({ db, policy: POLICY }))
 
     expect(await store.find('oa_pk_live')).toBeNull()
@@ -237,7 +300,7 @@ describe('tracker config projection', () => {
     })
 
   it('keeps serving a suspended site while its grace window still admits events', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved({ status: 'suspended' }))
+    resolveIngestConfig.mockResolvedValue(fromPostgres({ status: 'suspended' }))
     const store = createTrackerConfigStore(decorated(), {
       admitSuspended: () => ({ admitted: true }),
     })
@@ -247,7 +310,7 @@ describe('tracker config projection', () => {
   })
 
   it('answers nothing for a suspended site whose grace is spent — the 404 that stands the tracker down', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved({ status: 'suspended' }))
+    resolveIngestConfig.mockResolvedValue(fromPostgres({ status: 'suspended' }))
     const store = createTrackerConfigStore(decorated(), {
       admitSuspended: () => ({ admitted: false }),
     })
@@ -256,7 +319,7 @@ describe('tracker config projection', () => {
   })
 
   it('stamps the paused light when the extension says the window is spent (ADR-0074 am. 2)', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
     const store = createTrackerConfigStore(decorated(), {
       collectionPaused: () => Promise.resolve(true),
     })
@@ -266,7 +329,7 @@ describe('tracker config projection', () => {
   })
 
   it('serves a byte-identical configuration while collecting — the field is absent, not false', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
     const store = createTrackerConfigStore(decorated(), {
       collectionPaused: () => Promise.resolve(false),
     })
@@ -276,7 +339,7 @@ describe('tracker config projection', () => {
   })
 
   it('a failing usage read serves as collecting — G-005, fail open', async () => {
-    resolveIngestConfig.mockResolvedValue(resolved())
+    resolveIngestConfig.mockResolvedValue(fromPostgres())
     const store = createTrackerConfigStore(decorated(), {
       collectionPaused: () => Promise.reject(new Error('counter down')),
     })
@@ -288,7 +351,7 @@ describe('tracker config projection', () => {
   it('answers nothing for a suspended site with no hosted extension, matching the event path', async () => {
     // Self-hosted: suspended events answer SITE_NOT_FOUND, so configuration
     // answering 200 would be the two-endpoints-disagreeing state again.
-    resolveIngestConfig.mockResolvedValue(resolved({ status: 'suspended' }))
+    resolveIngestConfig.mockResolvedValue(fromPostgres({ status: 'suspended' }))
     const store = createTrackerConfigStore(createIngestConfigStore({ db, policy: POLICY }))
 
     expect(await store.find('oa_pk_live')).toBeNull()
