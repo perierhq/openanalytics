@@ -57,7 +57,7 @@ has one dot before `coolify`, the extension is `.yml` and not `.yaml`.
 on the create screen, and on 4.3.2 the field does not appear afterwards either.
 It does not matter, and the reason is worth knowing rather than working around:
 **the images are pinned in the compose file, not by the checkout.** Every
-`image:` line here reads `${OA_IMAGE_TAG:-v0.8.0}`, so a clone of `main` runs
+`image:` line here reads `${OA_IMAGE_TAG:-v0.10.1}`, so a clone of `main` runs
 the release named in the file it just cloned. What a tag would add is that the
 env templates and the migrations come from the same commit as well; `main`
 carries them too, right up until the next change lands on it.
@@ -211,14 +211,14 @@ a hung deploy. Measure before you conclude:
 
 ```sh
 curl -o /dev/null -w '%{speed_download} B/s\n' \
-  'https://github.com/OpenLabs-so/openanalytics.git/info/refs?service=git-upload-pack'
+  'https://github.com/perierhq/openanalytics.git/info/refs?service=git-upload-pack'
 ```
 
 Pulling the stuck image by hand on the host often gets a better connection, and
 the deploy then finds it already there:
 
 ```sh
-docker pull ghcr.io/openlabs-so/openanalytics/collector:<version>
+docker pull ghcr.io/perierhq/openanalytics/collector:<version>
 ```
 
 **A visitor on IPv6 reaches the collector as `172.18.0.1`, and gets no
