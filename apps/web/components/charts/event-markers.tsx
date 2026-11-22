@@ -3,12 +3,12 @@
 import { motion, useReducedMotion, type Transition } from "motion/react";
 import {
   createContext,
+  memo,
   useContext,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -27,9 +27,19 @@ import {
   type EventMarkerItem,
   type MarkerSlot,
 } from "@/lib/event-markers";
-import { markerAnchorY, markerHasStem, placeMarker } from "@/lib/marker-placement";
+import {
+  markerAnchorY,
+  markerHasStem,
+  markerHitWidth,
+  placeMarker,
+  type MarkerGeometry,
+} from "@/lib/marker-placement";
 import { cn } from "@/lib/utils";
-import { useChartHover, useChartStable, useYScale } from "./chart-context";
+import { clipRevealTransition, DEFAULT_CHART_ENTER_TRANSITION } from "./animation";
+import { CHART_LAYER_Z } from "./chart-layers";
+import { type Margin, useChartHover, useChartStable, useYScale } from "./chart-context";
+import { isChartInteractionPhase } from "./chart-phase";
+import { scrubDimCut } from "./scrub-dim";
 
 /**
  * Point-in-time markers on a time-series plot: one per bucket that has at
@@ -41,10 +51,14 @@ import { useChartHover, useChartStable, useYScale } from "./chart-context";
  * point on a thin stem, with a dot on the line; small marks (a dense chart's
  * glyphs, a lone note's flag) sit just above it with the dot and no stem
  * (`lib/marker-placement.ts`). A bucket where the series has no value keeps
- * the plot's bottom. The markers
- * follow the line in time too: they wipe in with its reveal clip, glide to a
- * new point when the metric changes (not under reduced motion), and fade
- * with the scrub dim right of the cursor.
+ * the plot's bottom.
+ *
+ * **In step with the line.** The markers wipe in with the line's reveal
+ * clip, on the same transition (none under reduced motion), and fade with
+ * the scrub dim right of the cursor, at the same cut (`scrubDimCut`). They
+ * do not glide: the line redraws at once when the metric changes, the chart
+ * resizes or the data refreshes, so the markers move at once with it rather
+ * than trailing behind.
  *
  * **Generic.** It knows items have a `kind` and an `at`, and nothing else.
  * Each kind brings its own glyph and its own words through `kinds`, and the
@@ -67,8 +81,14 @@ import { useChartHover, useChartStable, useYScale } from "./chart-context";
  * (its ring and badge), and the button's label, hit area and focus ring are
  * the same either way.
  *
- * **A popover someone is writing in stays open.** The popover opens on hover,
- * and a pointer drifting off it closes it, which is right for reading and
+ * **Hover opens a face; a dense chart's glyphs wait for a click.** On a
+ * dense chart a glyph sits in every few pixels of the line, and a popover
+ * opening under a pointer sweeping across it would get in the way of
+ * scrubbing; there each marker opens on click (or Enter), its hit area stays
+ * inside its bucket's column, and the chart's tooltip keeps running.
+ *
+ * **A popover someone is writing in stays open.** A hovered popover closes
+ * when the pointer drifts off it, which is right for reading and
  * wrong for a half-typed note. `renderContent` gets `setEngaged`; while it is
  * set, only Escape, a click outside or a close from the content end it.
  *
@@ -118,8 +138,6 @@ export interface EventMarkersProps<K extends string, P> {
    * where it has no value, a stack sits on the plot's bottom.
    */
   anchorKey?: string;
-  /** That series' y axis, when it is not the default one. */
-  yAxisId?: string | number;
   /**
    * The chart's scrub dim: while hovering, markers right of the hovered
    * bucket fade to this opacity, as the series do. Omit for no dim.
@@ -151,22 +169,37 @@ export function EventMarkers<K extends string, P>(props: EventMarkersProps<K, P>
 /** Drawn after the interaction overlay, outside the series clip. */
 EventMarkers.__isPostOverlay = true;
 
-/** The line's own enter transition as CSS, for the glide between points. */
-function cssTransition(transition: Transition | undefined): { ms: number; ease: string } {
-  const ease = transition?.ease;
-  const bezier =
-    Array.isArray(ease) && ease.length === 4 && ease.every((n) => typeof n === "number")
-      ? `cubic-bezier(${ease.join(",")})`
-      : "cubic-bezier(0.32,0.72,0,1)";
-  const seconds = typeof transition?.duration === "number" ? transition.duration : 0.5;
-  return { ms: Math.round(seconds * 1000), ease: bezier };
-}
-
 /** Insets past the layer's edges: nothing clipped, focus rings included. */
 const UNCLIPPED = "inset(-64px -64px -64px -64px)";
 
-/** The dot on the line under a stack. */
-const DOT = 5;
+
+/** One bucket's marker, laid out: everything but the hover. */
+type BucketLayout<K extends string, P> = {
+  bucket: EventMarkerBucket<K, P>;
+  /** Each kind's face for this bucket, or null for its glyph. */
+  marks: { kind: K; face: ReactNode | null; slot: MarkerSlot }[];
+  offsets: number[];
+  stackHeight: number;
+  at: MarkerGeometry;
+  /** The point's x on the card: where the stem and dot stand. */
+  pointX: number;
+  /** The stack's centre, kept inside the card at its edges. */
+  centre: number;
+  label: string;
+};
+
+/** What a marker's button does with the pointer (`EventMarkersLayer`). */
+type TriggerHandlers = {
+  onMouseDown: (event: { stopPropagation: () => void }) => void;
+  onMouseMove: (event: { stopPropagation: () => void }) => void;
+  onMouseUp: (event: { stopPropagation: () => void }) => void;
+  onTouchEnd: (event: { stopPropagation: () => void }) => void;
+  onTouchMove: (event: { stopPropagation: () => void }) => void;
+  onTouchStart: (event: { stopPropagation: () => void }) => void;
+  onMouseEnter?: () => void;
+};
+
+const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
 function EventMarkersLayer<K extends string, P>({
   items,
@@ -175,7 +208,6 @@ function EventMarkersLayer<K extends string, P>({
   bucketLabel,
   renderContent,
   anchorKey,
-  yAxisId,
   dimOpacity,
 }: EventMarkersProps<K, P>) {
   const {
@@ -188,9 +220,11 @@ function EventMarkersLayer<K extends string, P>({
     width,
     columnWidth,
     chartPhase,
+    isLoaded,
+    animationDuration,
     enterTransition,
   } = useChartStable();
-  const yScale = useYScale(yAxisId);
+  const yScale = useYScale();
   const { tooltipData, setTooltipData, selection } = useChartHover();
   const reduceMotion = useReducedMotion() ?? false;
 
@@ -210,88 +244,20 @@ function EventMarkersLayer<K extends string, P>({
     [starts, endMs, items, kinds, kindOrder]
   );
 
-  // Drawn while the series is: wiping in, at rest, and wiping out.
-  const drawn =
-    chartPhase === "revealing" || chartPhase === "ready" || chartPhase === "exitingReady";
-  if (!drawn || buckets.length === 0 || width <= 0) return null;
-
-  /**
-   * A portal still bubbles React events through the React tree, and this
-   * layer is a child of the plot's interaction `<g>`: left alone, a pointer
-   * over a marker reached the chart's handlers with coordinates measured from
-   * the button and pinned the crosshair to the first bucket. The layer keeps
-   * its events to itself, and entering a marker puts the chart tooltip away
-   * so the two never show at once.
-   */
-  const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
-  const layerHandlers = {
-    onMouseDown: stop,
-    onMouseMove: stop,
-    onMouseUp: stop,
-    onTouchEnd: stop,
-    onTouchMove: stop,
-    onTouchStart: stop,
-    onMouseEnter: () => setTooltipData(null),
-  };
-
   const faces = markerFaceMode(data.length, columnWidth);
-  // Wide enough to aim at, never wider than a bucket, so neighbours don't
-  // overlap; face mode only runs on columns wide enough for this width.
-  const markWidth = faces ? MARKER_FACE : MARKER_GLYPH;
-  const hitWidth = Math.max(markWidth + 4, Math.min(24, columnWidth || 24));
-
-  // The series' own timing, so a marker arrives at its new point with the
-  // line. None under reduced motion: the marker is simply there.
-  const { ms, ease } = cssTransition(enterTransition);
-  const glide = reduceMotion ? "" : `transform ${ms}ms ${ease}, clip-path ${ms}ms ${ease}`;
-  // The scrub dim's own fade (`ScrubDimRect`): opacity reads the same with
-  // reduced motion.
-  const fade = "opacity 150ms ease-out";
-  const moving = (extra?: string): CSSProperties => ({
-    transition: [glide, extra].filter(Boolean).join(", ") || undefined,
-  });
-
-  // Scrubbing: the cut the series dim at, right of the hovered bucket.
-  const scrubCut =
-    dimOpacity != null && tooltipData && selection?.active !== true
-      ? Math.min(innerWidth, tooltipData.x + columnWidth / 2)
-      : null;
-  const hoveredIndex = tooltipData?.index ?? null;
+  const hitWidth = markerHitWidth(faces, columnWidth);
+  const marginLeft = margin.left;
 
   /*
-   * The reveal: the line wipes in left to right through a clip; this layer
-   * follows with the same clip edge (the plot's left edge to its right
-   * edge) on the same transition, then drops the clip so focus rings at the
-   * card's edge are not cut. The conceal mirrors it, as the series does.
+   * Faces, stacks and positions, worked out once per bucket. They change
+   * with the buckets and the chart's geometry, never with the hover, so a
+   * moving crosshair re-renders the layer but no bucket whose dim it leaves
+   * alone (`MarkerBucket` is memoised on this object).
    */
-  const animateClip = !reduceMotion;
-  const clipFrom =
-    animateClip && chartPhase === "revealing"
-      ? `inset(-64px ${width - margin.left}px -64px -64px)`
-      : UNCLIPPED;
-  const clipTo =
-    chartPhase === "revealing"
-      ? `inset(-64px ${Math.max(0, width - margin.left - innerWidth)}px -64px -64px)`
-      : chartPhase === "exitingReady" && animateClip
-        ? `inset(-64px -64px -64px ${margin.left + innerWidth}px)`
-        : UNCLIPPED;
-  const clipTransition: Transition =
-    animateClip && chartPhase !== "ready"
-      ? { duration: ms / 1000, ease: enterTransition?.ease ?? [0.32, 0.72, 0, 1] }
-      : { duration: 0 };
-
-  return (
-    <motion.div
-      animate={{ clipPath: clipTo }}
-      // Under the crosshair and its dots (z-2 in the tooltip), so a marker on
-      // the line never covers the hovered point.
-      className="pointer-events-none absolute inset-0 z-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
-      initial={{ clipPath: clipFrom }}
-      transition={clipTransition}
-    >
-      {buckets.map((bucket) => {
+  const layout = useMemo<BucketLayout<K, P>[]>(
+    () =>
+      buckets.map((bucket) => {
         const start = new Date(bucket.startMs);
-        // Each kind's face for this bucket, or null for its glyph.
         const marks = bucket.kinds.map((kind) => {
           const face = faces ? (kinds[kind].face?.(bucket.byKind[kind] ?? []) ?? null) : null;
           return { kind, face, slot: (face === null ? "glyph" : "face") as MarkerSlot };
@@ -308,103 +274,232 @@ function EventMarkersLayer<K extends string, P>({
             marks.map((mark) => kinds[mark.kind])
           ),
           plotHeight: innerHeight,
-          hovered: hoveredIndex === bucket.index,
         });
+        const pointX = marginLeft + xScale(start);
+        return {
+          bucket,
+          marks,
+          offsets: stack.offsets,
+          stackHeight: stack.height,
+          at,
+          pointX,
+          // The plot runs edge to edge, so the first and last buckets sit on
+          // the card's edge: the stack moves in to stay whole, while the stem
+          // and dot keep the true point.
+          centre: Math.min(Math.max(pointX, hitWidth / 2), width - hitWidth / 2),
+          label: `${bucketLabel(start)}: ${bucket.kinds
+            .map((kind) => kinds[kind].describe(bucket.counts[kind] ?? 0))
+            .join(", ")}`,
+        };
+      }),
+    [buckets, faces, kinds, anchorKey, data, yScale, xScale, marginLeft, innerHeight, width, hitWidth, bucketLabel]
+  );
 
-        const pointX = margin.left + xScale(start);
-        // The plot runs edge to edge, so the first and last buckets sit on the
-        // card's edge; the centre is clamped to keep the whole mark visible.
-        const centre = Math.min(Math.max(pointX, hitWidth / 2), width - hitWidth / 2);
-        // The stem and dot stay under the stack where the stack was clamped.
-        const lineX = Math.min(
-          Math.max(pointX, centre - markWidth / 2 + 2),
-          centre + markWidth / 2 - 2
-        );
-        const hitHeight = stack.height + 8;
-        const dimmed = scrubCut !== null && pointX - margin.left > scrubCut;
+  /**
+   * A portal still bubbles React events through the React tree, and this
+   * layer is a child of the plot's interaction `<g>`: left alone, a pointer
+   * over a marker reached the chart's handlers with coordinates measured from
+   * the button and pinned the crosshair to the first bucket. The layer keeps
+   * its events to itself. Entering a face puts the chart tooltip away, so the
+   * face's popover and the tooltip never show at once; a dense chart's
+   * glyphs open on click only, and leave the tooltip where it is.
+   */
+  const handlers = useMemo<TriggerHandlers>(
+    () => ({
+      onMouseDown: stop,
+      onMouseMove: stop,
+      onMouseUp: stop,
+      onTouchEnd: stop,
+      onTouchMove: stop,
+      onTouchStart: stop,
+      ...(faces ? { onMouseEnter: () => setTooltipData(null) } : {}),
+    }),
+    [faces, setTooltipData]
+  );
 
-        // The stem, collapsed onto the point where a bucket has none, so it
-        // grows and shrinks instead of popping when the stack flips or the
-        // chart turns dense.
-        const stem = at.stem ?? { top: at.anchorY, bottom: at.anchorY };
+  // Drawn while the series is: wiping in, at rest, and wiping out.
+  const drawn =
+    chartPhase === "revealing" || chartPhase === "ready" || chartPhase === "exitingReady";
+  if (!drawn || buckets.length === 0 || width <= 0) return null;
 
-        const label = `${bucketLabel(start)}: ${bucket.kinds
-          .map((kind) => kinds[kind].describe(bucket.counts[kind] ?? 0))
-          .join(", ")}`;
-        return (
-          <div
-            className="absolute inset-0"
-            key={bucket.startMs}
-            style={{ opacity: dimmed ? dimOpacity : 1, transition: fade }}
-          >
-            <span
-              aria-hidden="true"
-              className="absolute left-0 w-px bg-foreground/40"
-              style={{
-                top: margin.top,
-                height: innerHeight,
-                transform: `translateX(${lineX - 0.5}px)`,
-                clipPath: `inset(${stem.top}px 0px ${Math.max(0, innerHeight - stem.bottom)}px 0px)`,
-                ...moving(),
-              }}
-            />
-            <span
-              aria-hidden="true"
-              className="absolute top-0 left-0 rounded-full bg-foreground/55 shadow-[0_0_0_1.5px_var(--chart-background)]"
-              style={{
-                width: DOT,
-                height: DOT,
-                opacity: at.dot ? 1 : 0,
-                transform: `translate(${lineX - DOT / 2}px, ${margin.top + at.anchorY - DOT / 2}px)`,
-                ...moving(fade),
-              }}
-            />
-            <MarkerPopover>
-              <PopoverTrigger
-                aria-label={label}
-                className={cn(
-                  "pointer-events-auto absolute top-0 left-0 flex cursor-pointer flex-col-reverse items-center justify-start rounded-full pb-1 outline-none",
-                  "focus-visible:ring-2 focus-visible:ring-ring",
-                  "data-popup-open:bg-black/6 [@media(hover:hover)]:hover:bg-black/6"
-                )}
-                closeDelay={120}
-                delay={150}
-                openOnHover
-                {...layerHandlers}
-                style={{
-                  width: hitWidth,
-                  height: hitHeight,
-                  // The hit area reaches 4px past the stack on each side.
-                  transform: `translate(${centre - hitWidth / 2}px, ${margin.top + at.stackTop - 4}px)`,
-                  ...moving("background-color 150ms ease-out"),
-                }}
-              >
-                {marks.map((mark, index) => {
-                  const size = mark.slot === "face" ? MARKER_FACE : MARKER_GLYPH;
-                  return (
-                    <span
-                      aria-hidden="true"
-                      className="flex shrink-0 items-center justify-center"
-                      key={mark.kind}
-                      // The stack is column-reverse: a mark's offset from the
-                      // one below it is its bottom margin (`markerStack`).
-                      style={{ width: size, height: size, marginBottom: stack.offsets[index] }}
-                    >
-                      {mark.face ?? kinds[mark.kind].glyph}
-                    </span>
-                  );
-                })}
-              </PopoverTrigger>
-              <MarkerPopoverContent>
-                {(controls) => renderContent(bucket, controls)}
-              </MarkerPopoverContent>
-            </MarkerPopover>
-          </div>
-        );
-      })}
+  // Scrubbing: the cut the series dim at, right of the hovered bucket.
+  const scrubCut = scrubDimCut({
+    dimOpacity,
+    canInteract: isLoaded && isChartInteractionPhase(chartPhase),
+    tooltipX: tooltipData?.x,
+    selecting: selection?.active === true,
+    innerWidth,
+    columnWidth,
+  });
+
+  /*
+   * The reveal: the line wipes in left to right through a clip; this layer
+   * follows with the same clip edge (the plot's left edge to its right
+   * edge) on the line's own transition (`ChartRevealClip`), then drops the
+   * clip so focus rings at the card's edge are not cut. The conceal mirrors
+   * it, as the series does. None under reduced motion: the markers are
+   * simply there.
+   */
+  const animateClip = !reduceMotion && animationDuration > 0;
+  const clipFrom =
+    animateClip && chartPhase === "revealing"
+      ? `inset(-64px ${width - margin.left}px -64px -64px)`
+      : UNCLIPPED;
+  const clipTo =
+    chartPhase === "revealing"
+      ? `inset(-64px ${Math.max(0, width - margin.left - innerWidth)}px -64px -64px)`
+      : chartPhase === "exitingReady" && animateClip
+        ? `inset(-64px -64px -64px ${margin.left + innerWidth}px)`
+        : UNCLIPPED;
+  const clipTransition: Transition =
+    animateClip && chartPhase !== "ready"
+      ? clipRevealTransition(
+          enterTransition ?? {
+            ...DEFAULT_CHART_ENTER_TRANSITION,
+            duration: animationDuration / 1000,
+          }
+        )
+      : { duration: 0 };
+
+  return (
+    <motion.div
+      animate={{ clipPath: clipTo }}
+      className="pointer-events-none absolute inset-0 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
+      data-chart-layer="markers"
+      initial={{ clipPath: clipFrom }}
+      // Over the crosshair's line, under its dots (`CHART_LAYER_Z`), so a
+      // marker on the line never covers the hovered point.
+      style={{ zIndex: CHART_LAYER_Z.markers }}
+      transition={clipTransition}
+    >
+      {layout.map((entry) => (
+        <MarkerBucket
+          dimOpacity={dimOpacity ?? 1}
+          dimmed={scrubCut !== null && entry.pointX - margin.left > scrubCut}
+          entry={entry}
+          faces={faces}
+          handlers={handlers}
+          hitWidth={hitWidth}
+          innerHeight={innerHeight}
+          key={entry.bucket.startMs}
+          kinds={kinds}
+          margin={margin}
+          renderContent={renderContent}
+        />
+      ))}
     </motion.div>
   );
 }
+
+/** The dot on the line under a stack. */
+const DOT = 5;
+
+/** The scrub dim's own fade (`ScrubDimRect`): opacity reads the same with reduced motion. */
+const FADE = "opacity 150ms ease-out";
+
+type MarkerBucketProps<K extends string, P> = {
+  entry: BucketLayout<K, P>;
+  /** Right of the scrub cut. */
+  dimmed: boolean;
+  dimOpacity: number;
+  faces: boolean;
+  hitWidth: number;
+  margin: Margin;
+  innerHeight: number;
+  kinds: Readonly<Record<K, EventMarkerKind<P>>>;
+  handlers: TriggerHandlers;
+  renderContent: EventMarkersProps<K, P>["renderContent"];
+};
+
+/**
+ * One bucket's stem, dot and button. Memoised: on a hover move only the
+ * buckets whose dim flips render again.
+ */
+const MarkerBucket = memo(function MarkerBucket<K extends string, P>({
+  entry,
+  dimmed,
+  dimOpacity,
+  faces,
+  hitWidth,
+  margin,
+  innerHeight,
+  kinds,
+  handlers,
+  renderContent,
+}: MarkerBucketProps<K, P>) {
+  const { bucket, marks, offsets, stackHeight, at, pointX, centre, label } = entry;
+  return (
+    <div
+      className="absolute inset-0"
+      data-marker-bucket={bucket.index}
+      style={{ opacity: dimmed ? dimOpacity : 1, transition: FADE }}
+    >
+      {at.stem ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute top-0 left-0 w-px bg-foreground/40"
+          data-marker-stem=""
+          style={{
+            height: Math.max(0, Math.min(at.stem.bottom, innerHeight) - at.stem.top),
+            transform: `translate(${pointX - 0.5}px, ${margin.top + at.stem.top}px)`,
+          }}
+        />
+      ) : null}
+      {at.dot ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute top-0 left-0 rounded-full bg-foreground/55 shadow-[0_0_0_1.5px_var(--chart-background)]"
+          data-marker-dot=""
+          style={{
+            width: DOT,
+            height: DOT,
+            transform: `translate(${pointX - DOT / 2}px, ${margin.top + at.anchorY - DOT / 2}px)`,
+          }}
+        />
+      ) : null}
+      <MarkerPopover>
+        <PopoverTrigger
+          aria-label={label}
+          className={cn(
+            "pointer-events-auto absolute top-0 left-0 flex cursor-pointer flex-col-reverse items-center justify-start rounded-full pb-1 outline-none",
+            "focus-visible:ring-2 focus-visible:ring-ring",
+            "data-popup-open:bg-black/6 [@media(hover:hover)]:hover:bg-black/6"
+          )}
+          closeDelay={120}
+          delay={150}
+          openOnHover={faces}
+          {...handlers}
+          style={{
+            width: hitWidth,
+            height: stackHeight + 8,
+            // The hit area reaches 4px past the stack on each side.
+            transform: `translate(${centre - hitWidth / 2}px, ${margin.top + at.stackTop - 4}px)`,
+            transition: "background-color 150ms ease-out",
+          }}
+        >
+          {marks.map((mark, index) => {
+            const size = mark.slot === "face" ? MARKER_FACE : MARKER_GLYPH;
+            return (
+              <span
+                aria-hidden="true"
+                className="flex shrink-0 items-center justify-center"
+                key={mark.kind}
+                // The stack is column-reverse: a mark's offset from the
+                // one below it is its bottom margin (`markerStack`).
+                style={{ width: size, height: size, marginBottom: offsets[index] }}
+              >
+                {mark.face ?? kinds[mark.kind].glyph}
+              </span>
+            );
+          })}
+        </PopoverTrigger>
+        <MarkerPopoverContent>
+          {(controls) => renderContent(bucket, controls)}
+        </MarkerPopoverContent>
+      </MarkerPopover>
+    </div>
+  );
+}) as <K extends string, P>(props: MarkerBucketProps<K, P>) => ReactNode;
 
 const NOT_ENGAGED: EventMarkerContentControls = { setEngaged: () => {} };
 const MarkerControlsContext = createContext<EventMarkerContentControls>(NOT_ENGAGED);

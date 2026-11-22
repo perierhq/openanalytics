@@ -56,6 +56,7 @@ import {
   type ReferenceAreaConfig,
 } from "./reference-area-config";
 import { ReferenceAreaRegistrationContext } from "./reference-area-registration-context";
+import { scrubDimCut } from "./scrub-dim";
 import {
   computeSeriesBarRevealClipPadding,
   computeSeriesBarWidth,
@@ -488,15 +489,14 @@ const TimeSeriesChartCore = memo(function TimeSeriesChartCore({
   // bucket's right edge (halfway to the next point). The last cut is kept
   // while the dim fades out, so leaving the chart does not snap it sideways.
   const scrubMaskId = `chart-scrub-mask-${useId().replace(/:/g, "")}`;
-  const scrubActive =
-    scrubDimOpacity != null &&
-    canInteract &&
-    tooltipData !== null &&
-    selection?.active !== true;
-  const scrubCut =
-    scrubActive && tooltipData
-      ? Math.min(innerWidth, tooltipData.x + columnWidth / 2)
-      : null;
+  const scrubCut = scrubDimCut({
+    dimOpacity: scrubDimOpacity,
+    canInteract,
+    tooltipX: tooltipData?.x,
+    selecting: selection?.active === true,
+    innerWidth,
+    columnWidth,
+  });
 
   const defsChildren: ReactElement[] = [];
   const clipExcludedChildren: ReactElement[] = [];

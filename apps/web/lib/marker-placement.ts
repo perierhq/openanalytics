@@ -16,21 +16,27 @@
  */
 
 import type { ChartMetric } from "./overview-compare";
+import { OVERVIEW_SERIES, type OverviewSeriesKey } from "./overview-series";
 
-/** Room kept clear at the top of the plot: the legend and chips sit there. */
-export const PLOT_TOP_SAFE = 16;
+/**
+ * How far the overview chart's legend chips reach into the plot: 24px chips
+ * at the card's top, over a plot that starts 12px down.
+ */
+export const LEGEND_DEPTH = 12;
+/**
+ * Room kept clear at the top of the plot: the legend's chips, and 8px of air
+ * below them, so a face's halo (3px) and the hit area (4px past the stack)
+ * stay off the chips.
+ */
+export const PLOT_TOP_SAFE = LEGEND_DEPTH + 8;
 /** Clear of the plot's bottom edge, so a stack sits above the axis rule. */
 export const PLOT_BOTTOM_INSET = 6;
 /** A stack on a stem: the stem's length, point to stack. */
 export const STEM_GAP = 12;
 /** A stack without a stem: its distance from the point. */
 export const GLYPH_GAP = 4;
-/**
- * The hovered bucket's crosshair dot is 5px with a 2px halo (6px out from the
- * point); a stack on that bucket keeps at least this far away so it never
- * covers the dot.
- */
-export const HOVER_DOT_CLEARANCE = 7;
+/** A marker's hit area at most: wide enough to aim at, past a 20px face. */
+export const MARKER_HIT_WIDTH = 24;
 
 export interface MarkerPlacementInput {
   /** The drawn series' y at this bucket, or null where it has no value. */
@@ -40,8 +46,6 @@ export interface MarkerPlacementInput {
   /** The stack stands on a stem (`markerHasStem`). */
   stem: boolean;
   plotHeight: number;
-  /** The crosshair is on this bucket. */
-  hovered?: boolean;
 }
 
 export type MarkerSide = "above" | "below" | "clamped" | "bottom";
@@ -98,7 +102,6 @@ export function placeMarker({
   stackHeight,
   stem,
   plotHeight,
-  hovered = false,
 }: MarkerPlacementInput): MarkerGeometry {
   const floor = plotHeight - PLOT_BOTTOM_INSET;
   if (anchorY === null) {
@@ -111,9 +114,7 @@ export function placeMarker({
     };
   }
 
-  const gap = stem ? STEM_GAP : GLYPH_GAP;
-  // Clear of the crosshair dot on the hovered bucket.
-  const clear = hovered ? Math.max(gap, HOVER_DOT_CLEARANCE) : gap;
+  const clear = stem ? STEM_GAP : GLYPH_GAP;
 
   const above = anchorY - clear - stackHeight;
   if (above >= PLOT_TOP_SAFE) {
@@ -150,20 +151,32 @@ export function placeMarker({
 }
 
 /**
+ * A marker's hit area, by width. On a faces chart, `MARKER_HIT_WIDTH`: its
+ * columns are at least that wide (`markerFaceMode`). On a dense chart, never
+ * wider than the bucket's own column, so neighbouring hit areas never
+ * overlap and the pointer between two markers still scrubs the chart. A
+ * chart with no column width (one bucket) has no neighbours to meet.
+ */
+export function markerHitWidth(faceMode: boolean, columnWidth: number): number {
+  if (faceMode || !(columnWidth > 0)) return MARKER_HIT_WIDTH;
+  return Math.min(MARKER_HIT_WIDTH, columnWidth);
+}
+
+/**
  * The overview chart's drawn primary series for a metric mode, by `dataKey`:
  * visitors on the default chart, the pressed metric's own series otherwise
  * (both session metrics draw `session`, revenue its bars' tops).
  */
-export function markerAnchorKey(metric: ChartMetric | null): string {
+export function markerAnchorKey(metric: ChartMetric | null): OverviewSeriesKey {
   switch (metric) {
     case "pageviews":
-      return "pageviews";
+      return OVERVIEW_SERIES.pageviews;
     case "bounce_rate":
     case "avg_visit":
-      return "session";
+      return OVERVIEW_SERIES.session;
     case "revenue":
-      return "revenueTop";
+      return OVERVIEW_SERIES.revenueTop;
     default:
-      return "visitors";
+      return OVERVIEW_SERIES.visitors;
   }
 }

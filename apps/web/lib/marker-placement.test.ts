@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest"
 
 import {
   GLYPH_GAP,
-  HOVER_DOT_CLEARANCE,
+  LEGEND_DEPTH,
   markerAnchorKey,
   markerAnchorY,
   markerHasStem,
+  markerHitWidth,
   PLOT_BOTTOM_INSET,
   PLOT_TOP_SAFE,
   placeMarker,
   STEM_GAP,
 } from "./marker-placement"
+import { MARKER_FACE_HALO } from "./event-markers"
+import { OVERVIEW_SERIES } from "./overview-series"
 
 /** A 300px plot over 0…1000: y = 300 - value * 0.3, like the chart's own scale. */
 const yScale = (value: number) => 300 - value * 0.3
@@ -50,6 +53,30 @@ describe("the series the markers sit on: the drawn primary series", () => {
     expect(markerAnchorKey("avg_visit")).toBe("session")
     // Revenue as the main series: the bars' tops.
     expect(markerAnchorKey("revenue")).toBe("revenueTop")
+  })
+
+  it("names the overview chart's own series keys, from the module the chart draws them with", () => {
+    expect(markerAnchorKey(null)).toBe(OVERVIEW_SERIES.visitors)
+    expect(markerAnchorKey("pageviews")).toBe(OVERVIEW_SERIES.pageviews)
+    expect(markerAnchorKey("bounce_rate")).toBe(OVERVIEW_SERIES.session)
+    expect(markerAnchorKey("revenue")).toBe(OVERVIEW_SERIES.revenueTop)
+  })
+})
+
+describe("a marker's hit area", () => {
+  it("is 24px wide on a faces chart, whose columns are at least that wide", () => {
+    expect(markerHitWidth(true, 24)).toBe(24)
+    expect(markerHitWidth(true, 60)).toBe(24)
+  })
+
+  it("never outgrows its bucket's column on a dense chart, so neighbours never overlap", () => {
+    expect(markerHitWidth(false, 5)).toBe(5)
+    expect(markerHitWidth(false, 11.5)).toBe(11.5)
+    expect(markerHitWidth(false, 40)).toBe(24)
+  })
+
+  it("is 24px where the chart has no column width (a single bucket)", () => {
+    expect(markerHitWidth(false, 0)).toBe(24)
   })
 })
 
@@ -100,17 +127,20 @@ describe("on the line, with a stem", () => {
     expect(at.stackTop).toBe(PLOT_TOP_SAFE)
   })
 
+  it("keeps a stack at the top clear of the legend chips, a face's halo included", () => {
+    const anchor = PLOT_TOP_SAFE + STEM_GAP + FACE
+    const at = placeMarker({ anchorY: anchor, stackHeight: FACE, stem: true, plotHeight: PLOT })
+    expect(at.side).toBe("above")
+    // At least 4px of air between the chips' bottom edge and the halo.
+    expect(at.stackTop - MARKER_FACE_HALO - LEGEND_DEPTH).toBeGreaterThanOrEqual(4)
+  })
+
   it("clamps inside the plot when the stack fits neither above nor below, with no stem", () => {
     const at = placeMarker({ anchorY: 40, stackHeight: 60, stem: true, plotHeight: 100 })
     expect(at.side).toBe("clamped")
     expect(at.stackTop).toBeGreaterThanOrEqual(PLOT_TOP_SAFE)
     expect(at.stackTop + 60).toBeLessThanOrEqual(100 - PLOT_BOTTOM_INSET)
     expect(at.stem).toBeNull()
-  })
-
-  it("lifts clear of the crosshair dot on the hovered bucket", () => {
-    const at = placeMarker({ anchorY: 150, stackHeight: 8, stem: false, plotHeight: PLOT, hovered: true })
-    expect(at.stackTop + 8).toBe(150 - HOVER_DOT_CLEARANCE)
   })
 
   it("anchors to the bottom of the plot when the value is missing, with no stem or dot", () => {

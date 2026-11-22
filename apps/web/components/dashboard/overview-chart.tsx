@@ -88,6 +88,7 @@ import {
 import { durationLabel, percentLabel } from "@/lib/stat-format";
 import { bucketMarkers } from "@/lib/event-markers";
 import { markerAnchorKey } from "@/lib/marker-placement";
+import { OVERVIEW_SERIES } from "@/lib/overview-series";
 import { rankMentionAuthors, rankSaleVisitors } from "@/lib/marker-faces";
 import { relativeBucketLabel } from "@/lib/relative-bucket-label";
 
@@ -811,7 +812,7 @@ export function OverviewChart({
       ...point,
       // A bucket without sessions carries no value, and the line breaks
       // there (`gapsForMissing`) rather than claiming 0%.
-      ...(sessionValue !== null ? { session: sessionValue } : {}),
+      ...(sessionValue !== null ? { [OVERVIEW_SERIES.session]: sessionValue } : {}),
       ...(previousSessionValue !== null ? { prevSession: previousSessionValue } : {}),
       ...(previousSessionAt !== null ? { prevSessionAtMs: previousSessionAt } : {}),
       // No counterpart, no keys: the dashed line breaks there.
@@ -820,7 +821,7 @@ export function OverviewChart({
       // with its refund outline on top.
       ...(revenueMain
         ? {
-            revenueTop: bucket
+            [OVERVIEW_SERIES.revenueTop]: bucket
               ? Math.max(0, bucket.netMinor) + Math.max(0, bucket.refundMinor)
               : 0,
           }
@@ -965,7 +966,7 @@ export function OverviewChart({
         // Never drawn: it sizes the chart's primary axis to the bars and
         // gives the hover something to track. The bars are the picture.
         <Area
-          dataKey="revenueTop"
+          dataKey={OVERVIEW_SERIES.revenueTop}
           fill="var(--success)"
           fillOpacity={0}
           showHighlight={false}
@@ -982,7 +983,7 @@ export function OverviewChart({
       ) : null}
       {sessionSeries ? (
         <Area
-          dataKey="session"
+          dataKey={OVERVIEW_SERIES.session}
           dimOpacity={1}
           fadeEdges
           fill={sessionSeries.color}
@@ -1020,7 +1021,7 @@ export function OverviewChart({
       ) : null}
       {trafficSeries.includes("pageviews") ? (
         <Area
-          dataKey="pageviews"
+          dataKey={OVERVIEW_SERIES.pageviews}
           fill={PAGEVIEWS}
           // Alone on the chart, pageviews is the subject rather than the
           // underlay, and takes the visitors area's weight.
@@ -1041,7 +1042,7 @@ export function OverviewChart({
       ) : null}
       {trafficSeries.includes("visitors") ? (
         <Area
-          dataKey="visitors"
+          dataKey={OVERVIEW_SERIES.visitors}
           fill={VISITORS}
           fillOpacity={0.14}
           strokeWidth={2}
