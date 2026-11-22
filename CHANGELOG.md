@@ -15,7 +15,8 @@ Releases before 0.6.0 have their notes on the
 - **Chart markers sit on the line.** Sales, mentions and notes are pinned to
   their day's point on the chart's line with a thin stem, and follow whichever
   metric the chart shows, instead of a row along the bottom. Busy charts show
-  small icons on the line without stems.
+  small icons on the line without stems, opened with a click rather than on
+  hover so they stay out of the way while scrubbing.
 
 ## [0.10.0] - 2026-11-22 (perierhq fork)
 
