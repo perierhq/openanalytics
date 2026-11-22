@@ -1,13 +1,13 @@
 {
   "id": "openanalytics",
   "name": "Open Analytics",
-  "version": "v0.8.0",
+  "version": "v0.10.1",
   "description": "Open Analytics is an open-source, AI-native web analytics platform: realtime dashboards, funnels, visitor journeys, custom events, revenue analytics, and an MCP server for AI agents. Deploys the complete official self-hosted stack.",
   "logo": "logo.svg",
   "links": {
-    "github": "https://github.com/OpenLabs-so/openanalytics",
+    "github": "https://github.com/perierhq/openanalytics",
     "website": "https://getopen.so",
-    "docs": "https://github.com/OpenLabs-so/openanalytics/blob/main/infra/selfhost/DOKPLOY.md"
+    "docs": "https://github.com/perierhq/openanalytics/blob/main/infra/selfhost/DOKPLOY.md"
   },
   "tags": ["analytics"]
 }

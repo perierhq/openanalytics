@@ -154,6 +154,9 @@ defaults to OpenLabs':
 OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.10.1
 ```
 
+The Coolify and Dokploy blueprints default to the fork's registry, so their
+pins move with every release like the rest of step 2 in "Cutting one".
+
 The ten packages are linked to `perierhq/openanalytics` with Actions **Write**
 access (package settings, Manage Actions access). A package first pushed from
 a laptop is not linked, and the workflow then fails with `permission_denied`;

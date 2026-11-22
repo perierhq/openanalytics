@@ -43,7 +43,7 @@ search for "Open Analytics", deploy.
 create a **Compose** service, open **Advanced → Import**, and paste the
 blueprint's Base64 config. It ships next to the blueprint as
 [`dokploy/import.base64.txt`](dokploy/import.base64.txt); the copyable form is
-[**the raw file**](https://raw.githubusercontent.com/OpenLabs-so/openanalytics/main/infra/selfhost/dokploy/import.base64.txt),
+[**the raw file**](https://raw.githubusercontent.com/perierhq/openanalytics/main/infra/selfhost/dokploy/import.base64.txt),
 which opens as plain text: select all, copy, done. (Once the catalogue submission lands, the templates
 site renders the same config on the template card.) The file is regenerated
 whenever the blueprint changes; if you modify the blueprint yourself,
@@ -168,7 +168,7 @@ never to hand the variable to more services.
 
 ## Upgrades
 
-The images are pinned in the compose file (`v0.8.0` today), so a redeploy
+The images are pinned in the compose file (`v0.10.1` today), so a redeploy
 reinstalls the same release. To move: set `OA_IMAGE_TAG` in the Environment
 tab to the release you mean and redeploy — migrations re-run idempotently, the
 keygen and geoip one-shots short-circuit, and nothing regenerates behind your

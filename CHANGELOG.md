@@ -8,6 +8,23 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
+## [Unreleased]
+
+**Upgrade notes: Coolify and Dokploy installs.** The blueprints now pull the
+fork's images (`ghcr.io/perierhq/openanalytics`) at `v0.10.1` by default. An
+install created from an earlier blueprint keeps pulling `v0.8.0` from OpenLabs'
+registry until you set `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics` and
+`OA_IMAGE_TAG=v0.10.1` in its Environment tab and redeploy. Everyone else has
+nothing to do.
+
+### Changed
+
+- **The Coolify and Dokploy blueprints follow the fork's releases.** They were
+  still pinned to upstream `v0.8.0`, so a platform install missed every release
+  since. They now default to `ghcr.io/perierhq/openanalytics` at `v0.10.1`, the
+  Dokploy import blob is regenerated, and `meta.json` and the guides link to
+  this repository.
+
 ## [0.10.1] - 2026-11-22 (perierhq fork)
 
 **Upgrade notes: none.** Dashboard only; no migration and no new setting. Run
