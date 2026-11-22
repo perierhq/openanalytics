@@ -60,6 +60,13 @@ describe("the overview chart's marker kinds", () => {
     expect(OVERVIEW_MARKER_KINDS.note.face).toBeUndefined()
   })
 
+  it("stands a lone note's flag on the line without a stem, and keeps the stem for sales and mentions", () => {
+    // The flag has a pole of its own; a stem under it would be a second one.
+    expect(OVERVIEW_MARKER_KINDS.note.stemless).toBe(true)
+    expect(OVERVIEW_MARKER_KINDS.sale.stemless).toBeFalsy()
+    expect(OVERVIEW_MARKER_KINDS.mention.stemless).toBeFalsy()
+  })
+
   it("counts notes in words", () => {
     expect(OVERVIEW_MARKER_KINDS.note.describe(1)).toBe("1 note")
     expect(OVERVIEW_MARKER_KINDS.note.describe(3)).toBe("3 notes")

@@ -132,15 +132,27 @@ export type MarkerSlot = "face" | "glyph";
 
 export const MARKER_GLYPH = 8;
 export const MARKER_FACE = 20;
-/** Space between two marks in a bucket's stack. */
+/**
+ * A face's white halo, drawn as a shadow past its edge (3px on a sale's
+ * face, 2.5px on a mention's): it takes room the stack has to leave clear.
+ */
+export const MARKER_FACE_HALO = 3;
+/**
+ * A face's "+N" badge: 14px tall with a 1px ring, at the face's right edge,
+ * centred on the face (`chart-marker-kinds.tsx` draws it at this size).
+ */
+export const MARKER_BADGE = 14;
+/** Space between two glyphs in a bucket's stack (each has a 1px ring). */
 export const MARKER_GAP = 3;
 /**
- * Two faces in one bucket (a buyer and a mention's author) sit 2px apart,
- * one above the other, rather than overlap: overlapped, the upper face hid
- * most of the lower one and their "+N" badges collided. 2px rather than the
- * glyph gap keeps them reading as one bucket and the stack short.
+ * Two faces in one bucket (a buyer and a mention's author) sit one above the
+ * other, 8px apart: their halos keep 2px between them, and their "+N"
+ * badges, one centred on each face, keep 12px. At 2px apart the badges read
+ * as touching on a busy day.
  */
-export const MARKER_FACE_GAP = 2;
+export const MARKER_FACE_GAP = 2 * MARKER_FACE_HALO + 2;
+/** A glyph beside a face (a note's flag over it): clear of the face's halo. */
+export const MARKER_FACE_GLYPH_GAP = MARKER_FACE_HALO + MARKER_GAP;
 
 /**
  * A bucket's stack, bottom first: the offset before each mark (0 for the
@@ -152,7 +164,10 @@ export function markerStack(slots: readonly MarkerSlot[]): {
 } {
   const offsets = slots.map((slot, index) => {
     if (index === 0) return 0;
-    return slot === "face" && slots[index - 1] === "face" ? MARKER_FACE_GAP : MARKER_GAP;
+    const below = slots[index - 1];
+    if (slot === "face" && below === "face") return MARKER_FACE_GAP;
+    if (slot === "face" || below === "face") return MARKER_FACE_GLYPH_GAP;
+    return MARKER_GAP;
   });
   const height = slots.reduce(
     (total, slot, index) =>

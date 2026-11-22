@@ -449,6 +449,8 @@ export function OverviewMarkers({
   bucketLabel,
   timeLabel,
   noteActions = null,
+  anchorKey,
+  dimOpacity,
 }: {
   items: readonly OverviewMarkerItem[];
   endMs: number;
@@ -459,6 +461,10 @@ export function OverviewMarkers({
   bucketLabel: (date: Date) => string;
   /** "14:15" — a single item's time, in the chart's zone. */
   timeLabel: (date: Date) => string;
+  /** The drawn series the markers sit on. */
+  anchorKey: string;
+  /** The chart's scrub dim, which the markers follow. */
+  dimOpacity?: number;
 }) {
   const [hidden] = useHiddenChartLayers();
   const visible = React.useMemo(
@@ -468,7 +474,9 @@ export function OverviewMarkers({
   const base = `/dashboard/${encodeURIComponent(slug)}`;
   return (
     <EventMarkers
+      anchorKey={anchorKey}
       bucketLabel={bucketLabel}
+      dimOpacity={dimOpacity}
       endMs={endMs}
       items={visible}
       kinds={OVERVIEW_MARKER_KINDS}

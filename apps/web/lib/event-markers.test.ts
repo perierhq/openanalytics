@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest"
 
-import { bucketMarkers, markerStack, type EventMarkerItem } from "./event-markers"
+import {
+  bucketMarkers,
+  MARKER_BADGE,
+  MARKER_FACE,
+  MARKER_FACE_HALO,
+  MARKER_GLYPH,
+  markerStack,
+  type EventMarkerItem,
+  type MarkerSlot,
+} from "./event-markers"
 
 const DAY = 86_400_000
 const START = Date.parse("2026-06-20T00:00:00.000Z")
@@ -101,13 +110,60 @@ describe("bucketing marker items into the chart's own buckets", () => {
 })
 
 describe("stacking a bucket's marks", () => {
-  it("stacks two faces 2px apart and keeps a gap around a glyph", () => {
-    // Bottom first: a sale's buyer face, then a mention's author face, neither
-    // hiding the other.
-    expect(markerStack(["face", "face"])).toEqual({ offsets: [0, 2], height: 20 + 2 + 20 })
-    expect(markerStack(["face", "glyph"])).toEqual({ offsets: [0, 3], height: 31 })
-    expect(markerStack(["glyph", "face"])).toEqual({ offsets: [0, 3], height: 31 })
+  it("keeps a gap around a glyph and a wider one between two faces", () => {
+    // Bottom first: a sale's buyer face, then a mention's author face.
+    expect(markerStack(["face", "face"])).toEqual({ offsets: [0, 8], height: 20 + 8 + 20 })
+    expect(markerStack(["face", "glyph"])).toEqual({ offsets: [0, 6], height: 34 })
+    expect(markerStack(["glyph", "face"])).toEqual({ offsets: [0, 6], height: 34 })
     expect(markerStack(["glyph", "glyph"])).toEqual({ offsets: [0, 3], height: 19 })
     expect(markerStack(["face"])).toEqual({ offsets: [0], height: 20 })
+  })
+})
+
+/**
+ * Each mark's drawn extent, bottom-up from the stack's bottom (0), as the
+ * layer draws it: a face with its white halo, its "+N" badge (box and 1px
+ * ring) centred on the face's right edge, a glyph with its 1px ring.
+ */
+function drawnStack(slots: readonly MarkerSlot[]) {
+  const { offsets } = markerStack(slots)
+  let bottom = 0
+  return slots.map((slot, index) => {
+    bottom += offsets[index] ?? 0
+    const size = slot === "face" ? MARKER_FACE : MARKER_GLYPH
+    const centre = bottom + size / 2
+    const mark =
+      slot === "face"
+        ? { slot, from: bottom - MARKER_FACE_HALO, to: bottom + size + MARKER_FACE_HALO }
+        : { slot, from: bottom - 1, to: bottom + size + 1 }
+    const badge = { from: centre - MARKER_BADGE / 2 - 1, to: centre + MARKER_BADGE / 2 + 1 }
+    bottom += size
+    return { ...mark, badge }
+  })
+}
+
+describe("a tall stack: a note flag over two faces with '+N' badges", () => {
+  // Jul 11 in the mock data: a buyer's face, an author's face, a note's flag.
+  const [buyer, author, flag] = drawnStack(["face", "face", "glyph"])
+
+  it("keeps the two faces' halos apart", () => {
+    expect(author!.from - buyer!.to).toBeGreaterThanOrEqual(2)
+  })
+
+  it("keeps the two faces' badges well apart, not just untouched", () => {
+    expect(author!.badge.from - buyer!.badge.to).toBeGreaterThanOrEqual(10)
+  })
+
+  it("puts the flag clear of the top face's halo", () => {
+    expect(flag!.from - author!.to).toBeGreaterThanOrEqual(2)
+  })
+
+  it("keeps a glyph under a face clear of the face's halo too", () => {
+    const [glyph, face] = drawnStack(["glyph", "face"])
+    expect(face!.from - glyph!.to).toBeGreaterThanOrEqual(2)
+  })
+
+  it("counts every gap in the stack's height", () => {
+    expect(markerStack(["face", "face", "glyph"]).height).toBe(20 + 8 + 20 + 6 + 8)
   })
 })

@@ -8,6 +8,7 @@ import {
   type SpringConfig,
   useChartConfig,
 } from "../chart-config-context";
+import { CHART_LAYER_Z } from "../chart-layers";
 import {
   chartCssVars,
   type LineConfig,
@@ -279,11 +280,13 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
 
   const tooltipContent = (
     <>
-      {/* Crosshair indicator - rendered as SVG overlay */}
+      {/* Crosshair indicator - rendered as SVG overlay. Under the event
+          markers (`CHART_LAYER_Z`): the line runs behind a marker. */}
       {showCrosshair && (
         <svg
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
+          data-chart-layer="crosshair-line"
           height="100%"
           width="100%"
         >
@@ -308,11 +311,15 @@ const ChartTooltipInner = memo(function ChartTooltipInner({
         </svg>
       )}
 
-      {/* Dots on bars/lines - show for vertical charts only */}
+      {/* Dots on bars/lines - show for vertical charts only. Over the event
+          markers (`CHART_LAYER_Z`), so a marker never covers the hovered
+          point. */}
       {showDots && visible && !isHorizontal && (
         <svg
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
+          data-chart-layer="crosshair-dots"
+          style={{ zIndex: CHART_LAYER_Z.crosshairDots }}
           height="100%"
           width="100%"
         >
