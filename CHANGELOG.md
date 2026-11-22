@@ -8,6 +8,151 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
+## [0.10.0] - 2026-11-22 (perierhq fork)
+
+New on the overview: X mentions, sales, buyer faces and notes on the chart,
+revenue bars, previous-period comparison with chartable tiles, bars behind
+breakdown rows, and server-side exclusions.
+
+**Upgrade notes.** Run `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics
+./upgrade.sh --to v0.10.0` from the `v0.10.0` checkout. Migrations run on their
+own with the rest, all additive:
+
+Postgres migration 0048 adds two tables for X mentions and changes nothing
+that exists. It runs with the usual `pnpm run migrate:postgres`; there is
+nothing to do by hand.
+
+Postgres migration 0049 adds one table, for the profile pictures of mention
+authors, and changes nothing that exists; nothing to do by hand.
+
+Postgres migration 0050 adds one table, for chart notes, and changes nothing
+that exists; nothing to do by hand. Existing `analytics:read` grants (MCP
+clients, the CLI) can now read the text of a site's chart notes and their
+authors' display names. Writing notes needs the new `notes:write` scope, which
+no existing grant has, so an MCP client has to connect again before it can
+add, edit or delete notes.
+
+Postgres migration 0051 adds four empty list columns to `site_ingest_settings`,
+for exclusions, and changes nothing that exists; nothing to do by hand.
+
+Mention watching is off for every site until an owner or admin turns it on. The
+worker's new settings all have defaults: `MENTIONS_X_API_URL` (default
+`https://api.fxtwitter.com`; point it at your own fxtwitter), `MENTIONS_ENABLED`
+(`false` stops mention polling for the whole install) and
+`MENTIONS_POLL_MINUTES` (default 60). Mention author pictures load in the
+dashboard when the dashboard and the API are on the same site, as
+`SELF-HOSTING.md` describes.
+
+### Added
+
+- **Revenue on the overview chart.** For owners with a payment provider
+  connected, net revenue per day (or hour) is drawn as bars on their own axis
+  behind the visitors line, with refunds as a dashed outline so they never read
+  as income. The day tooltip is now sectioned: traffic, then revenue (net,
+  gross, refunds, revenue per visitor), then that day's sales, mentions and
+  notes. Hovering dims everything to the right of the cursor, and the axis pill
+  says how long ago the hovered day was.
+
+- **Bars behind breakdown rows.** Every breakdown card (pages, sources,
+  countries, devices, AI referrals, custom events, their "See all" lists and the
+  public share board) draws a proportional bar behind each row. For owners, the
+  Sources card and Entry pages show each row's revenue, credited to the last
+  source before the purchase, can sort by it, and add a Revenue column to "See
+  all"; the row tooltip gives revenue per visitor and buyers.
+
+- **Compare and chartable tiles on the overview.** A Compare toggle next to the
+  range picker shows the previous period on every tile (as a change chip and the
+  previous value; bounce rate in points) and as dashed lines on the chart. Each
+  tile, Visitors, Pageviews, Bounce rate, Avg. visit and Revenue (owners), now
+  switches the chart to that metric. Both are kept in the URL (`?compare=1`,
+  `?metric=`). The public share board is unchanged.
+
+- **Exclusions.** An owner or admin can stop counting visits from IP addresses
+  or ranges (an office, their own devices), page paths (`/admin/*`), countries
+  and hostnames (a staging site; `*.example.com` covers its subdomains), in
+  Settings › General. The collector drops matching events before they are
+  queued, so they appear in no report, in no usage count and not in Realtime.
+  `POST /v1/events` answers an excluded event as it answers the same event
+  counted: a retry is a `duplicate`, a changed body under the same `event_id`
+  is a `409`, and a queue outage is a `503`. For that, the collector keeps a
+  payload hash and a time for each excluded event, under a hashed key, for the
+  dedup window (`INGEST_DEDUP_TTL_DAYS`); it never keeps the address or the
+  payload. What still differs: a request made only of excluded events can
+  answer faster, and an excluded heartbeat is a `204` even while the realtime
+  store is down. Hostnames are stored in their ASCII form (`bücher.de` becomes
+  `xn--bcher-kva.de`), country codes must name a country (`XX` and `T1` are
+  refused), an IPv6 range that covers `::ffff:0:0/96` is refused because IPv6
+  rules never match IPv4 visitors, and a path takes at most 10 `*`. A change applies
+  once the collector's ingest-config cache refreshes
+  (`INGEST_CONFIG_CACHE_TTL_SECONDS`, 30 seconds by default). The lists are
+  `exclusions` on `GET`/`PATCH /v1/sites/{site_id}/ingest-settings`; a `PATCH`
+  replaces all four. They are never part of the public tracker config.
+  Address exclusions use the same client address as geo, so they need the
+  trusted proxy headers `SELF-HOSTING.md` describes; country exclusions need a
+  country source, and `exclusions_country_active` says whether this install's
+  GeoIP database has resolved one in the last seven days. A country taken from
+  a platform header does not count toward it, because the collector cannot
+  tell a proxy's header from a visitor's, so behind such a platform it can read
+  `false` while country exclusions apply. Dropped events are counted in
+  `collector_events_excluded`, by reason only (`ip`, `country`, `hostname`,
+  `path`).
+
+- **X mentions.** An owner or admin can turn on mention watching for a site.
+  The worker then searches X for the site's domain and up to five extra terms
+  through an fxtwitter-compatible service, and stores the public posts it finds
+  (`GET /v1/sites/{site_id}/mentions`, and the `list_mentions` MCP tool). It is
+  off for every site until someone turns it on, because it sends the domain and
+  the terms to that service; nothing about visitors is sent.
+  `MENTIONS_X_API_URL` points it at your own fxtwitter, `MENTIONS_ENABLED=false`
+  stops it for the whole install, and `MENTIONS_POLL_MINUTES` (default 60) sets
+  how often each site is searched.
+
+- **Mention author pictures.** The mentions list shows each author's profile
+  picture. The worker downloads the small version from `pbs.twimg.com` (once a
+  week at most per author), stores it in Postgres, and the API serves it at
+  `GET /v1/sites/{site_id}/mentions/avatars/{platform}/{handle}`; each
+  mention's `author.avatar_url` points there. Viewers' browsers never contact X.
+
+- **Sales and mentions on the overview chart.** Days with sales or mentions get
+  a marker under the chart; opening one lists that day's sales (owners only,
+  since revenue is owner-only) and posts. A legend above the chart hides
+  either kind. The new Mentions tab lists every post in the period, and the
+  Integrations settings turn watching on and set the terms. Author pictures
+  are not loaded from X, so viewing the dashboard sends nothing to X. Sales
+  show the buyer's generated face, the same one the realtime views use. For
+  that, each item of `GET /v1/sites/{site_id}/revenue/transactions` has a new
+  `visitor` field: the anonymous id the buyer had in the purchase's last-touch
+  session, the same id the visitor surfaces show, for drawing the same
+  generated face. It rotates daily; two charges share it only when they share
+  a last-touch session. Null when the charge matched no visitor. Never the
+  `identify()` hash.
+
+- **Notes on the overview chart.** Owners and admins can pin a short note
+  (up to 280 characters) to a moment on the chart, such as a launch or a
+  pricing change, with "Add note" beside the chart's legend or from a
+  marker's popover. Every member sees notes as a small flag under the chart,
+  in the popover with the author's name and time, and as a line in the day
+  tooltip; the legend hides them like sales and mentions. Owners and admins
+  edit and delete them in the popover. The API is
+  `GET`/`POST /v1/sites/{site_id}/notes` and
+  `PATCH`/`DELETE /v1/sites/{site_id}/notes/{note_id}`; a note names its
+  author by display name only. MCP gains `list_notes` (`analytics:read`) and
+  `create_note`, `update_note` and `delete_note` under the new `notes:write`
+  scope. `delete_note` is the one MCP tool that deletes something, so it is
+  marked destructive and clients ask before running it. Deleting a site
+  deletes its notes.
+
+### Changed
+
+- **`compare=true` uses an equal-length previous window for a period still in
+  progress.** The overview, timeseries and revenue summary reads used to set an
+  unfinished range against the whole period before it, so at 09:00 "today"
+  was compared with all of yesterday. The previous period now starts where it
+  did and is cut at the same point the current one has reached by
+  `meta.freshness.as_of` (rounded up to the read's bucket): 00:00–09:00 today
+  against 00:00–09:00 yesterday. A finished range compares exactly as before,
+  and `meta.comparison_range` names the window either way. No operator action.
+
 ## [0.9.0] - 2026-11-13 (perierhq fork)
 
 The perierhq fork's first release on its own version line, tagged `v0.9.0` and published to
@@ -169,106 +314,7 @@ upstream.
 the bucket and its CORS rule as `SELF-HOSTING.md`, "Object storage", shows.
 Everyone else has nothing to do.
 
-Postgres migration 0048 adds two tables for X mentions and changes nothing
-that exists. It runs with the usual `pnpm run migrate:postgres`; there is
-nothing to do by hand.
-
-Postgres migration 0049 adds one table, for the profile pictures of mention
-authors, and changes nothing that exists; nothing to do by hand.
-
-Postgres migration 0050 adds one table, for chart notes, and changes nothing
-that exists; nothing to do by hand. Existing `analytics:read` grants (MCP
-clients, the CLI) can now read the text of a site's chart notes and their
-authors' display names. Writing notes needs the new `notes:write` scope, which
-no existing grant has, so an MCP client has to connect again before it can
-add, edit or delete notes.
-
-Postgres migration 0051 adds four empty list columns to `site_ingest_settings`,
-for exclusions, and changes nothing that exists; nothing to do by hand.
-
 ### Added
-
-- **Compare and chartable tiles on the overview.** A Compare toggle next to the
-  range picker shows the previous period on every tile (as a change chip and the
-  previous value; bounce rate in points) and as dashed lines on the chart. Each
-  tile, Visitors, Pageviews, Bounce rate, Avg. visit and Revenue (owners), now
-  switches the chart to that metric. Both are kept in the URL (`?compare=1`,
-  `?metric=`). The public share board is unchanged.
-
-- **Exclusions.** An owner or admin can stop counting visits from IP addresses
-  or ranges (an office, their own devices), page paths (`/admin/*`), countries
-  and hostnames (a staging site; `*.example.com` covers its subdomains), in
-  Settings › General. The collector drops matching events before they are
-  queued, so they appear in no report, in no usage count and not in Realtime.
-  `POST /v1/events` answers an excluded event as it answers the same event
-  counted: a retry is a `duplicate`, a changed body under the same `event_id`
-  is a `409`, and a queue outage is a `503`. For that, the collector keeps a
-  payload hash and a time for each excluded event, under a hashed key, for the
-  dedup window (`INGEST_DEDUP_TTL_DAYS`); it never keeps the address or the
-  payload. What still differs: a request made only of excluded events can
-  answer faster, and an excluded heartbeat is a `204` even while the realtime
-  store is down. Hostnames are stored in their ASCII form (`bücher.de` becomes
-  `xn--bcher-kva.de`), country codes must name a country (`XX` and `T1` are
-  refused), an IPv6 range that covers `::ffff:0:0/96` is refused because IPv6
-  rules never match IPv4 visitors, and a path takes at most 10 `*`. A change applies
-  once the collector's ingest-config cache refreshes
-  (`INGEST_CONFIG_CACHE_TTL_SECONDS`, 30 seconds by default). The lists are
-  `exclusions` on `GET`/`PATCH /v1/sites/{site_id}/ingest-settings`; a `PATCH`
-  replaces all four. They are never part of the public tracker config.
-  Address exclusions use the same client address as geo, so they need the
-  trusted proxy headers `SELF-HOSTING.md` describes; country exclusions need a
-  country source, and `exclusions_country_active` says whether this install's
-  GeoIP database has resolved one in the last seven days. A country taken from
-  a platform header does not count toward it, because the collector cannot
-  tell a proxy's header from a visitor's, so behind such a platform it can read
-  `false` while country exclusions apply. Dropped events are counted in
-  `collector_events_excluded`, by reason only (`ip`, `country`, `hostname`,
-  `path`).
-
-- **X mentions.** An owner or admin can turn on mention watching for a site.
-  The worker then searches X for the site's domain and up to five extra terms
-  through an fxtwitter-compatible service, and stores the public posts it finds
-  (`GET /v1/sites/{site_id}/mentions`, and the `list_mentions` MCP tool). It is
-  off for every site until someone turns it on, because it sends the domain and
-  the terms to that service; nothing about visitors is sent.
-  `MENTIONS_X_API_URL` points it at your own fxtwitter, `MENTIONS_ENABLED=false`
-  stops it for the whole install, and `MENTIONS_POLL_MINUTES` (default 60) sets
-  how often each site is searched.
-
-- **Mention author pictures.** The mentions list shows each author's profile
-  picture. The worker downloads the small version from `pbs.twimg.com` (once a
-  week at most per author), stores it in Postgres, and the API serves it at
-  `GET /v1/sites/{site_id}/mentions/avatars/{platform}/{handle}`; each
-  mention's `author.avatar_url` points there. Viewers' browsers never contact X.
-
-- **Sales and mentions on the overview chart.** Days with sales or mentions get
-  a marker under the chart; opening one lists that day's sales (owners only,
-  since revenue is owner-only) and posts. A legend above the chart hides
-  either kind. The new Mentions tab lists every post in the period, and the
-  Integrations settings turn watching on and set the terms. Author pictures
-  are not loaded from X, so viewing the dashboard sends nothing to X. Sales
-  show the buyer's generated face, the same one the realtime views use. For
-  that, each item of `GET /v1/sites/{site_id}/revenue/transactions` has a new
-  `visitor` field: the anonymous id the buyer had in the purchase's last-touch
-  session, the same id the visitor surfaces show, for drawing the same
-  generated face. It rotates daily; two charges share it only when they share
-  a last-touch session. Null when the charge matched no visitor. Never the
-  `identify()` hash.
-
-- **Notes on the overview chart.** Owners and admins can pin a short note
-  (up to 280 characters) to a moment on the chart, such as a launch or a
-  pricing change, with "Add note" beside the chart's legend or from a
-  marker's popover. Every member sees notes as a small flag under the chart,
-  in the popover with the author's name and time, and as a line in the day
-  tooltip; the legend hides them like sales and mentions. Owners and admins
-  edit and delete them in the popover. The API is
-  `GET`/`POST /v1/sites/{site_id}/notes` and
-  `PATCH`/`DELETE /v1/sites/{site_id}/notes/{note_id}`; a note names its
-  author by display name only. MCP gains `list_notes` (`analytics:read`) and
-  `create_note`, `update_note` and `delete_note` under the new `notes:write`
-  scope. `delete_note` is the one MCP tool that deletes something, so it is
-  marked destructive and clients ask before running it. Deleting a site
-  deletes its notes.
 
 - **Postgres on Neon.** `infra/selfhost/NEON.md` walks a new install, and
   moving an existing one, onto [Neon](https://neon.com);
@@ -280,14 +326,6 @@ for exclusions, and changes nothing that exists; nothing to do by hand.
 
 ### Changed
 
-- **`compare=true` uses an equal-length previous window for a period still in
-  progress.** The overview, timeseries and revenue summary reads used to set an
-  unfinished range against the whole period before it, so at 09:00 "today"
-  was compared with all of yesterday. The previous period now starts where it
-  did and is cut at the same point the current one has reached by
-  `meta.freshness.as_of` (rounded up to the read's bucket): 00:00–09:00 today
-  against 00:00–09:00 yesterday. A finished range compares exactly as before,
-  and `meta.comparison_range` names the window either way. No operator action.
 - **The optional object storage is RustFS, not MinIO.** MinIO stopped
   publishing images — Docker Hub on 2026-09-16, then Quay on 2026-09-25 —
   so `docker compose --profile object-storage up` could no longer pull it.

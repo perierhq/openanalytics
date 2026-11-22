@@ -151,7 +151,7 @@ deployment names the fork's registry when it upgrades, because `upgrade.sh`
 defaults to OpenLabs':
 
 ```sh
-OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.9.0
+OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.10.0
 ```
 
 The ten packages are linked to `perierhq/openanalytics` with Actions **Write**
