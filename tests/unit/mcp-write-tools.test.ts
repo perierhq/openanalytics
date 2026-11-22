@@ -157,6 +157,7 @@ const EXPECTED_READ_TOOLS = [
   'list_widgets',
   'share_settings',
   'list_mentions',
+  'list_notes',
 ] as const
 
 const EXPECTED_WRITE_TOOLS = [
@@ -172,6 +173,9 @@ const EXPECTED_WRITE_TOOLS = [
   'create_widget',
   'update_widget',
   'update_share_settings',
+  'create_note',
+  'update_note',
+  'delete_note',
 ] as const
 
 describe('the tool roster is pinned by name, not derived', () => {
@@ -193,10 +197,11 @@ describe('the tool roster is pinned by name, not derived', () => {
     // the Perier fork's revenue aggregates (`revenue_by_source`,
     // `events_before_purchase`) and `custom_event_properties`
     // 36, and its subscription reads (`subscription_summary`,
-    // `subscription_timeseries`, gap 7) 38, and `list_mentions` (the X mentions
-    // list) 39.
-    expect(MCP_TOOLS).toHaveLength(39)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(39)
+    // `subscription_timeseries`, gap 7) 38, `list_mentions` (the X mentions
+    // list) 39, and the chart notes (`list_notes`, `create_note`,
+    // `update_note`, `delete_note`) 43.
+    expect(MCP_TOOLS).toHaveLength(43)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(43)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -215,13 +220,17 @@ describe('the tool roster is pinned by name, not derived', () => {
 })
 
 describe('annotations divide reads from writes', () => {
-  it('every named write tool is annotated not-read-only and non-destructive', () => {
+  it('every named write tool is annotated not-read-only, and only delete_note destructive', () => {
     for (const name of EXPECTED_WRITE_TOOLS) {
       const t = tool(name)
       expect(t.method, `${name} is a write and must carry a method`).not.toBe(undefined)
       expect(t.method, `${name} is a write`).not.toBe('GET')
       expect(isReadOnlyTool(t), `${name} must not be read-only`).toBe(false)
-      expect(t.annotations?.destructiveHint, `${name} exposes nothing destructive`).toBe(false)
+      // `delete_note` removes a row for good, so a client must be told: the
+      // hint is what makes it ask the human first, every time.
+      expect(t.annotations?.destructiveHint, `${name}'s destructive hint`).toBe(
+        name === 'delete_note',
+      )
     }
   })
 
@@ -244,6 +253,7 @@ describe('annotations divide reads from writes', () => {
       'events:write',
       'widgets:write',
       'share:write',
+      'notes:write',
     ] as const) {
       expect(writeScopes, `${scope} must be reachable from some tool`).toContain(scope)
     }
@@ -326,6 +336,58 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
       'publish_event_definition',
       'rollback_event_definition',
     ]) {
+      expect(names, `${name} must not reach the assistant`).not.toContain(name)
+    }
+  })
+})
+
+describe('the chart note tools', () => {
+  it('list_notes reads the range from the business route with analytics:read', () => {
+    const req = build('list_notes', {
+      site_id: SITE,
+      from: '2026-11-01T00:00:00Z',
+      to: '2026-11-15T00:00:00Z',
+    })
+    expect(req.method).toBe('GET')
+    const url = new URL(req.url)
+    expect(url.pathname).toBe(`/v1/sites/${SITE}/notes`)
+    expect(url.searchParams.get('from')).toBe('2026-11-01T00:00:00Z')
+    expect(url.searchParams.get('to')).toBe('2026-11-15T00:00:00Z')
+    expect(tool('list_notes').scope).toBe('analytics:read')
+  })
+
+  it('create_note posts { at, text } with notes:write', async () => {
+    const req = build('create_note', {
+      site_id: SITE,
+      body: { at: '2026-11-10T12:00:00.000Z', text: 'Launched v2' },
+    })
+    expect(req.method).toBe('POST')
+    expect(new URL(req.url).pathname).toBe(`/v1/sites/${SITE}/notes`)
+    expect(await req.json()).toEqual({ at: '2026-11-10T12:00:00.000Z', text: 'Launched v2' })
+    expect(tool('create_note').scope).toBe('notes:write')
+    const schema = inputSchema(tool('create_note')) as {
+      properties: { body: { required: string[]; properties: { text: { maxLength: number } } } }
+    }
+    expect(schema.properties.body.required).toEqual(['at', 'text'])
+    expect(schema.properties.body.properties.text.maxLength).toBe(280)
+  })
+
+  it('update_note and delete_note name the note in the path', async () => {
+    const update = build('update_note', { site_id: SITE, note_id: 'n/1', body: { text: 'x' } })
+    expect(update.method).toBe('PATCH')
+    expect(new URL(update.url).pathname).toBe(`/v1/sites/${SITE}/notes/n%2F1`)
+    const remove = build('delete_note', { site_id: SITE, note_id: 'n1' })
+    expect(remove.method).toBe('DELETE')
+    expect(new URL(remove.url).pathname).toBe(`/v1/sites/${SITE}/notes/n1`)
+    expect(await remove.text()).toBe('')
+    for (const name of ['update_note', 'delete_note']) {
+      expect(tool(name).scope).toBe('notes:write')
+    }
+  })
+
+  it('none of them reaches the assistant', () => {
+    const names = ASSISTANT_TOOLS.map((t) => t.name)
+    for (const name of ['list_notes', 'create_note', 'update_note', 'delete_note']) {
       expect(names, `${name} must not reach the assistant`).not.toContain(name)
     }
   })

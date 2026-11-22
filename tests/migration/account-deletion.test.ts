@@ -384,6 +384,14 @@ describeIfPostgres('account deletion', () => {
          VALUES ($1, $2, 'invitee@example.com', 'viewer', $3, $4, now() + interval '7 days')`,
         [newId(), siteId, `hash-${newId()}`, user.id],
       )
+      // A chart note this account wrote, and one by somebody else that must
+      // keep its author.
+      await pool.query(
+        `INSERT INTO chart_notes (id, site_id, at, text, created_by_user_id) VALUES
+           ($1, $2, now(), 'mine', $3),
+           ($4, $2, now(), 'theirs', $5)`,
+        [newId(), siteId, user.id, newId(), other.id],
+      )
       // The four rows the hosted surface owns. A build without that stream has
       // nowhere to put them, and the claims that read them back are guarded the
       // same way — what stays asserted here in every build is that the product
@@ -439,9 +447,20 @@ describeIfPostgres('account deletion', () => {
         accounts: 1,
         memberships: 1,
         invites: 1,
+        chart_notes_unlink: 1,
         user_tombstone: 1,
       })
       expect(result.affected).not.toHaveProperty('subscriptions')
+
+      // Unlinked, not deleted: the note is the site's, the authorship was theirs.
+      const notes = await pool.query<{ text: string; created_by_user_id: string | null }>(
+        `SELECT text, created_by_user_id FROM chart_notes WHERE site_id = $1 ORDER BY text`,
+        [world.siteId],
+      )
+      expect(notes.rows).toEqual([
+        { text: 'mine', created_by_user_id: null },
+        { text: 'theirs', created_by_user_id: other.id },
+      ])
 
       // Gone.
       expect(
@@ -554,6 +573,7 @@ describeIfPostgres('account deletion', () => {
         accounts: 0,
         memberships: 0,
         invites: 0,
+        chart_notes_unlink: 0,
         // The scrub is an UPDATE of the tombstone to itself: still one row, and
         // still the same values.
         user_tombstone: 1,

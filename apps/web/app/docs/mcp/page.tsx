@@ -21,8 +21,8 @@ export default function McpDocsPage() {
           The Model Context Protocol is how AI agents (Claude, ChatGPT, and
           anything MCP-speaking) get tools. Connect Open Analytics and your
           agent can read your traffic, list your sites, and, where you
-          granted it, manage funnels, event definitions, widgets and
-          sharing, all in plain conversation.
+          granted it, manage funnels, event definitions, widgets, sharing
+          and the notes on your chart, all in plain conversation.
         </p>
       </DocSection>
 
@@ -50,8 +50,10 @@ export default function McpDocsPage() {
             <span key="write">
               Write scopes are granular and opt-in per grant:{" "}
               <Code>sites:write funnels:write events:write widgets:write
-              share:write</Code>. An agent granted funnels cannot touch
-              sharing.
+              share:write notes:write</Code>. An agent granted funnels cannot
+              touch sharing. With <Code>notes:write</Code> an agent can add,
+              edit and delete notes on your chart; your MCP client asks you
+              before it deletes one.
             </span>,
             "Some things are never writable by any agent, by design: deleting a site, team membership, API keys, billing and domains stay human-only.",
           ]}

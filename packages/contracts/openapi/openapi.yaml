@@ -79,6 +79,10 @@ tags:
       through a configurable search service (fxtwitter by default). Off per site
       until an owner or admin turns it on, because it sends the site's domain
       and search terms to that service.
+  - name: notes
+    description: |
+      Short notes pinned to a moment on a site's chart, such as a launch or a
+      pricing change. Every member reads them; owners and admins write them.
   - name: revenue
     description: |
       Connecting a site to a payment provider so the dashboard can report real
@@ -4344,6 +4348,156 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/SiteNotFound'
+  /v1/sites/{site_id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listSiteChartNotes
+      tags: [notes]
+      summary: Notes pinned to moments on the site's chart, newest first. Readable by every member.
+      description: |
+        Notes whose `at` falls in the half-open range `[from, to)`, newest
+        first (`at` descending, then `id`). At most 500 come back and there is
+        no pagination: notes are written by hand, and a range that holds more
+        than 500 of them is better narrowed than paged.
+
+        `created_by` names the author by display name only. It is `null` once
+        the author's account is deleted; no user id or email address is ever
+        returned for a note.
+      parameters:
+        - $ref: '#/components/parameters/RangeFrom'
+        - $ref: '#/components/parameters/RangeTo'
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session (the `list_notes` MCP tool).
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: The notes in the range, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartNotesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+    post:
+      operationId: createSiteChartNote
+      tags: [notes]
+      summary: Pin a note to a moment on the chart. Requires the `site:settings` capability.
+      description: |
+        `text` is trimmed, then must be 1 to 280 characters with no control
+        characters other than a newline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChartNoteRequest'
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session. The scope is a ceiling;
+      # the capability check on the route is the authority and still refuses a viewer.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['notes:write']
+      responses:
+        '201':
+          description: The stored note.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartNote'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+
+  /v1/sites/{site_id}/notes/{note_id}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - name: note_id
+        in: path
+        required: true
+        description: A note id. One that is not a UUID answers `404`, like an unknown one.
+        schema:
+          type: string
+          format: uuid
+    patch:
+      operationId: updateSiteChartNote
+      tags: [notes]
+      summary: Move a note or change its text. Requires the `site:settings` capability.
+      description: |
+        A partial update; an empty body is a `400`. The text rules are the
+        create's. The author stays the person who wrote the note.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChartNoteRequest'
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session. The scope is a ceiling;
+      # the capability check on the route is the authority and still refuses a viewer.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['notes:write']
+      responses:
+        '200':
+          description: The updated note.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartNote'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No note with this id on this site (`NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: deleteSiteChartNote
+      tags: [notes]
+      summary: Delete a note. Requires the `site:settings` capability.
+      description: |
+        The note is removed for good. A second `DELETE` answers `404`.
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session. The scope is a ceiling;
+      # the capability check on the route is the authority and still refuses a viewer.
+      # A note is the one deletion with a grant row: it is a line of text the
+      # site's own people or their agent wrote, and removing it touches no data.
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['notes:write']
+      responses:
+        '204':
+          description: The note is gone.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No note with this id on this site (`NOT_FOUND`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
   /v1/sites/{site_id}/funnels:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -6421,7 +6575,9 @@ components:
         default-deny allowlist of ordinary business routes: the operations marked
         with this scheme alongside `sessionCookie`. A route not marked here is
         unreachable with a token whatever its scope string says, which is where
-        deletion, member management, credentials and money all sit.
+        deletion, member management, credentials and money all sit. The one
+        deletion with a row is a chart note's (`notes:write`): a line of text
+        people wrote by hand, whose removal touches no collected data.
 
         A write scope is a **ceiling, never an authority**. Every allowlisted
         route re-runs its own capability check against live membership, so a
@@ -6443,6 +6599,7 @@ components:
             'events:write': Create, draft, publish and roll back event definitions.
             'widgets:write': Create, edit, enable and disable widgets.
             'share:write': Change a public dashboard's surfaces and rotate its link.
+            'notes:write': Add, edit and delete notes on a site's chart.
     realtimeBearer:
       type: http
       scheme: bearer
@@ -12947,6 +13104,80 @@ components:
             - type: 'null'
         has_more:
           type: boolean
+
+    ChartNoteText:
+      type: string
+      minLength: 1
+      maxLength: 280
+      description: |
+        The note, trimmed, 1 to 280 characters. No control characters other
+        than a newline (`\n`).
+
+    ChartNoteAuthor:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: Who wrote the note, by display name only.
+      properties:
+        name:
+          type: [string, 'null']
+          description: The account's display name. Null when it was never set.
+
+    ChartNote:
+      type: object
+      additionalProperties: false
+      required: [id, at, text, created_by, created_at, updated_at]
+      description: |
+        A short note pinned to a moment on the site's chart: a launch, a
+        pricing change. Shown to every member of the site.
+      properties:
+        id:
+          type: string
+          format: uuid
+        at:
+          $ref: '#/components/schemas/UtcInstant'
+        text:
+          $ref: '#/components/schemas/ChartNoteText'
+        created_by:
+          description: The author, or null once their account is deleted.
+          oneOf:
+            - $ref: '#/components/schemas/ChartNoteAuthor'
+            - type: 'null'
+        created_at:
+          $ref: '#/components/schemas/UtcInstant'
+        updated_at:
+          $ref: '#/components/schemas/UtcInstant'
+
+    ChartNotesResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ChartNote'
+
+    CreateChartNoteRequest:
+      type: object
+      additionalProperties: false
+      required: [at, text]
+      properties:
+        at:
+          $ref: '#/components/schemas/UtcInstant'
+        text:
+          $ref: '#/components/schemas/ChartNoteText'
+
+    UpdateChartNoteRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        at:
+          $ref: '#/components/schemas/UtcInstant'
+        text:
+          $ref: '#/components/schemas/ChartNoteText'
 
     SiteIngestSettings:
       type: object

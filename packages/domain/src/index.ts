@@ -863,3 +863,21 @@ export {
   type MentionSettingsPatchResult,
   type ParsedPost,
 } from './mentions.ts'
+
+/**
+ * Chart notes (migration 0050): the text rule and the create and patch body
+ * validators the notes routes use.
+ */
+export {
+  CHART_NOTES_LIST_LIMIT,
+  CHART_NOTE_TEXT_MAX_LENGTH,
+  normalizeChartNoteText,
+  parseChartNoteCreate,
+  parseChartNotePatch,
+  type ChartNoteCreateResult,
+  type ChartNoteFields,
+  type ChartNoteIssue,
+  type ChartNotePatchResult,
+  type ChartNoteTextIssue,
+  type ChartNoteTextResult,
+} from './chart-notes.ts'

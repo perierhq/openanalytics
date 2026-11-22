@@ -1,14 +1,17 @@
 import type { EventMarkerKind } from "@/components/charts/event-markers";
-import { MentionGlyph, SaleGlyph } from "@/components/dashboard/chart-marker-glyphs";
+import { MentionGlyph, NoteGlyph, SaleGlyph } from "@/components/dashboard/chart-marker-glyphs";
 import { MentionAvatar } from "@/components/dashboard/mention-avatar";
 import { UserAvatar } from "@/components/ui/user-avatar";
-import type { Mention, RevenueTransaction } from "@/lib/api";
+import type { ChartNote, Mention, RevenueTransaction } from "@/lib/api";
 import type { EventMarkerItem } from "@/lib/event-markers";
 import { mentionFace, type SaleFace, saleFace } from "@/lib/marker-faces";
 
 /**
- * The overview chart's two marker kinds: their words, their glyphs and their
+ * The overview chart's three marker kinds: their words, their glyphs and their
  * faces. Shared by the marker layer (`chart-markers.tsx`) and its tests.
+ *
+ * **A note never wears a face.** It is the team's own words, not a person
+ * arriving from outside, so it keeps its flag in faces mode too.
  *
  * **A sale wears its buyer's face** when it matched a visitor: `UserAvatar`
  * seeded with the transaction's `visitor`, the same seed the realtime views
@@ -19,11 +22,12 @@ import { mentionFace, type SaleFace, saleFace } from "@/lib/marker-faces";
  * bucket stacks a buyer and an author the two badges never touch.
  */
 
-export type OverviewMarkerKind = "sale" | "mention";
+export type OverviewMarkerKind = "sale" | "mention" | "note";
 
 export type OverviewMarkerPayload =
   | { kind: "sale"; sale: RevenueTransaction }
-  | { kind: "mention"; mention: Mention };
+  | { kind: "mention"; mention: Mention }
+  | { kind: "note"; note: ChartNote };
 
 export type OverviewMarkerItem = EventMarkerItem<OverviewMarkerKind, OverviewMarkerPayload>;
 
@@ -81,7 +85,7 @@ function SaleMarkerFace({ face }: { face: SaleFace }) {
   );
 }
 
-/** Stacking order, bottom first: sales sit nearest the axis. */
+/** Stacking order, bottom first: sales sit nearest the axis, notes on top. */
 export const OVERVIEW_MARKER_KINDS: Record<
   OverviewMarkerKind,
   EventMarkerKind<OverviewMarkerPayload>
@@ -106,5 +110,9 @@ export const OVERVIEW_MARKER_KINDS: Record<
         )}
       />
     ),
+  },
+  note: {
+    describe: (count) => plural(count, "note", "notes"),
+    glyph: <NoteGlyph />,
   },
 };

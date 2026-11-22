@@ -218,6 +218,7 @@ describe('the four read scopes reach the read arm, and the seven grant scopes do
       'events:write',
       'widgets:write',
       'share:write',
+      'notes:write',
     ])
   })
 

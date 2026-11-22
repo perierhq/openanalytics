@@ -382,6 +382,9 @@ export const DELETION_POSTGRES_TARGETS = [
   // The authors' pictures (migration 0049). References only `sites`; named for
   // the same standing rule.
   'mention_avatars',
+  // Chart notes (migration 0050). References only `sites` (and `users`,
+  // outward); named for the same standing rule.
+  'chart_notes',
 ] as const
 export type DeletionPostgresTarget = (typeof DELETION_POSTGRES_TARGETS)[number]
 
@@ -409,8 +412,8 @@ export interface DeletionTargetName {
 }
 
 /**
- * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 28
- * Postgres + 1 object target, in that order. **72**, and the number changes on
+ * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 29
+ * Postgres + 1 object target, in that order. **73**, and the number changes on
  * purpose as stores are added — the assertions that name it are the contract.
  *
  * How it got here, kept because each step is a decision somebody can check:
@@ -508,7 +511,10 @@ export interface DeletionTargetName {
  * - the mention authors' pictures added `mention_avatars` (Postgres migration
  *   0049), so Postgres 27 became **28** and the site total 71 became **72**
  *   (72 became **73** on hosted). The pictures are `bytea` in Postgres, not
- *   objects, so the object store did not move either.
+ *   objects, so the object store did not move either;
+ * - chart notes added `chart_notes` (Postgres migration 0050), so Postgres 28
+ *   became **29** and the site total 72 became **73** (73 became **74** on
+ *   hosted). A note is a Postgres row and nothing else.
  *
  * `currency_rates` (migration 0034) is deliberately **not** here and never will
  * be. It is global reference data — one row per `(rate_date, currency)`, with no
@@ -713,13 +719,24 @@ export const ACCOUNT_DELETION_POSTGRES_TARGETS = [
   // teardown is one transaction and the position is a reading order, not an
   // ordering constraint.
   'credential_sources_user',
+  // The authorship of the chart notes this person wrote (migration 0050).
+  //
+  // An unlink, not a delete, for the reason `invites` gives: the note is the
+  // *site's* (a launch, a pricing change) and the site survives this account;
+  // only the link to the person goes. `created_by_user_id` declares
+  // `ON DELETE SET NULL`, and like every other cascade from `users` it never
+  // fires, because `user_tombstone` below scrubs the row rather than deleting
+  // it. This statement is what actually severs the link, so the API answers
+  // `created_by: null` rather than an author with no name.
+  'chart_notes_unlink',
   'user_tombstone',
 ] as const
 export type AccountDeletionPostgresTarget = (typeof ACCOUNT_DELETION_POSTGRES_TARGETS)[number]
 
 /**
- * The full snapshot an account deletion writes: one `stripe` target and
- * eighteen `postgres` ones.
+ * The full snapshot an account deletion writes: sixteen `postgres` targets in
+ * this build, plus whatever a registered surface adds (the hosted one adds a
+ * `stripe` target).
  *
  * No `clickhouse` and no `redis` row, and the absence is the design rather than
  * an omission: an account owns no analytics data of its own. Everything stored

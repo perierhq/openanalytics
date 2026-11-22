@@ -39,6 +39,7 @@ import type {
   RevenueAttributionResponse,
   RevenueAttributionRow,
   SiteMentionSettings,
+  ChartNote,
 } from "@/lib/api";
 
 /**
@@ -739,6 +740,35 @@ export const MOCK_MENTIONS: Mention[] = [
     { likes: 41, replies: 6, views: 7_800 }
   ),
 ];
+
+const mockNote = (
+  id: number,
+  day: number,
+  hour: number,
+  text: string,
+  author: string | null
+): ChartNote => ({
+  id: `0190a3b4-0000-7000-8000-${String(id).padStart(12, "0")}`,
+  at: mockDay(day, hour),
+  text,
+  // `null` stands for an author whose account is gone.
+  created_by: author === null ? null : { name: author },
+  created_at: mockDay(day, hour + 1),
+  updated_at: mockDay(day, hour + 1),
+});
+
+/**
+ * The team's notes on the chart, newest first like the API. Day 21 is the
+ * traffic spike, so the launch note sits on it next to that day's sales and
+ * mentions; one note's author has since left, so it names nobody.
+ */
+export const MOCK_NOTES: ChartNote[] = [
+  mockNote(1, 25, 9, "Newsletter sponsorship went out", null),
+  mockNote(2, 21, 8, "Launch post went live\nRealtime globe and the new install guide", "Ada Lovelace"),
+  mockNote(3, 21, 14, "Pinned the launch thread", "Grace Hopper"),
+  mockNote(4, 14, 7, "Pro is now $49 a month", "Ada Lovelace"),
+  mockNote(5, 3, 16, "Moved the docs to the new domain", "Grace Hopper"),
+].sort((a, b) => b.at.localeCompare(a.at));
 
 /**
  * Design-mode "Paying visitors" rows, in the wire's own shape: two believable

@@ -23,6 +23,7 @@ import { exportRuns } from '../schema/exports.ts'
 import { importRuns, importUploads } from '../schema/imports.ts'
 import { ingestBatchItems, ingestBatchSites } from '../schema/ingest-batches.ts'
 import { siteIngestSettings } from '../schema/ingest.ts'
+import { chartNotes } from '../schema/chart-notes.ts'
 import { mentionAvatars, mentions, siteMentionSettings } from '../schema/mentions.ts'
 import {
   deletionRequests,
@@ -836,6 +837,14 @@ export async function purgeSitePostgres(
         .delete(mentionAvatars)
         .where(eq(mentionAvatars.siteId, input.siteId))
         .returning({ id: mentionAvatars.authorHandle }),
+    )
+    // Chart notes (migration 0050). References only `sites` (and `users`,
+    // outward), so the order is free; counted rather than left to the cascade.
+    await removeFrom('chart_notes', () =>
+      tx
+        .delete(chartNotes)
+        .where(eq(chartNotes.siteId, input.siteId))
+        .returning({ id: chartNotes.id }),
     )
     // The attribution job's control row (ADR-0033, D6/D8; migration 0036).
     //

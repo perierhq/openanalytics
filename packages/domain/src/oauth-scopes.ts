@@ -36,7 +36,8 @@ export const ACCOUNT_READ_SCOPES = ['team:read'] as const
  * The write scopes, Vercel/Stripe/Supabase-shaped (ADR-0048 D2): narrow,
  * additive, reversible. What each one covers — and pointedly does not — is
  * `GRANT_WRITE_ALLOWLIST`'s table; deletion, member management, credentials
- * and money appear in no scope at all.
+ * and money appear in no scope at all. The one exception is `notes:write`,
+ * which deletes a chart note: text people wrote by hand, not collected data.
  */
 export const WRITE_SCOPES = [
   'sites:write',
@@ -44,6 +45,7 @@ export const WRITE_SCOPES = [
   'events:write',
   'widgets:write',
   'share:write',
+  'notes:write',
 ] as const
 
 export const OAUTH_ONLY_SCOPES = [...ACCOUNT_READ_SCOPES, ...WRITE_SCOPES] as const
@@ -100,6 +102,7 @@ const productScopeDescriptions = {
   'events:write': 'Create, publish and roll back event definitions on your sites',
   'widgets:write': 'Create, edit, enable and disable widgets on your sites',
   'share:write': 'Change what your public dashboards show, and rotate their links',
+  'notes:write': 'Add, edit and delete notes on your sites’ charts',
 } as const satisfies Record<ReadScope | OAuthOnlyScope, string>
 
 const scopeDescriptions = new Map<string, string>(Object.entries(productScopeDescriptions))

@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
 import type { Mention } from "@/lib/api";
 import { revenueTooltipModel, type RevenueBucket } from "@/lib/chart-revenue";
-import { MentionGlyph, SaleGlyph } from "./chart-marker-glyphs";
+import { MentionGlyph, NoteGlyph, SaleGlyph } from "./chart-marker-glyphs";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { MentionAvatar } from "./mention-avatar";
 
 /**
  * The overview chart's day tooltip: what one bucket held, in sections read top
- * to bottom: when, traffic, money, and what happened (sales and mentions).
+ * to bottom: when, traffic, money, and what happened (sales, mentions and
+ * notes).
  *
  * Presentational and pure so its rules are tested by rendering it. The width
  * is fixed, so the panel does not jump as the cursor scrubs from a quiet day
@@ -40,6 +41,8 @@ export type OverviewTooltipContentProps = {
   /** Marker counts for the bucket, after the legend's show/hide choice. */
   sales: number;
   mentions: number;
+  /** Notes pinned in the bucket; the popover on the marker shows their text. */
+  notes?: number;
   /**
    * The bucket's buyers' anonymous ids, distinct, newest sale first; the
    * first three are drawn as small faces before the count, the same faces the
@@ -133,6 +136,7 @@ export function OverviewTooltipContent({
   revenue,
   sales,
   mentions,
+  notes = 0,
   saleVisitors = [],
   mentionAuthors = [],
   filtered = false,
@@ -142,7 +146,7 @@ export function OverviewTooltipContent({
 }: OverviewTooltipContentProps) {
   const counts: Record<TrafficSeries, number> = { visitors, pageviews };
   const money = revenue ? revenueTooltipModel(revenue, visitors, { filtered }) : null;
-  const hasMarkers = sales > 0 || mentions > 0;
+  const hasMarkers = sales > 0 || mentions > 0 || notes > 0;
 
   return (
     <div className="w-56 select-none text-xs text-chart-tooltip-foreground">
@@ -239,6 +243,14 @@ export function OverviewTooltipContent({
                   </span>
                 ) : null}
                 {plural(mentions, "mention", "mentions")}
+              </p>
+            ) : null}
+            {notes > 0 ? (
+              <p className="flex items-center gap-2">
+                <span className="flex size-2 items-center justify-center">
+                  <NoteGlyph tone="dark" />
+                </span>
+                {plural(notes, "note", "notes")}
               </p>
             ) : null}
           </div>

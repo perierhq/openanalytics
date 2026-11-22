@@ -1,6 +1,14 @@
 "use client";
 
-import { useMemo, useSyncExternalStore, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Popover,
@@ -44,6 +52,11 @@ import { useChartHover, useChartStable } from "./chart-context";
  * (its ring and badge), and the button's label, hit area and focus ring are
  * the same either way.
  *
+ * **A popover someone is writing in stays open.** The popover opens on hover,
+ * and a pointer drifting off it closes it, which is right for reading and
+ * wrong for a half-typed note. `renderContent` gets `setEngaged`; while it is
+ * set, only Escape, a click outside or a close from the content end it.
+ *
  * **HTML, not SVG.** The chart's `<svg>` is `aria-hidden`, so a marker drawn
  * inside it could be neither focused nor read. The markers portal into the
  * chart's container (the same door the tooltip uses) as real buttons, each
@@ -64,6 +77,12 @@ export type EventMarkerKind<P = unknown> = {
   face?: (items: readonly EventMarkerItem<string, P>[]) => ReactNode | null;
 };
 
+/** What a popover's content may ask of the marker that opened it. */
+export type EventMarkerContentControls = {
+  /** Keep the popover open against hover-out while something is being edited. */
+  setEngaged: (engaged: boolean) => void;
+};
+
 export interface EventMarkersProps<K extends string, P> {
   items: readonly EventMarkerItem<K, P>[];
   /** Exclusive end of the last bucket (the range's `to`). */
@@ -72,7 +91,7 @@ export interface EventMarkersProps<K extends string, P> {
   kinds: Readonly<Record<K, EventMarkerKind<P>>>;
   /** The bucket's name in the chart's own zone and grain. */
   bucketLabel: (start: Date) => string;
-  renderContent: (bucket: EventMarkerBucket<K, P>) => ReactNode;
+  renderContent: (bucket: EventMarkerBucket<K, P>, controls: EventMarkerContentControls) => ReactNode;
 }
 
 /** Clear of the plot's bottom edge, so the glyphs sit above the axis rule. */
@@ -181,7 +200,7 @@ function EventMarkersLayer<K extends string, P>({
           .map((kind) => kinds[kind].describe(bucket.counts[kind] ?? 0))
           .join(", ")}`;
         return (
-          <Popover key={bucket.startMs}>
+          <MarkerPopover key={bucket.startMs}>
             <PopoverTrigger
               aria-label={label}
               className={cn(
@@ -217,16 +236,63 @@ function EventMarkersLayer<K extends string, P>({
                 );
               })}
             </PopoverTrigger>
-            <PopoverPopup
-              className="w-72 max-w-[calc(100vw-2rem)]"
-              side="top"
-              sideOffset={6}
-            >
-              {renderContent(bucket)}
-            </PopoverPopup>
-          </Popover>
+            <MarkerPopoverContent>
+              {(controls) => renderContent(bucket, controls)}
+            </MarkerPopoverContent>
+          </MarkerPopover>
         );
       })}
     </div>
+  );
+}
+
+const NOT_ENGAGED: EventMarkerContentControls = { setEngaged: () => {} };
+const MarkerControlsContext = createContext<EventMarkerContentControls>(NOT_ENGAGED);
+
+/**
+ * One bucket's popover, controlled so that an engaged popover (a form open in
+ * it) ignores the hover-out and focus-out that would otherwise close it.
+ */
+function MarkerPopover({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const engaged = useRef(false);
+  const controls = useMemo<EventMarkerContentControls>(
+    () => ({
+      setEngaged: (next) => {
+        engaged.current = next;
+      },
+    }),
+    []
+  );
+  return (
+    <Popover
+      onOpenChange={(next, details) => {
+        if (
+          !next &&
+          engaged.current &&
+          (details.reason === "trigger-hover" || details.reason === "focus-out")
+        ) {
+          return;
+        }
+        if (!next) engaged.current = false;
+        setOpen(next);
+      }}
+      open={open}
+    >
+      <MarkerControlsContext.Provider value={controls}>{children}</MarkerControlsContext.Provider>
+    </Popover>
+  );
+}
+
+function MarkerPopoverContent({
+  children,
+}: {
+  children: (controls: EventMarkerContentControls) => ReactNode;
+}) {
+  const controls = useContext(MarkerControlsContext);
+  return (
+    <PopoverPopup className="w-72 max-w-[calc(100vw-2rem)]" side="top" sideOffset={6}>
+      {children(controls)}
+    </PopoverPopup>
   );
 }

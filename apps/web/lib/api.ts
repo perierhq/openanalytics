@@ -211,6 +211,9 @@ export type UpdateSiteMentionSettings =
 export type Mention = Schemas["Mention"];
 export type MentionAuthor = Schemas["MentionAuthor"];
 export type MentionsResponse = Schemas["MentionsResponse"];
+/** A note pinned to a moment on the overview chart (migration 0050). */
+export type ChartNote = Schemas["ChartNote"];
+export type ChartNotesResponse = Schemas["ChartNotesResponse"];
 
 /** Revenue charts take hour or day only — not the traffic chart's picker. */
 export type RevenueResolution = "hour" | "day";
@@ -1326,6 +1329,39 @@ export const mentions = {
       rest
     );
   },
+};
+
+/**
+ * Notes pinned to moments on the overview chart, newest first, by `at` inside
+ * the half-open range; at most 500 and no cursor. Every member reads them;
+ * the writes are `site:settings` (owner or admin), so a viewer's dashboard
+ * offers none. `remove` is not idempotent: a second DELETE is a `404`.
+ */
+export const notes = {
+  list: (
+    siteId: string,
+    range: Pick<AnalyticsRange, "from" | "to">,
+    options?: RequestOptions
+  ) => {
+    const query = new URLSearchParams({ from: range.from, to: range.to });
+    return api.get<ChartNotesResponse>(
+      `/v1/sites/${encodeURIComponent(siteId)}/notes?${query}`,
+      options
+    );
+  },
+  create: (siteId: string, body: { at: string; text: string }) =>
+    send<ChartNote>("POST", `/v1/sites/${encodeURIComponent(siteId)}/notes`, { body }),
+  update: (siteId: string, noteId: string, body: { at?: string; text?: string }) =>
+    send<ChartNote>(
+      "PATCH",
+      `/v1/sites/${encodeURIComponent(siteId)}/notes/${encodeURIComponent(noteId)}`,
+      { body }
+    ),
+  remove: (siteId: string, noteId: string) =>
+    send<null>(
+      "DELETE",
+      `/v1/sites/${encodeURIComponent(siteId)}/notes/${encodeURIComponent(noteId)}`
+    ),
 };
 
 export const ingestSettings = {

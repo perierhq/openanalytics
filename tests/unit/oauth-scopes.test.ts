@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest'
  */
 
 describe('the grant-scope vocabulary (ADR-0048 D1)', () => {
-  it('spells exactly the approved ten', () => {
+  it('spells exactly the approved eleven', () => {
     expect(READ_SCOPES).toEqual(['site:read', 'analytics:read', 'realtime:read', 'revenue:read'])
     // `billing:read` was the second entry until the open-core split; it is
     // registered by the hosted surface now (tests/unit/cloud/oauth-scopes.test.ts).
@@ -34,6 +34,8 @@ describe('the grant-scope vocabulary (ADR-0048 D1)', () => {
       'events:write',
       'widgets:write',
       'share:write',
+      // Chart notes (migration 0050): add, edit and delete notes on a chart.
+      'notes:write',
     ])
     expect(GRANT_SCOPES).toEqual([...READ_SCOPES, ...OAUTH_ONLY_SCOPES])
   })

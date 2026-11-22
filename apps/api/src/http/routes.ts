@@ -72,6 +72,7 @@ import { createAnalyticsRoutes } from './analytics.ts'
 import { createEventDefinitionRoutes } from './event-definitions.ts'
 import { createFunnelRoutes } from './funnels.ts'
 import { createMentionRoutes } from './mentions.ts'
+import { createNoteRoutes } from './notes.ts'
 import { createWidgetRoutes } from './widgets.ts'
 import { createExportRoutes } from './exports.ts'
 import { createImportCatalogRoutes, createImportRoutes } from './imports.ts'
@@ -597,6 +598,10 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
   // like funnels: it is Postgres only, and the poller that fills it runs in the
   // worker.
   authed.route('/', createMentionRoutes({ db }))
+
+  // Chart notes (migration 0050): notes pinned to moments on the overview
+  // chart. Unconditional like mentions: Postgres only.
+  authed.route('/', createNoteRoutes({ db }))
 
   // Embeddable widget configuration (ADR-0045, D13). Unconditional for the same
   // reason funnels is: a widget is stored configuration and needs no gateway,

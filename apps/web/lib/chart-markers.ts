@@ -15,6 +15,8 @@
 
 import type {
   AnalyticsRange,
+  ChartNote,
+  ChartNotesResponse,
   Mention,
   MentionsResponse,
   Money,
@@ -167,6 +169,33 @@ export async function loadChartMarkers(
   return { mentions, sales };
 }
 
+/**
+ * The notes pinned to the chart (migration 0050). Readable by every member,
+ * so the read needs no gate; it is its own call rather than part of
+ * `loadChartMarkers` because a note written here re-reads the notes alone,
+ * not the sales and mentions beside them.
+ */
+export type ChartNoteDeps = {
+  listNotes: (
+    siteId: string,
+    range: AnalyticsRange,
+    options: { signal?: AbortSignal }
+  ) => Promise<Pick<ChartNotesResponse, "items">>;
+};
+
+/** The range's notes; a failed read is no notes, never a broken chart. */
+export async function loadChartNotes(
+  request: { siteId: string; range: AnalyticsRange; signal?: AbortSignal },
+  deps: ChartNoteDeps
+): Promise<ChartNote[]> {
+  try {
+    const page = await deps.listNotes(request.siteId, request.range, { signal: request.signal });
+    return page.items;
+  } catch {
+    return [];
+  }
+}
+
 /** How long one connection read answers for, per site. */
 const REVENUE_STATE_TTL_MS = 60_000;
 
@@ -201,16 +230,17 @@ export function sharedRevenueState(
 }
 
 /**
- * Everything the overview chart's legend can hide: the two marker kinds and
- * the revenue bars. One list in one stored value, so the bars joined without
- * a new key.
+ * Everything the overview chart's legend can hide: the three marker kinds and
+ * the revenue bars. One list in one stored value, so the bars and then the
+ * notes joined without a new key.
  */
-export type OverviewChartLayer = "sale" | "mention" | "revenue";
+export type OverviewChartLayer = "sale" | "mention" | "note" | "revenue";
 
 /**
  * The legend's stored value, a JSON array of hidden layers. A value saved
- * before the revenue layer existed (`["sale"]`) reads as it was; entries this
- * build does not know are dropped, and anything unreadable hides nothing.
+ * before the revenue layer or the notes existed (`["sale"]`) reads as it was;
+ * entries this build does not know are dropped, and anything unreadable hides
+ * nothing. So a build that predates notes reads a saved `"note"` as nothing.
  */
 export function parseHiddenLayers(raw: string): OverviewChartLayer[] {
   try {
@@ -218,7 +248,7 @@ export function parseHiddenLayers(raw: string): OverviewChartLayer[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (kind): kind is OverviewChartLayer =>
-        kind === "sale" || kind === "mention" || kind === "revenue"
+        kind === "sale" || kind === "mention" || kind === "note" || kind === "revenue"
     );
   } catch {
     return [];

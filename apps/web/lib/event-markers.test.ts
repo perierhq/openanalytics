@@ -64,6 +64,29 @@ describe("bucketing marker items into the chart's own buckets", () => {
     expect(bucket?.kinds).toEqual(["mention", "sale"])
   })
 
+  it("puts a note in its bucket beside sales and mentions, stacked in the overview's order", () => {
+    // The overview chart's order, bottom first: sales, mentions, notes.
+    const order = ["sale", "mention", "note"]
+    const buckets = bucketMarkers(
+      STARTS,
+      END,
+      [
+        item("n1", "note", START + DAY + 5),
+        item("m1", "mention", START + DAY + 10),
+        item("s1", "sale", START + DAY + 20),
+        item("n2", "note", START + DAY + 30),
+        item("n3", "note", START + 3 * DAY),
+      ],
+      order
+    )
+    expect(buckets.map((bucket) => bucket.index)).toEqual([1, 3])
+    expect(buckets[0]?.kinds).toEqual(["sale", "mention", "note"])
+    expect(buckets[0]?.counts).toEqual({ note: 2, mention: 1, sale: 1 })
+    expect(buckets[0]?.byKind.note?.map((i) => i.id)).toEqual(["n2", "n1"])
+    // A bucket with only a note is a bucket like any other.
+    expect(buckets[1]?.kinds).toEqual(["note"])
+  })
+
   it("sorts items newest first inside a bucket and accepts unsorted bucket input", () => {
     const [bucket] = bucketMarkers(STARTS, END, [
       item("old", "mention", START + 1),

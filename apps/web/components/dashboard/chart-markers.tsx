@@ -2,12 +2,19 @@
 
 import Link from "next/link";
 import * as React from "react";
-import { EventMarkers } from "@/components/charts/event-markers";
+import {
+  EventMarkers,
+  type EventMarkerContentControls,
+} from "@/components/charts/event-markers";
 import {
   MentionGlyph,
+  NoteGlyph,
   RevenueGlyph,
   SaleGlyph,
 } from "@/components/dashboard/chart-marker-glyphs";
+import { NoteForm, NotesSection, type NoteActions } from "@/components/dashboard/chart-notes";
+import { PlusIcon } from "@/components/icons/hugeicons";
+import { Popover, PopoverPopup, PopoverTrigger } from "@/components/ui/popover";
 import {
   OVERVIEW_MARKER_KINDS,
   plural,
@@ -22,30 +29,37 @@ import { useApiResource } from "@/hooks/use-api-resource";
 import {
   LIVE_API,
   mentions,
+  notes as notesApi,
+  presentError,
   revenue,
   type AnalyticsRange,
+  type ChartNote,
   type RevenueConnectionState,
   type RevenueTransaction,
 } from "@/lib/api";
 import {
   loadChartMarkers,
+  loadChartNotes,
   parseHiddenLayers,
   saleAmount,
   saleTotals,
   sharedRevenueState,
   type ChartMarkerData,
   type ChartMarkerDeps,
+  type ChartNoteDeps,
   type OverviewChartLayer,
 } from "@/lib/chart-markers";
+import { canWriteNotes, createMockNoteStore, defaultNoteTime } from "@/lib/chart-notes";
 import { formatMoney } from "@/lib/currencies";
 import type { EventMarkerBucket } from "@/lib/event-markers";
 import { mentionExcerpt } from "@/lib/mentions";
-import { MOCK_MENTIONS, MOCK_SALES } from "@/lib/mock";
+import { MOCK_MEMBERS, MOCK_MENTIONS, MOCK_NOTES, MOCK_SALES } from "@/lib/mock";
 import { cn } from "@/lib/utils";
 
 /**
- * The overview chart's markers: sales and posts that mention the site, as
- * points on the timeline, with a legend that hides either kind.
+ * The overview chart's markers: sales, posts that mention the site and the
+ * team's own notes, as points on the timeline, with a legend that hides any
+ * kind and, for owners and admins, adds a note.
  *
  * The reads and their rules live in `lib/chart-markers.ts`; this file is the
  * drawing: each kind's glyph and words, the popover a bucket opens, and the
@@ -65,6 +79,7 @@ const LEGEND: Array<{
 }> = [
   { kind: "sale", label: "Sales", Glyph: SaleGlyph },
   { kind: "mention", label: "Mentions", Glyph: MentionGlyph },
+  { kind: "note", label: "Notes", Glyph: NoteGlyph },
   { kind: "revenue", label: "Revenue", Glyph: RevenueGlyph },
 ];
 
@@ -73,9 +88,9 @@ const LEGEND: Array<{
 /* ------------------------------------------------------------------ */
 
 /**
- * The hidden layers, as a JSON array. `"revenue"` joined the two marker kinds
- * in the same `v1` array: an existing choice keeps working as it was, and a
- * build that predates the bars drops the entry it does not know.
+ * The hidden layers, as a JSON array. `"revenue"` and then `"note"` joined the
+ * marker kinds in the same `v1` array: an existing choice keeps working as it
+ * was, and a build that predates either drops the entry it does not know.
  */
 const HIDDEN_KEY = "oa:chart-markers:v1";
 const listeners = new Set<() => void>();
@@ -168,8 +183,38 @@ const MOCK_DEPS: ChartMarkerDeps = {
 
 const NONE: ChartMarkerData = { mentions: [], sales: [] };
 
-function toItems(data: ChartMarkerData): OverviewMarkerItem[] {
+/**
+ * Mock mode's notes: the fixtures, and the writes applied to them in memory,
+ * so adding, editing and deleting can be tried end to end without a server.
+ * The author of a new note is the mock owner.
+ */
+const mockNoteStore = createMockNoteStore(MOCK_NOTES, MOCK_MEMBERS[0].name);
+
+const LIVE_NOTE_DEPS: ChartNoteDeps = {
+  listNotes: (siteId, range, options) => notesApi.list(siteId, range, options),
+};
+const MOCK_NOTE_DEPS: ChartNoteDeps = {
+  listNotes: async () => mockNoteStore.list(),
+};
+
+const NO_NOTES: ChartNote[] = [];
+
+/** A failed note write, in the words the rest of the dashboard uses. */
+function describeNoteError(raised: unknown): string {
+  const presented = presentError(raised);
+  return presented.kind === "unknown" ? "The note wasn't saved. Try again." : presented.body;
+}
+
+function toItems(data: ChartMarkerData, notes: readonly ChartNote[]): OverviewMarkerItem[] {
   return [
+    ...notes.map(
+      (note): OverviewMarkerItem => ({
+        id: note.id,
+        kind: "note",
+        at: Date.parse(note.at),
+        payload: { kind: "note", note },
+      })
+    ),
     ...data.sales.map(
       (sale): OverviewMarkerItem => ({
         id: sale.object_id,
@@ -189,16 +234,24 @@ function toItems(data: ChartMarkerData): OverviewMarkerItem[] {
   ];
 }
 
+export type OverviewMarkers = {
+  items: OverviewMarkerItem[];
+  /** The note writes, bound to the site; null for a viewer or while held. */
+  noteActions: NoteActions | null;
+};
+
 /**
  * The markers for the chart's range. Waits for the site summary (the role
- * decides whether revenue is asked for at all), and reads nothing while
- * `hold` is set: "all time" still finding its start, or a caller (the public
- * share board) that must not show markers at all.
+ * decides whether revenue is asked for at all, and whether notes can be
+ * written), and reads nothing while `hold` is set: "all time" still finding
+ * its start, or a caller (the public share board) that must not show markers
+ * at all.
+ *
+ * A note write is reflected once the server answers with the note, by
+ * applying that answer to the notes already read: no second read, and
+ * nothing shown before it is stored.
  */
-export function useOverviewMarkers(
-  range: AnalyticsRange,
-  hold: boolean
-): OverviewMarkerItem[] {
+export function useOverviewMarkers(range: AnalyticsRange, hold: boolean): OverviewMarkers {
   const summary = useSiteSummary();
   const site = summary.site;
 
@@ -214,7 +267,67 @@ export function useOverviewMarkers(
   );
   const resource = useApiResource(load);
   const data = resource.status === "ready" ? resource.data : NONE;
-  return React.useMemo(() => toItems(data), [data]);
+
+  const loadNotes = React.useCallback(
+    async (signal: AbortSignal): Promise<ChartNote[]> => {
+      if (!site || hold) return new Promise<ChartNote[]>(() => {});
+      return loadChartNotes(
+        { siteId: site.site_id, range, signal },
+        LIVE_API ? LIVE_NOTE_DEPS : MOCK_NOTE_DEPS
+      );
+    },
+    [site, range, hold]
+  );
+  const notesResource = useApiResource(loadNotes);
+  const readNotes = notesResource.status === "ready" ? notesResource.data : NO_NOTES;
+
+  // The writes confirmed since the last read, applied on top of it. Keyed on
+  // the read they apply to, so a new range starts from its own read.
+  const [confirmed, setConfirmed] = React.useState<{
+    base: ChartNote[];
+    notes: ChartNote[];
+  } | null>(null);
+  const notes = confirmed && confirmed.base === readNotes ? confirmed.notes : readNotes;
+  const apply = React.useCallback(
+    (change: (current: ChartNote[]) => ChartNote[]) =>
+      setConfirmed((previous) => {
+        const current =
+          previous && previous.base === readNotes ? previous.notes : readNotes;
+        return { base: readNotes, notes: change(current) };
+      }),
+    [readNotes]
+  );
+
+  const siteId = site?.site_id;
+  const canWrite = site ? canWriteNotes(site.role) : false;
+  const noteActions = React.useMemo<NoteActions | null>(() => {
+    if (!siteId || !canWrite || hold) return null;
+    return {
+      timeZone: range.timezone,
+      create: async (body) => {
+        const note = LIVE_API
+          ? await notesApi.create(siteId, body)
+          : await mockNoteStore.create(body);
+        apply((current) => [...current, note]);
+      },
+      update: async (id, body) => {
+        if (body.at === undefined && body.text === undefined) return;
+        const note = LIVE_API
+          ? await notesApi.update(siteId, id, body)
+          : await mockNoteStore.update(id, body);
+        apply((current) => current.map((entry) => (entry.id === id ? note : entry)));
+      },
+      remove: async (id) => {
+        if (LIVE_API) await notesApi.remove(siteId, id);
+        else await mockNoteStore.remove(id);
+        apply((current) => current.filter((entry) => entry.id !== id));
+      },
+      describeError: describeNoteError,
+    };
+  }, [siteId, canWrite, hold, range.timezone, apply]);
+
+  const items = React.useMemo(() => toItems(data, notes), [data, notes]);
+  return { items, noteActions };
 }
 
 /* ------------------------------------------------------------------ */
@@ -224,11 +337,14 @@ export function useOverviewMarkers(
 export function OverviewMarkersLegend({
   items,
   revenue = false,
+  noteActions = null,
   className,
 }: {
   items: readonly OverviewMarkerItem[];
   /** The chart has revenue bars to hide. */
   revenue?: boolean;
+  /** Owners and admins get "Add note" at the end of the row. */
+  noteActions?: NoteActions | null;
   className?: string;
 }) {
   const [hidden, toggle] = useHiddenChartLayers();
@@ -237,7 +353,7 @@ export function OverviewMarkersLegend({
       ? revenue
       : items.some((item) => item.kind === entry.kind)
   );
-  if (present.length === 0) return null;
+  if (present.length === 0 && noteActions === null) return null;
   return (
     <div
       aria-label="Chart layers"
@@ -267,7 +383,61 @@ export function OverviewMarkersLegend({
           </button>
         );
       })}
+      {noteActions ? <AddNoteButton actions={noteActions} /> : null}
     </div>
+  );
+}
+
+/**
+ * "Add note" at the end of the legend row: a small popover with the note
+ * form, starting at now on the chart's clock. Opened by a click and closed by
+ * Cancel, Escape, a click outside or a confirmed save.
+ */
+function AddNoteButton({ actions }: { actions: NoteActions }) {
+  const [open, setOpen] = React.useState(false);
+  // Read when the form opens, not on every render: the field starts at the
+  // minute the person asked, and stays put while they type.
+  const [openedAtMs, setOpenedAtMs] = React.useState(0);
+  return (
+    <Popover
+      onOpenChange={(next) => {
+        if (next) setOpenedAtMs(defaultNoteTime(Date.now()));
+        setOpen(next);
+      }}
+      open={open}
+    >
+      {/* On a phone the four layer chips fill the row, so the button keeps
+          its plus and its name moves to the label. */}
+      <PopoverTrigger
+        aria-label="Add note"
+        className={cn(
+          "flex h-6 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border border-transparent px-2 text-xs text-muted-foreground outline-none transition-colors duration-150 ease-out focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] max-sm:px-1.5",
+          "data-popup-open:bg-black/5 data-popup-open:text-foreground [@media(hover:hover)]:hover:bg-black/5 [@media(hover:hover)]:hover:text-foreground"
+        )}
+        title="Add note"
+      >
+        <PlusIcon className="size-3.5" />
+        <span className="max-sm:hidden">Add note</span>
+      </PopoverTrigger>
+      <PopoverPopup align="start" className="w-72 max-w-[calc(100vw-2rem)]" side="bottom">
+        {open ? (
+          <NoteForm
+            initialAtMs={openedAtMs}
+            onCancel={() => setOpen(false)}
+            onSubmit={async ({ atMs, text }) => {
+              try {
+                await actions.create({ at: new Date(atMs).toISOString(), text });
+              } catch (raised) {
+                throw new Error(actions.describeError(raised));
+              }
+              setOpen(false);
+            }}
+            submitLabel="Add note"
+            timeZone={actions.timeZone}
+          />
+        ) : null}
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -278,10 +448,13 @@ export function OverviewMarkers({
   slug,
   bucketLabel,
   timeLabel,
+  noteActions = null,
 }: {
   items: readonly OverviewMarkerItem[];
   endMs: number;
   slug: string;
+  /** Owners and admins edit, delete and add notes in a marker's popover. */
+  noteActions?: NoteActions | null;
   /** "Sun, Jul 12" — the chart tooltip's own title for the bucket. */
   bucketLabel: (date: Date) => string;
   /** "14:15" — a single item's time, in the chart's zone. */
@@ -299,8 +472,15 @@ export function OverviewMarkers({
       endMs={endMs}
       items={visible}
       kinds={OVERVIEW_MARKER_KINDS}
-      renderContent={(bucket) => (
-        <BucketPopover base={base} bucket={bucket} bucketLabel={bucketLabel} timeLabel={timeLabel} />
+      renderContent={(bucket, controls) => (
+        <BucketPopover
+          base={base}
+          bucket={bucket}
+          bucketLabel={bucketLabel}
+          controls={controls}
+          noteActions={noteActions}
+          timeLabel={timeLabel}
+        />
       )}
     />
   );
@@ -319,17 +499,24 @@ function BucketPopover({
   base,
   bucketLabel,
   timeLabel,
+  controls,
+  noteActions,
 }: {
   bucket: EventMarkerBucket<OverviewMarkerKind, OverviewMarkerPayload>;
   base: string;
   bucketLabel: (date: Date) => string;
   timeLabel: (date: Date) => string;
+  controls: EventMarkerContentControls;
+  noteActions: NoteActions | null;
 }) {
   const sales = (bucket.byKind.sale ?? []).flatMap((item) =>
     item.payload.kind === "sale" ? [item.payload.sale] : []
   );
   const posts = (bucket.byKind.mention ?? []).flatMap((item) =>
     item.payload.kind === "mention" ? [item.payload.mention] : []
+  );
+  const bucketNotes = (bucket.byKind.note ?? []).flatMap((item) =>
+    item.payload.kind === "note" ? [item.payload.note] : []
   );
 
   return (
@@ -407,6 +594,22 @@ function BucketPopover({
           </ul>
           <PopoverLink href={`${base}/mentions`}>View all</PopoverLink>
         </section>
+      ) : null}
+
+      {bucketNotes.length > 0 || noteActions ? (
+        <div
+          className={cn(
+            (sales.length > 0 || posts.length > 0) && "border-t border-border pt-3"
+          )}
+        >
+          <NotesSection
+            actions={noteActions}
+            bucketStartMs={bucket.startMs}
+            notes={bucketNotes}
+            onEngagedChange={controls.setEngaged}
+            timeLabel={timeLabel}
+          />
+        </div>
       ) : null}
     </div>
   );

@@ -4453,6 +4453,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{site_id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Notes pinned to moments on the site's chart, newest first. Readable by every member.
+         * @description Notes whose `at` falls in the half-open range `[from, to)`, newest
+         *     first (`at` descending, then `id`). At most 500 come back and there is
+         *     no pagination: notes are written by hand, and a range that holds more
+         *     than 500 of them is better narrowed than paged.
+         *
+         *     `created_by` names the author by display name only. It is `null` once
+         *     the author's account is deleted; no user id or email address is ever
+         *     returned for a note.
+         */
+        get: operations["listSiteChartNotes"];
+        put?: never;
+        /**
+         * Pin a note to a moment on the chart. Requires the `site:settings` capability.
+         * @description `text` is trimmed, then must be 1 to 280 characters with no control
+         *     characters other than a newline.
+         */
+        post: operations["createSiteChartNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+                /** @description A note id. One that is not a UUID answers `404`, like an unknown one. */
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a note. Requires the `site:settings` capability.
+         * @description The note is removed for good. A second `DELETE` answers `404`.
+         */
+        delete: operations["deleteSiteChartNote"];
+        options?: never;
+        head?: never;
+        /**
+         * Move a note or change its text. Requires the `site:settings` capability.
+         * @description A partial update; an empty body is a `400`. The text rules are the
+         *     create's. The author stays the person who wrote the note.
+         */
+        patch: operations["updateSiteChartNote"];
+        trace?: never;
+    };
     "/v1/sites/{site_id}/funnels": {
         parameters: {
             query?: never;
@@ -10059,6 +10122,41 @@ export interface components {
             /** @description Pass as `cursor` for the next page, or null on the last one. */
             next_cursor: string | null;
             has_more: boolean;
+        };
+        /**
+         * @description The note, trimmed, 1 to 280 characters. No control characters other
+         *     than a newline (`\n`).
+         */
+        ChartNoteText: string;
+        /** @description Who wrote the note, by display name only. */
+        ChartNoteAuthor: {
+            /** @description The account's display name. Null when it was never set. */
+            name: string | null;
+        };
+        /**
+         * @description A short note pinned to a moment on the site's chart: a launch, a
+         *     pricing change. Shown to every member of the site.
+         */
+        ChartNote: {
+            /** Format: uuid */
+            id: string;
+            at: components["schemas"]["UtcInstant"];
+            text: components["schemas"]["ChartNoteText"];
+            /** @description The author, or null once their account is deleted. */
+            created_by: components["schemas"]["ChartNoteAuthor"] | null;
+            created_at: components["schemas"]["UtcInstant"];
+            updated_at: components["schemas"]["UtcInstant"];
+        };
+        ChartNotesResponse: {
+            items: components["schemas"]["ChartNote"][];
+        };
+        CreateChartNoteRequest: {
+            at: components["schemas"]["UtcInstant"];
+            text: components["schemas"]["ChartNoteText"];
+        };
+        UpdateChartNoteRequest: {
+            at?: components["schemas"]["UtcInstant"];
+            text?: components["schemas"]["ChartNoteText"];
         };
         /**
          * @description A site's tracker/ingest settings — the stored values `GET
@@ -16011,6 +16109,140 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["SiteNotFound"];
+        };
+    };
+    listSiteChartNotes: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notes in the range, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChartNotesResponse"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    createSiteChartNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateChartNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description The stored note. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChartNote"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    deleteSiteChartNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+                /** @description A note id. One that is not a UUID answers `404`, like an unknown one. */
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The note is gone. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description No note with this id on this site (`NOT_FOUND`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    updateSiteChartNote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+                /** @description A note id. One that is not a UUID answers `404`, like an unknown one. */
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateChartNoteRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated note. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChartNote"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description No note with this id on this site (`NOT_FOUND`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listSiteFunnels: {

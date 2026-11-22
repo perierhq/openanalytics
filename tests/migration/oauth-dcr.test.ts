@@ -52,6 +52,7 @@ const EXPECTED_SUPPORTED_SCOPES = [
   'events:write',
   'widgets:write',
   'share:write',
+  'notes:write',
 ]
 
 /** PKCE, the client's half: a verifier and its S256 challenge. */
