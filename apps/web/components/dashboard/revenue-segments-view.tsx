@@ -19,6 +19,7 @@ import type {
 import { formatMoney } from "@/lib/currencies";
 import { resolveReferrer } from "@/lib/referrers";
 import {
+  confidenceLabel,
   countryLabel,
   deviceLabel,
   formatRate,
@@ -28,9 +29,10 @@ import {
   segmentKey,
   segmentsNeedingHost,
   segmentSourceLabel,
-  SMOOTHING_NOTE,
+  smoothingNote,
   sortSegments,
   truncatedCopy,
+  type ConfidenceEdges,
   type SegmentSort,
 } from "@/lib/revenue-segments";
 import { cn } from "@/lib/utils";
@@ -53,24 +55,25 @@ function perVisitor(minor: number, currency: string): string {
   return formatMoney(Math.round(minor), currency);
 }
 
-const CONFIDENCE_COPY: Record<RevenueSegmentConfidence, string> = {
-  high: "High confidence",
-  medium: "Medium confidence",
-  low: "Low confidence",
-};
-
 /**
  * One small mark per row, monochrome: solid for high, half-tone for medium,
  * a ring for low. Not a status colour: low confidence is not a fault, it is a
- * small segment.
+ * small segment. Its hover title and screen-reader label say what the band
+ * means, with the server's edges (`confidenceLabel`); the ⓘ says it in full.
  */
 export function ConfidenceDot({
   confidence,
+  edges,
 }: {
   confidence: RevenueSegmentConfidence;
+  edges: ConfidenceEdges;
 }) {
+  const label = confidenceLabel(confidence, edges);
   return (
-    <span className="inline-flex size-3 shrink-0 items-center justify-center">
+    <span
+      className="inline-flex size-3 shrink-0 items-center justify-center"
+      title={label}
+    >
       <span
         aria-hidden="true"
         className={cn(
@@ -80,7 +83,7 @@ export function ConfidenceDot({
           confidence === "low" && "ring-1 ring-inset ring-foreground/40"
         )}
       />
-      <span className="sr-only">{CONFIDENCE_COPY[confidence]}</span>
+      <span className="sr-only">{label}</span>
     </span>
   );
 }
@@ -151,9 +154,11 @@ function SegmentIdentity({
 export function SegmentTip({
   segment,
   currency,
+  edges,
 }: {
   segment: RevenueSegment;
   currency: string;
+  edges: ConfidenceEdges;
 }) {
   const money = (minor: number) => formatMoney(Math.round(minor), currency);
   const lines: [string, string][] = [
@@ -187,7 +192,7 @@ export function SegmentTip({
         ))}
       </dl>
       <p className="mt-1 max-w-52 text-muted-foreground">
-        {CONFIDENCE_COPY[segment.confidence]}
+        {confidenceLabel(segment.confidence, edges)}
         {segment.unconverted_orders > 0
           ? `. ${segment.unconverted_orders} ${segment.unconverted_orders === 1 ? "order" : "orders"} with no exchange rate not counted.`
           : "."}
@@ -200,11 +205,13 @@ export function SegmentTip({
 function WithTip({
   segment,
   currency,
+  edges,
   className,
   children,
 }: {
   segment: RevenueSegment;
   currency: string;
+  edges: ConfidenceEdges;
   className: string;
   children: React.ReactNode;
 }) {
@@ -223,7 +230,7 @@ function WithTip({
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup {...ROW_TOOLTIP_PLACEMENT}>
-        <SegmentTip currency={currency} segment={segment} />
+        <SegmentTip currency={currency} edges={edges} segment={segment} />
       </TooltipPopup>
     </Tooltip>
   );
@@ -233,16 +240,19 @@ function WithTip({
 export function SegmentRow({
   segment,
   currency,
+  edges,
   showHost = false,
 }: {
   segment: RevenueSegment;
   currency: string;
+  edges: ConfidenceEdges;
   showHost?: boolean;
 }) {
   return (
     <WithTip
       className="flex items-center justify-between gap-3 py-1.5 pl-4.5 pr-4"
       currency={currency}
+      edges={edges}
       segment={segment}
     >
       <SegmentIdentity segment={segment} showHost={showHost} />
@@ -253,7 +263,7 @@ export function SegmentRow({
         <span className="w-10 text-right text-xs tabular-nums text-foreground/70">
           {formatRate(segment.smoothed_conversion_rate)}
         </span>
-        <ConfidenceDot confidence={segment.confidence} />
+        <ConfidenceDot confidence={segment.confidence} edges={edges} />
       </span>
     </WithTip>
   );
@@ -263,9 +273,11 @@ export function SegmentRow({
 export function SegmentList({
   segments,
   currency,
+  edges,
 }: {
   segments: readonly RevenueSegment[];
   currency: string;
+  edges: ConfidenceEdges;
 }) {
   const needsHost = segmentsNeedingHost(segments);
   return (
@@ -274,6 +286,7 @@ export function SegmentList({
         <HoverRow key={segmentKey(segment)}>
           <SegmentRow
             currency={currency}
+            edges={edges}
             segment={segment}
             showHost={needsHost.has(segmentKey(segment))}
           />
@@ -310,11 +323,13 @@ export function SegmentListColumns() {
 export function SegmentsTable({
   segments,
   currency,
+  edges,
   sort,
   onSort,
 }: {
   segments: readonly RevenueSegment[];
   currency: string;
+  edges: ConfidenceEdges;
   sort: SegmentSort;
   onSort: (sort: SegmentSort) => void;
 }) {
@@ -369,13 +384,19 @@ export function SegmentsTable({
             <WithTip
               className={cn(grid, "gap-y-1.5 py-2.5 pl-1 pr-2")}
               currency={currency}
+              edges={edges}
               segment={segment}
             >
               <span className="col-span-4 flex min-w-0 @lg:col-span-1">
                 <SegmentIdentity
                   segment={segment}
                   showHost={needsHost.has(segmentKey(segment))}
-                  trailing={<ConfidenceDot confidence={segment.confidence} />}
+                  trailing={
+                    <ConfidenceDot
+                      confidence={segment.confidence}
+                      edges={edges}
+                    />
+                  }
                 />
               </span>
               <span className={cell("value")}>
@@ -398,9 +419,12 @@ export function SegmentsTable({
   );
 }
 
-/** The ⓘ beside the title. */
-export function SmoothingInfo() {
-  return <InfoTip text={SMOOTHING_NOTE} width="w-64" />;
+/**
+ * The ⓘ beside the title. `edges` comes from the read once it answers; until
+ * then no dot is on screen and the note leaves the dot sentence off.
+ */
+export function SmoothingInfo({ edges }: { edges?: ConfidenceEdges }) {
+  return <InfoTip text={smoothingNote(edges)} width="w-64" />;
 }
 
 /** How many segments were too small to show; nothing when none were. */

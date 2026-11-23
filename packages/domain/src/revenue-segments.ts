@@ -38,6 +38,13 @@ export const REVENUE_SEGMENT_PRIOR_K = 200
  */
 export const REVENUE_SEGMENT_MIN_VISITORS = 20
 
+/**
+ * The longest range the segments read covers, in days. The same 92 as the
+ * session-fact cap the funnel uses today, but named for this read so the two
+ * can move apart without one silently taking the other with it.
+ */
+export const REVENUE_SEGMENTS_MAX_SPAN_DAYS = 92
+
 /** Below this many attributed buyers in the range there is no answer at all. */
 export const REVENUE_SEGMENTS_MIN_BUYERS = 10
 
@@ -73,7 +80,10 @@ export interface RevenueSegmentScore extends RevenueSegmentCounts {
   /** `buyers / visitors`, or null with no visitors. */
   conversionRate: number | null
   smoothedConversionRate: number
-  /** `revenueMinor / orders`, or null with no orders. */
+  /**
+   * `revenueMinor / (orders - unconvertedOrders)`: revenue over the orders it
+   * holds. Null when no order converted.
+   */
   averageOrderValueMinor: number | null
   /** `revenueMinor / visitors`, or null with no visitors. */
   valuePerVisitorMinor: number | null
@@ -145,11 +155,12 @@ export function scoreRevenueSegment(
   k: number = REVENUE_SEGMENT_PRIOR_K,
 ): RevenueSegmentScore {
   const hasVisitors = row.visitors > 0
+  const convertedOrders = row.orders - row.unconvertedOrders
   return {
     ...row,
     conversionRate: hasVisitors ? row.buyers / row.visitors : null,
     smoothedConversionRate: smoothTowardPrior(row.buyers, row.visitors, prior.conversionRate, k),
-    averageOrderValueMinor: row.orders > 0 ? row.revenueMinor / row.orders : null,
+    averageOrderValueMinor: convertedOrders > 0 ? row.revenueMinor / convertedOrders : null,
     valuePerVisitorMinor: hasVisitors ? row.revenueMinor / row.visitors : null,
     smoothedValuePerVisitorMinor: smoothTowardPrior(
       row.revenueMinor,

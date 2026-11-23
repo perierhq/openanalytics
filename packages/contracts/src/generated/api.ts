@@ -6201,12 +6201,13 @@ export interface paths {
          *     last touch: the segment of a purchase is the last touch's referrer and
          *     the country and device of that session. Conversions only: a charge
          *     that started a subscription or was a one-off purchase. Renewals and
-         *     plan changes are neither orders nor revenue here, so
-         *     `average_order_value_minor` is revenue over the orders that produced
-         *     it. Revenue is the reporting-currency gross of converted charges; an
-         *     order with no usable exchange rate is counted in `unconverted_orders`
-         *     and is missing from the revenue, never folded in as zero. Failed,
-         *     canceled and unattributed charges count nowhere.
+         *     plan changes are neither orders nor revenue here. Revenue is the
+         *     reporting-currency gross of converted charges; an order with no usable
+         *     exchange rate is counted in `unconverted_orders` and is missing from
+         *     the revenue, never folded in as zero. So `average_order_value_minor`
+         *     is revenue over the converted orders that produced it, `orders -
+         *     unconverted_orders`. Failed, canceled and unattributed charges count
+         *     nowhere.
          *
          *     **Only buyers who are visitors of the range.** A purchase counts when
          *     its last-touch session started inside the range and is still in the
@@ -9909,7 +9910,8 @@ export interface components {
         /**
          * @description How far a segment's own numbers can be trusted: `low` under 100
          *     visitors or under 3 buyers, `high` at 1,000 visitors and 10 buyers or
-         *     more, `medium` in between.
+         *     more, `medium` in between. The response's `thresholds.confidence` carries
+         *     these edges.
          * @enum {string}
          */
         RevenueSegmentConfidence: "low" | "medium" | "high";
@@ -9949,7 +9951,7 @@ export interface components {
             conversion_rate: number | null;
             /** @description `(buyers + k × site.conversion_rate) / (visitors + k)`. */
             smoothed_conversion_rate: number;
-            /** @description `revenue_minor / orders`, unrounded; `null` with no orders. */
+            /** @description `revenue_minor / (orders - unconverted_orders)`, unrounded: revenue over the converted orders that produced it, since an unconverted order is missing from `revenue_minor`. `null` when no order converted. */
             average_order_value_minor: number | null;
             /** @description `revenue_minor / visitors`, unsmoothed and unrounded; `null` with no visitors. */
             value_per_visitor_minor: number | null;
@@ -10036,6 +10038,22 @@ export interface components {
                 min_buyers: number;
                 /** @description Visitors a segment needs to be shown (20). */
                 min_segment_visitors: number;
+                /**
+                 * @description The edges of `RevenueSegmentConfidence`: a segment is `low`
+                 *     under `low_visitors` visitors or under `low_buyers` buyers,
+                 *     `high` at `high_visitors` visitors and `high_buyers` buyers or
+                 *     more, `medium` in between.
+                 */
+                confidence: {
+                    /** @description Under this many visitors a segment is `low` (100). */
+                    low_visitors: number;
+                    /** @description Under this many buyers a segment is `low` (3). */
+                    low_buyers: number;
+                    /** @description A `high` segment has at least this many visitors (1,000). */
+                    high_visitors: number;
+                    /** @description A `high` segment has at least this many buyers (10). */
+                    high_buyers: number;
+                };
             };
             prior: {
                 /** @description How many visitors' worth of weight the site-wide rate carries in the smoothing (200). */

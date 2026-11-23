@@ -5,7 +5,13 @@
  * figure here is read off the response, never recomputed.
  */
 
-import type { RevenueSegment, RevenueSegmentsResponse } from "./api";
+import type {
+  AnalyticsRange,
+  RevenueSegment,
+  RevenueSegmentConfidence,
+  RevenueSegmentsResponse,
+} from "./api";
+import { snappedSpanDays } from "./row-revenue";
 import { referrerLabel } from "./source-rows";
 
 /**
@@ -15,6 +21,40 @@ import { referrerLabel } from "./source-rows";
  */
 export const SMOOTHING_NOTE =
   "Small segments are pulled toward your site's average so a handful of visits can't look like a sure thing. Value per visitor counts new revenue, from new subscriptions and one-off purchases.";
+
+/** The confidence band edges the server sends in `thresholds.confidence`. */
+export type ConfidenceEdges = RevenueSegmentsResponse["thresholds"]["confidence"];
+
+const count = (n: number) => n.toLocaleString("en-US");
+
+/**
+ * The ⓘ's full text: the smoothing note, then what the row's dot means, with
+ * the server's band edges. Without them (nothing has loaded, so no row and no
+ * dot is on screen) the dot sentence is left off.
+ */
+export function smoothingNote(edges: ConfidenceEdges | undefined): string {
+  if (edges === undefined) return SMOOTHING_NOTE;
+  return (
+    `${SMOOTHING_NOTE} The dot shows how much data is behind a row: ` +
+    `low under ${count(edges.low_visitors)} visitors or ${count(edges.low_buyers)} buyers, ` +
+    `high from ${count(edges.high_visitors)} visitors and ${count(edges.high_buyers)} buyers.`
+  );
+}
+
+/** The dot's own label, the ⓘ's sentence in short for one band. */
+export function confidenceLabel(
+  confidence: RevenueSegmentConfidence,
+  edges: ConfidenceEdges
+): string {
+  switch (confidence) {
+    case "low":
+      return `Low confidence: under ${count(edges.low_visitors)} visitors or ${count(edges.low_buyers)} buyers`;
+    case "medium":
+      return `Medium confidence: at least ${count(edges.low_visitors)} visitors and ${count(edges.low_buyers)} buyers`;
+    case "high":
+      return `High confidence: at least ${count(edges.high_visitors)} visitors and ${count(edges.high_buyers)} buyers`;
+  }
+}
 
 /** Under the title of the full table. */
 export const SEGMENTS_SUBTITLE =
@@ -156,4 +196,18 @@ export function insufficientDataCopy(
       `Ranking needs at least ${data.thresholds.min_buyers}. ` +
       "Pick a longer range, up to 92 days, or check back after more sales.",
   };
+}
+
+/** The longest range the segments read serves, in days (the api's cap). */
+export const SEGMENTS_MAX_SPAN_DAYS = 92;
+
+/**
+ * Whether the range is past the read's cap, measured the way the api
+ * measures it: rounded outward to quarter hours (`snappedSpanDays`), so an
+ * unaligned 92 days that the api reads as 92 days and a quarter hour is not
+ * sent. An unparseable range is held too.
+ */
+export function segmentsSpanTooLong(range: Pick<AnalyticsRange, "from" | "to">): boolean {
+  const days = snappedSpanDays(range);
+  return days === null || days > SEGMENTS_MAX_SPAN_DAYS;
 }

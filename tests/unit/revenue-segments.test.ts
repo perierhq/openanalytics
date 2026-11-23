@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   REVENUE_SEGMENT_MIN_VISITORS,
   REVENUE_SEGMENT_PRIOR_K,
+  REVENUE_SEGMENTS_MAX_SPAN_DAYS,
   REVENUE_SEGMENTS_MIN_BUYERS,
   isRevenueSegmentShown,
   rankRevenueSegments,
@@ -42,6 +43,10 @@ describe('the constants are the documented ones', () => {
     expect(REVENUE_SEGMENT_PRIOR_K).toBe(200)
     expect(REVENUE_SEGMENT_MIN_VISITORS).toBe(20)
     expect(REVENUE_SEGMENTS_MIN_BUYERS).toBe(10)
+  })
+
+  it('reads at most 92 days, a cap of its own', () => {
+    expect(REVENUE_SEGMENTS_MAX_SPAN_DAYS).toBe(92)
   })
 })
 
@@ -166,6 +171,24 @@ describe('scoreRevenueSegment', () => {
     expect(score.valuePerVisitorMinor).toBe(500)
     expect(score.smoothedValuePerVisitorMinor).toBeCloseTo(125, 12)
     expect(score.confidence).toBe('low')
+  })
+
+  it('divides AOV by the converted orders only: unconverted ones are not in the revenue', () => {
+    // 5 orders, 1 with no exchange rate: the 3,800 is the revenue of the other
+    // 4, so the average order is 950, not 760.
+    const score = scoreRevenueSegment(
+      segment({ visitors: 40, buyers: 5, orders: 5, revenueMinor: 3_800, unconvertedOrders: 1 }),
+      prior,
+    )
+    expect(score.averageOrderValueMinor).toBe(950)
+  })
+
+  it('has no AOV when every order is unconverted', () => {
+    const score = scoreRevenueSegment(
+      segment({ visitors: 40, buyers: 2, orders: 2, revenueMinor: 0, unconvertedOrders: 2 }),
+      prior,
+    )
+    expect(score.averageOrderValueMinor).toBeNull()
   })
 
   it('has no raw rates and no AOV where there is nothing to divide by', () => {
