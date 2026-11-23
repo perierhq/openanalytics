@@ -1,5 +1,5 @@
 import type { EcbDailyRates } from '@openanalytics/domain'
-import { and, desc, eq, lte, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 import type { Executor } from '../client.ts'
 import { currencyRates } from '../schema/revenue.ts'
 
@@ -132,4 +132,31 @@ export async function readLatestCurrencyRateDate(db: Executor): Promise<string |
  */
 function sqlExcluded(column: string) {
   return sql.raw(`excluded.${column}`)
+}
+
+/**
+ * Every rate for these currencies with a `rate_date` in `[from, to]` — the
+ * Meta Ads campaigns read (migration 0052), which converts each day's spend at
+ * that day's rate and would otherwise look one rate up per day. The caller
+ * widens `from` by the lookback and picks, per day, the newest rate at or
+ * before it.
+ */
+export async function listCurrencyRatesBetween(
+  db: Executor,
+  input: { readonly currencies: readonly string[]; readonly from: string; readonly to: string },
+): Promise<CurrencyRateRow[]> {
+  const currencies = [...new Set(input.currencies.map((code) => code.toUpperCase()))]
+  if (currencies.length === 0) return []
+  const rows = await db
+    .select()
+    .from(currencyRates)
+    .where(
+      and(
+        inArray(currencyRates.currency, currencies),
+        gte(currencyRates.rateDate, input.from),
+        lte(currencyRates.rateDate, input.to),
+      ),
+    )
+    .orderBy(asc(currencyRates.rateDate))
+  return rows as CurrencyRateRow[]
 }

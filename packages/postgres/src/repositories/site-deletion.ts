@@ -15,6 +15,7 @@ import { listSiteExportObjectKeys } from './export-runs.ts'
 import { listSiteImportObjectKeys } from './import-runs.ts'
 import { SITE_DELETION_JOB_TYPE, enqueueJob } from './jobs.ts'
 import { enqueueOutbox } from './outbox.ts'
+import { eraseSiteMetaAdsConnection } from './meta-ads.ts'
 import { eraseSiteRevenueCredentials } from './revenue-credentials.ts'
 import { apiKeys } from '../schema/api-keys.ts'
 import { funnels } from '../schema/funnels.ts'
@@ -25,6 +26,7 @@ import { ingestBatchItems, ingestBatchSites } from '../schema/ingest-batches.ts'
 import { siteIngestSettings } from '../schema/ingest.ts'
 import { chartNotes } from '../schema/chart-notes.ts'
 import { mentionAvatars, mentions, siteMentionSettings } from '../schema/mentions.ts'
+import { metaAdsConnections, metaAdsDailySpend } from '../schema/meta-ads.ts'
 import {
   deletionRequests,
   deletionTargets,
@@ -413,6 +415,10 @@ export async function startSiteDeletion(
     // key to a customer's payment provider for any part of that. The rows
     // themselves go with the `revenue_credentials` target.
     const revenueRevoked = await eraseSiteRevenueCredentials(tx, { siteId: input.siteId, now })
+    // The Meta Ads token (migration 0052), for the same reason: the connection
+    // row is dropped here, ciphertext and all, rather than in the purge. The
+    // spend it read stays for `postgres_purge`, which counts it.
+    const metaAdsRevoked = await eraseSiteMetaAdsConnection(tx, { siteId: input.siteId })
 
     await writeAudit(tx, {
       // A deletion nobody requested is the sweeper's, and recording it against a
@@ -430,6 +436,7 @@ export async function startSiteDeletion(
         targets: SITE_DELETION_TARGETS.length,
         revoked_api_keys: revoked.length,
         revoked_revenue_credentials: revenueRevoked,
+        revoked_meta_ads_connections: metaAdsRevoked,
       },
     })
 
@@ -845,6 +852,24 @@ export async function purgeSitePostgres(
         .delete(chartNotes)
         .where(eq(chartNotes.siteId, input.siteId))
         .returning({ id: chartNotes.id }),
+    )
+    // Meta Ads (migration 0052). Both reference only `sites`, so the order is
+    // free. The connection row normally went when the deletion started (its
+    // token with it), so this target usually counts zero; it is named so a
+    // connection that somehow outlived the start is still erased and counted.
+    await removeFrom('meta_ads_connections', () =>
+      tx
+        .delete(metaAdsConnections)
+        .where(eq(metaAdsConnections.siteId, input.siteId))
+        .returning({ id: metaAdsConnections.siteId }),
+    )
+    // The composite key has no single id; the campaign id stands in as `id`
+    // for the shape `removeFrom` counts through.
+    await removeFrom('meta_ads_daily_spend', () =>
+      tx
+        .delete(metaAdsDailySpend)
+        .where(eq(metaAdsDailySpend.siteId, input.siteId))
+        .returning({ id: metaAdsDailySpend.campaignId }),
     )
     // The attribution job's control row (ADR-0033, D6/D8; migration 0036).
     //

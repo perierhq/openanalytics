@@ -243,6 +243,14 @@ const EXPECTED_CONSTRAINTS = [
   'chart_notes_text_length_check',
   'chart_notes_text_trimmed_check',
   'chart_notes_text_control_check',
+  // Meta Ads (migration 0052): the ad account id's shape, the two
+  // vocabularies the worker writes, and spend that is digits and never
+  // negative.
+  'meta_ads_connections_ad_account_id_check',
+  'meta_ads_connections_status_check',
+  'meta_ads_connections_last_error_check',
+  'meta_ads_daily_spend_campaign_id_check',
+  'meta_ads_daily_spend_spend_check',
 ]
 
 const declaredTables = schemaTableColumns()

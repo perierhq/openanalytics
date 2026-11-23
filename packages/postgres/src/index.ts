@@ -329,6 +329,7 @@ export {
 export {
   readCurrencyRate,
   readLatestCurrencyRateDate,
+  listCurrencyRatesBetween,
   upsertCurrencyRates,
   type CurrencyRateRow,
   type UpsertCurrencyRatesResult,
@@ -492,6 +493,22 @@ export {
   type ListChartNotesInput,
   type UpdateChartNoteInput,
 } from './repositories/chart-notes.ts'
+
+export {
+  deleteMetaAdsConnection,
+  eraseSiteMetaAdsConnection,
+  listDueMetaAdsConnections,
+  listMetaAdsSpend,
+  readMetaAdsConnection,
+  recordMetaAdsSync,
+  saveMetaAdsConnection,
+  upsertMetaAdsSpend,
+  type MetaAdsConnectionRecord,
+  type RecordMetaAdsSyncInput,
+  type SaveMetaAdsConnectionInput,
+  type SaveMetaAdsConnectionResult,
+  type UpsertMetaAdsSpendInput,
+} from './repositories/meta-ads.ts'
 
 export {
   countWidgets,

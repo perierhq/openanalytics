@@ -54,6 +54,7 @@ export function BreakdownRow({
   onSelect,
   bar,
   revenue,
+  trailing,
   tooltip,
   expanded,
   onToggle,
@@ -83,6 +84,11 @@ export function BreakdownRow({
    * amounts stay one right-aligned column). Absent, there is no column.
    */
   revenue?: string | null;
+  /**
+   * One more figure after the revenue column, on the cards that carry a
+   * ratio of the two (Ad campaigns: ROAS). Absent, there is no column.
+   */
+  trailing?: React.ReactNode;
   /** A light tooltip on the row, for the numbers the row has no room for. */
   tooltip?: React.ReactNode;
   /**
@@ -150,6 +156,7 @@ export function BreakdownRow({
             }
           />
         )}
+        {trailing !== undefined && trailing}
       </span>
     </>
   );

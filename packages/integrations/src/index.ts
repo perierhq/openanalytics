@@ -259,6 +259,21 @@ export {
 } from './fxtwitter.ts'
 
 /**
+ * Meta Ads spend (migration 0052): the ad account probe and the daily
+ * campaign insights, over `graph.facebook.com` with the token in a header.
+ */
+export {
+  META_INSIGHTS_PAGE_LIMIT,
+  createMetaAdsClient,
+  type MetaAccountResult,
+  type MetaAdsClient,
+  type MetaAdsClientConfig,
+  type MetaAdsRequestOptions,
+  type MetaInsightsInput,
+  type MetaInsightsResult,
+} from './meta-ads.ts'
+
+/**
  * X mention author pictures (migration 0049): one capped GET to
  * `pbs.twimg.com` and nowhere else, typed from the bytes.
  */

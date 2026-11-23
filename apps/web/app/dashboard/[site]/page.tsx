@@ -1,4 +1,5 @@
 import { Activity01Icon } from "hugeicons-react";
+import { AdCampaignsCard } from "@/components/dashboard/ad-campaigns-card";
 import { AiReferralsCard } from "@/components/dashboard/ai-referrals-card";
 import { AwaitingEventsBadge } from "@/components/dashboard/awaiting-events";
 import { CustomEventsCard } from "@/components/dashboard/custom-events-card";
@@ -151,6 +152,11 @@ export default async function OverviewPage({
         {/* brings its own SquircleCard: "See all" opens the event builder
             modal (M13), so the header needs a click handler, not a href */}
         <CustomEventsCard />
+
+        {/* Meta ad spend and ROAS per campaign (migration 0052). Last, and
+            drawn only for an owner whose site is connected: most sites never
+            are, and a card that appeared and folded away would move the grid */}
+        <AdCampaignsCard />
       </div>
       </SourcesProvider>
     </div>

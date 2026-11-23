@@ -159,6 +159,7 @@ const EXPECTED_READ_TOOLS = [
   'share_settings',
   'list_mentions',
   'list_notes',
+  'ads_campaigns',
 ] as const
 
 const EXPECTED_WRITE_TOOLS = [
@@ -199,11 +200,12 @@ describe('the tool roster is pinned by name, not derived', () => {
     // `events_before_purchase`) and `custom_event_properties`
     // 36, and its subscription reads (`subscription_summary`,
     // `subscription_timeseries`, gap 7) 38, `list_mentions` (the X mentions
-    // list) 39, and the chart notes (`list_notes`, `create_note`,
-    // `update_note`, `delete_note`) 43, and `referrer_paths` (the referring
-    // pages behind a Sources row) 44.
-    expect(MCP_TOOLS).toHaveLength(44)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(44)
+    // list) 39, the chart notes (`list_notes`, `create_note`,
+    // `update_note`, `delete_note`) 43, `referrer_paths` (the referring
+    // pages behind a Sources row) 44, and the Meta Ads campaigns read
+    // (`ads_campaigns`) 45.
+    expect(MCP_TOOLS).toHaveLength(45)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(45)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -341,6 +343,29 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
     ]) {
       expect(names, `${name} must not reach the assistant`).not.toContain(name)
     }
+  })
+})
+
+describe('the Meta Ads campaigns tool', () => {
+  it('reads spend, revenue and ROAS from the business route under revenue:read', () => {
+    const req = build('ads_campaigns', {
+      site_id: SITE,
+      from: '2026-11-01T00:00:00Z',
+      to: '2026-11-15T00:00:00Z',
+      timezone: 'Europe/Warsaw',
+    })
+    expect(req.method).toBe('GET')
+    const url = new URL(req.url)
+    expect(url.pathname).toBe(`/v1/sites/${SITE}/ads/campaigns`)
+    expect(url.searchParams.get('from')).toBe('2026-11-01T00:00:00Z')
+    expect(url.searchParams.get('to')).toBe('2026-11-15T00:00:00Z')
+    expect(url.searchParams.get('timezone')).toBe('Europe/Warsaw')
+    expect(tool('ads_campaigns').scope).toBe('revenue:read')
+    expect(isReadOnlyTool(tool('ads_campaigns'))).toBe(true)
+  })
+
+  it('stays out of the assistant, whose session reaches only the read arm', () => {
+    expect(ASSISTANT_TOOLS.map((t) => t.name)).not.toContain('ads_campaigns')
   })
 })
 

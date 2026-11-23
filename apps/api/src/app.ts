@@ -14,7 +14,12 @@ import {
   type AssistantConfig,
   type ReadKeyConfig,
 } from '@openanalytics/domain'
-import type { CredentialVault, ObjectStorage, OpenAiChatClient } from '@openanalytics/integrations'
+import type {
+  CredentialVault,
+  MetaAdsClient,
+  ObjectStorage,
+  OpenAiChatClient,
+} from '@openanalytics/integrations'
 import type { Logger, Metrics, ServiceMetadata } from '@openanalytics/observability'
 import { createServiceApp } from '@openanalytics/observability/hono'
 import {
@@ -169,6 +174,9 @@ export interface AppDeps {
    * cannot protect.
    */
   readonly vault?: CredentialVault
+  /** The Meta Graph client the ads connection probes with (migration 0052).
+   * Injected by tests; absent, the routes build the real one. */
+  readonly metaAds?: MetaAdsClient
   /**
    * The assistant (ADR-0046). Optional here and required one layer down, in
    * `defaultReadCost`'s shape: absent, `createApp` parses the same schema
@@ -684,6 +692,7 @@ export function createApp(deps: AppDeps) {
         // separate from `revenue` on purpose — see `AppDeps.vault` — and its
         // absence closes the surface with a reason rather than removing it.
         ...(deps.vault ? { vault: deps.vault } : {}),
+        ...(deps.metaAds ? { metaAds: deps.metaAds } : {}),
         testEmailRateLimiter: deps.testEmailRateLimiter ?? defaultTestEmailLimiter(),
         // The same extension object; `createBusinessRoutes` reads only its
         // `businessRoutes` half, and mounts it last on the authenticated router.

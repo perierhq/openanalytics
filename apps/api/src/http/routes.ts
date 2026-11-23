@@ -28,6 +28,8 @@ import {
   buildInviteEmailPayload,
   type CredentialVault,
   type ObjectStorage,
+  createMetaAdsClient,
+  type MetaAdsClient,
   type OpenAiChatClient,
 } from '@openanalytics/integrations'
 import {
@@ -74,6 +76,7 @@ import { createEventDefinitionRoutes } from './event-definitions.ts'
 import { createFunnelRoutes } from './funnels.ts'
 import { createMentionRoutes } from './mentions.ts'
 import { createNoteRoutes } from './notes.ts'
+import { createAdsRoutes } from './ads.ts'
 import { createWidgetRoutes } from './widgets.ts'
 import { createExportRoutes } from './exports.ts'
 import { createImportCatalogRoutes, createImportRoutes } from './imports.ts'
@@ -170,6 +173,12 @@ export interface RoutesDeps {
    * ring and no revenue adapters still needs one.
    */
   readonly vault?: CredentialVault
+  /**
+   * The Meta Graph client the ads connection probes a token with (migration
+   * 0052). Injected by tests; absent, the real client is built when a keyring
+   * is present, because without one nothing can be stored to probe for.
+   */
+  readonly metaAds?: MetaAdsClient
   /** The deployment test-send ceiling. `app.ts` always supplies one. */
   readonly testEmailRateLimiter: RateLimiter
 }
@@ -603,6 +612,25 @@ export function createBusinessRoutes(deps: RoutesDeps): Hono<Env> {
   // Chart notes (migration 0050): notes pinned to moments on the overview
   // chart. Unconditional like mentions: Postgres only.
   authed.route('/', createNoteRoutes({ db }))
+
+  // Meta Ads (migration 0052): the ad account connection and the campaigns
+  // read. The connection's GET and DELETE mount always; PUT needs the keyring
+  // to store a token; the campaigns read needs the gateway for its revenue.
+  authed.route(
+    '/',
+    createAdsRoutes({
+      db,
+      ...(deps.analytics ? { analytics: deps.analytics } : {}),
+      ...(deps.vault
+        ? {
+            write: {
+              vault: deps.vault,
+              client: deps.metaAds ?? createMetaAdsClient({ version: deps.env.SERVICE_VERSION }),
+            },
+          }
+        : {}),
+    }),
+  )
 
   // Embeddable widget configuration (ADR-0045, D13). Unconditional for the same
   // reason funnels is: a widget is stored configuration and needs no gateway,

@@ -10,6 +10,10 @@ import {
   siteInviteFixture,
 } from "@openanalytics/contracts";
 import type {
+  AdCampaignRow,
+  AdCampaignsResponse,
+  MetaAdsConnection,
+  MetaAdsConnectionState,
   AnalyticsCustomEventsResponse,
   AnalyticsDevicesResponse,
   AnalyticsGeographyResponse,
@@ -678,6 +682,103 @@ export function mockMentionSettings(domain: string): SiteMentionSettings {
     terms: ["OpenAnalytics"],
     last_polled_at: new Date(Date.now() - 12 * 60_000).toISOString(),
     last_error: null,
+  };
+}
+
+/**
+ * Meta Ads in mock mode (migration 0052). `?mock_meta_ads=not_connected`,
+ * `=error`, `=undecryptable` or `=disabled` picks the settings card's other
+ * states, for screenshots; the default is a connected account that synced
+ * twelve minutes ago.
+ */
+export function mockMetaAdsConnection(): MetaAdsConnectionState {
+  const pick =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("mock_meta_ads");
+  if (pick === "not_connected") return { status: "not_connected" };
+  const connection: MetaAdsConnection = {
+    status: "active",
+    ad_account_id: "act_1029384756",
+    ad_account_name: "Getopen Ads",
+    ad_account_active: true,
+    currency: "USD",
+    token_last4: "Wq9z",
+    connected_at: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+    last_attempted_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+    last_synced_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+    next_sync_at: new Date(Date.now() + 5.8 * 3_600_000).toISOString(),
+    last_error: null,
+  };
+  if (pick === "error") {
+    return { ...connection, status: "needs_reconnect", last_error: "unauthorized" };
+  }
+  if (pick === "undecryptable") return { ...connection, last_error: "credential_undecryptable" };
+  if (pick === "disabled") return { ...connection, ad_account_active: false };
+  return connection;
+}
+
+/**
+ * The Ad campaigns card's fixture. The totals and the unmatched spend are
+ * computed from the rows, so they add up the way the server's do.
+ */
+export function mockAdCampaigns(currency = "USD"): AdCampaignsResponse {
+  const row = (
+    id: string,
+    name: string,
+    spend: number,
+    revenue: number,
+    orders: number,
+    matched: AdCampaignRow["matched_by"]
+  ): AdCampaignRow => ({
+    id,
+    name,
+    spend: { amount_minor: spend, currency },
+    spend_converted_minor: spend,
+    revenue_minor: revenue,
+    orders,
+    roas: spend > 0 ? revenue / spend : null,
+    roas_unavailable: spend > 0 ? null : "no_spend",
+    matched_by: matched,
+  });
+  const campaigns = [
+    row("120211000000001", "Black Friday prospecting", 184_250, 512_000, 41, "name"),
+    row("120211000000002", "Retargeting, 30-day visitors", 96_400, 371_500, 33, "name"),
+    row("120211000000003", "Lookalike, past buyers", 72_800, 58_900, 6, "name"),
+    row("120211000000004", "Founder video", 41_300, 0, 0, null),
+    row("120211000000005", "Newsletter lookalike", 18_900, 62_400, 5, "id"),
+  ];
+  const sum = (pick: (r: AdCampaignRow) => number) =>
+    campaigns.reduce((total, r) => total + pick(r), 0);
+  const spend = sum((r) => r.spend.amount_minor);
+  const revenue = sum((r) => r.revenue_minor);
+  const unmatched = campaigns.filter((r) => r.matched_by === null);
+  const unmatchedSpend = unmatched.reduce((total, r) => total + r.spend.amount_minor, 0);
+  return {
+    connection: {
+      status: "active",
+      ad_account_name: "Getopen Ads",
+      currency,
+      last_synced_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+      last_error: null,
+    },
+    currency,
+    from_day: "2026-10-24",
+    to_day: "2026-11-22",
+    campaigns,
+    totals: {
+      spend: { amount_minor: spend, currency },
+      spend_converted_minor: spend,
+      revenue_minor: revenue,
+      orders: sum((r) => r.orders),
+      roas: revenue / spend,
+      roas_unavailable: null,
+    },
+    unmatched: {
+      campaigns: unmatched.length,
+      spend: { amount_minor: unmatchedSpend, currency },
+      spend_converted_minor: unmatchedSpend,
+    },
   };
 }
 

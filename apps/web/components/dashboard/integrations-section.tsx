@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ApiErrorPanel } from "@/components/dashboard/api-error";
 import { FlowDialog } from "@/components/dashboard/flow-dialog";
 import { MentionsPanel } from "@/components/dashboard/mention-settings";
+import { MetaAdsPanel } from "@/components/dashboard/meta-ads-settings";
 import {
   ProviderMark,
   ProviderRowsSkeleton,
@@ -288,6 +289,8 @@ export function IntegrationsSection({ site }: { site: SiteSummary }) {
       />
       {/* Its own read and its own skeleton: the block waits on nothing the
           revenue panels hold, and the Mentions tab deep-links to it. */}
+      {/* Ad spend beside the revenue above: owner-only, its own read. */}
+      <MetaAdsPanel site={site} />
       <MentionsPanel site={site} />
       <AlertsPanel revealed={revealed} />
     </>
