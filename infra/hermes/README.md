@@ -105,13 +105,46 @@ override is meant to hold only secrets.
 
 ## Later upgrades
 
+Two things to do every time, both learned the hard way on 2026-11-23:
+
+- **Free the disk first.** Every release's images are about 6–8 GB here, and the
+  disk is 38 GB. With the previous release's images still on it, the pull runs
+  out of space after `upgrade.sh` has already stopped the stack. Remove the
+  images of every release except the one running now; any of them can be pulled
+  again if `rollback.sh` needs it.
+- **Run `upgrade.sh` on the server, detached.** It stops the stack before it
+  takes its snapshot. Started over an SSH session that then drops, it dies
+  halfway and leaves Caddy and the worker stopped, which loses every visit until
+  someone notices. Start it with `nohup setsid` and read its log.
+
 ```sh
 cd /opt/openanalytics
-git fetch perier --tags
-git checkout v0.9.1                    # whichever release
+git fetch origin --tags
+git checkout v0.11.1                   # whichever release
+git describe --tags --exact-match HEAD # must print the release before going on
+
+# Images of anything but the running release (its tag is OA_IMAGE_TAG in .env).
+RUNNING="$(grep '^OA_IMAGE_TAG=' infra/selfhost/.env | cut -d= -f2)"
+docker images --format '{{.Repository}}:{{.Tag}}' \
+  | grep '^ghcr.io/perierhq/openanalytics/' | grep -v ":$RUNNING$" \
+  | xargs -r docker rmi
+docker image prune -f
+df -h /                                # leave at least 10 GB free
+
 cd infra/selfhost
-OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh
+OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics \
+  nohup setsid ./upgrade.sh --yes > /root/oa-upgrade.log 2>&1 < /dev/null &
+tail -f /root/oa-upgrade.log           # ends with "upgrade: done. <old> -> <new>"
 ```
+
+After a good upgrade, delete the images of the release you came from the same
+way, so the next one starts with room. Snapshots in `backups/` are about 260 MB
+each and nothing removes them; keep the newest two and delete older directories
+by hand (`./snapshot.sh list` shows them).
+
+If an upgrade dies with the stack stopped and nothing migrated, start what was
+there: put the old tag back in `.env` (`OA_IMAGE_TAG`), check out that release,
+and run `docker compose up -d --pull never`.
 
 ## Checks after an upgrade
 
