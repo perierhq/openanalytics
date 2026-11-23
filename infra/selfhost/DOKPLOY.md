@@ -168,7 +168,7 @@ never to hand the variable to more services.
 
 ## Upgrades
 
-The images are pinned in the compose file (`v0.11.0` today), so a redeploy
+The images are pinned in the compose file (`v0.11.1` today), so a redeploy
 reinstalls the same release. To move: set `OA_IMAGE_TAG` in the Environment
 tab to the release you mean and redeploy — migrations re-run idempotently, the
 keygen and geoip one-shots short-circuit, and nothing regenerates behind your
