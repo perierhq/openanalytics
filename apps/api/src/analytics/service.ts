@@ -9,6 +9,13 @@ import {
   hasActiveFilters,
   MAX_FUNNEL_RANGE_MS,
   mergeImportedRows,
+  rankRevenueSegments,
+  REVENUE_SEGMENT_MIN_VISITORS,
+  REVENUE_SEGMENT_PRIOR_K,
+  REVENUE_SEGMENTS_MIN_BUYERS,
+  revenueSegmentsStatus,
+  revenueSiteRates,
+  withholdBesideLoneHidden,
   normalizeFilters,
   mergeSessionLayers,
   referrerPathForDisplay,
@@ -284,6 +291,11 @@ export interface RevenueJourneyRequest extends RevenueRequest {
 export interface RevenueAttributionRequest extends RevenueRequest {
   readonly touch: Schemas['RevenueAttributionTouch']
   readonly dimension: Schemas['RevenueAttributionDimension']
+  readonly limit: number
+}
+
+/** Revenue by segment: source × country × device. */
+export interface RevenueSegmentsRequest extends RevenueRequest {
   readonly limit: number
 }
 
@@ -2708,6 +2720,142 @@ export class AnalyticsService {
       revenueMinor: num(row['revenue_minor']),
       orders: num(row['orders']),
     }))
+  }
+
+  /**
+   * Visitor segments (entry referrer × country × device) by conversion and
+   * value per visitor, smoothed toward the site's own rates.
+   *
+   * Two reads, and the second depends on the first: the totals read gives the
+   * site's rates and the hidden-segment count, and the segments read is
+   * ranked in ClickHouse against the site's value per visitor so its limit
+   * keeps the rows this method would have put first. Under the minimum
+   * (`revenueSegmentsStatus`) the segments read is not sent at all. The
+   * smoothing and the final order are `rankRevenueSegments`, one definition
+   * for every surface. With exactly one segment hidden, one more row is read
+   * and the smallest is withheld beside it (`withholdBesideLoneHidden`).
+   *
+   * Capped at 92 days, the session-fact cap, refused by name here before the
+   * gateway sees it.
+   */
+  async revenueSegments(req: RevenueSegmentsRequest): Promise<Schemas['RevenueSegmentsResponse']> {
+    const range = revenueAttributionRange(req, MAX_FUNNEL_RANGE_MS / 86_400_000)
+    const [totals, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        'analytics.revenue_segment_totals',
+        { site_id: req.siteId, from: range.from, to: range.to },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+
+    const row = totals.rows[0] ?? {}
+    const site = {
+      visitors: num(row['visitors']),
+      buyers: num(row['buyers']),
+      orders: num(row['orders']),
+      revenueMinor: num(row['revenue_minor']),
+      unconvertedOrders: num(row['unconverted_orders']),
+    }
+    // Buyers who are not visitors of the range: their purchases are in no
+    // count above, and the screen says how many there were.
+    const leftOut = {
+      beforeRange: num(row['buyers_last_visit_before_range']),
+      missing: num(row['buyers_last_visit_missing']),
+    }
+    const shownTotal = num(row['segments']) - num(row['hidden_segments'])
+    let hidden = num(row['hidden_segments'])
+    let shownLeft = shownTotal
+    // One hidden segment would be the site totals minus the shown ones, so
+    // one more row is read to withhold beside it (`withholdBesideLoneHidden`).
+    const spare = hidden === 1 ? 1 : 0
+    const status = revenueSegmentsStatus(site)
+    const rates = revenueSiteRates(site)
+
+    let segments: Schemas['RevenueSegment'][] = []
+    let segmentsCached = true
+    if (status === 'ok') {
+      const result = await this.#gateway.query<Record<string, unknown>>(
+        'analytics.revenue_segments',
+        {
+          site_id: req.siteId,
+          from: range.from,
+          to: range.to,
+          prior_value_minor: rates.valuePerVisitorMinor ?? 0,
+          limit: Math.min(req.limit + spare, TOP_N_MAX),
+        },
+        { cacheEpoch: req.cacheEpoch },
+      )
+      segmentsCached = result.meta.cached
+      const ranked = rankRevenueSegments(
+        result.rows.map((segment) => ({
+          source: str(segment['source']),
+          country: str(segment['country']),
+          device: str(segment['device']),
+          visitors: num(segment['visitors']),
+          buyers: num(segment['buyers']),
+          orders: num(segment['orders']),
+          revenueMinor: num(segment['revenue_minor']),
+          unconvertedOrders: num(segment['unconverted_orders']),
+        })),
+        site,
+      )
+      const kept = withholdBesideLoneHidden(ranked.slice(0, req.limit + spare), hidden)
+      shownLeft -= kept.hidden - hidden
+      hidden = kept.hidden
+      segments = kept.segments.slice(0, req.limit).map((score) => ({
+        source: score.source,
+        country: score.country,
+        device: score.device,
+        visitors: score.visitors,
+        buyers: score.buyers,
+        orders: score.orders,
+        revenue_minor: score.revenueMinor,
+        unconverted_orders: score.unconvertedOrders,
+        conversion_rate: score.conversionRate,
+        smoothed_conversion_rate: score.smoothedConversionRate,
+        average_order_value_minor: score.averageOrderValueMinor,
+        value_per_visitor_minor: score.valuePerVisitorMinor,
+        smoothed_value_per_visitor_minor: score.smoothedValuePerVisitorMinor,
+        confidence: score.confidence,
+      }))
+    }
+
+    return {
+      meta: {
+        ...this.#meta({
+          requested: { from: req.from, to: req.to },
+          effective: range,
+          timezone: req.timezone,
+          resolution: 'hour',
+          freshness: this.#revenueFreshness(freshness, req.connection),
+          comparisonRange: null,
+          truncated: status === 'ok' && shownLeft > segments.length,
+          cached: totals.meta.cached && segmentsCached,
+        }),
+        revenue: this.#revenueMeta(req.connection),
+      },
+      status,
+      currency: req.reportingCurrency,
+      site: {
+        visitors: site.visitors,
+        buyers: site.buyers,
+        orders: site.orders,
+        revenue_minor: site.revenueMinor,
+        unconverted_orders: site.unconvertedOrders,
+        buyers_last_visit_before_range: leftOut.beforeRange,
+        buyers_last_visit_missing: leftOut.missing,
+        conversion_rate: rates.conversionRate,
+        value_per_visitor_minor: rates.valuePerVisitorMinor,
+      },
+      segments,
+      hidden_segments: hidden,
+      thresholds: {
+        min_buyers: REVENUE_SEGMENTS_MIN_BUYERS,
+        min_segment_visitors: REVENUE_SEGMENT_MIN_VISITORS,
+      },
+      prior: { k: REVENUE_SEGMENT_PRIOR_K },
+    }
   }
 
   /**

@@ -17,6 +17,8 @@ import {
   funnelPagePatternToLike,
   funnelStepsSchema,
   parseFunnelStep,
+  REVENUE_SEGMENT_MIN_VISITORS,
+  REVENUE_SEGMENT_PRIOR_K,
   type AnalyticsFilter,
   type RollupResolution,
 } from '@openanalytics/domain'
@@ -3565,6 +3567,295 @@ const revenueEventsBeforePurchaseOperation = defineOperation({
   }),
 })
 
+// ---------------------------------------------------------------------------
+// Revenue by segment: which visitors convert, and what they are worth.
+//
+// A segment is (entry referrer domain, country, device type). Two operations,
+// both aggregates only -- a segment key with counts, never a visitor, an
+// order or a customer:
+//
+//   * `analytics.revenue_segment_totals` -- one row: the site's visitors,
+//     attributed buyers, orders and revenue over the range, the buyers left
+//     out because their last visit is not one of the range, and how many
+//     segments exist and how many fall under the shown threshold.
+//   * `analytics.revenue_segments` -- the shown segments, ranked by smoothed
+//     value per visitor toward the site's value per visitor (bound by the
+//     api from the totals read), so the limit cuts the right rows.
+//
+// Visitors per segment come from the session facts, exactly as the
+// attribution visitors read counts them (see "Visitors per dimension value"
+// above): uniqExact of `visitor_id` over current, unretracted sessions that
+// STARTED in the range, grouped by the session's entry referrer, country and
+// device. A visitor whose sessions entered two ways counts in both segments,
+// which is why the site total is its own uniqExact (the `()` grouping set)
+// rather than a sum.
+//
+// Buyers, orders and revenue come from the charge facts and their current
+// attribution row, last touch: the segment of a purchase is the referrer the
+// attribution's last touch names and the country and device of that same
+// session (`lt_session_id`, read by sort key inside the range).
+//
+// A purchase counts only when its last-touch session is a visit of the range:
+// the attribution says it started at or after `from`, and the session fact is
+// there and not retracted. Otherwise the buyer is not one of the visitors the
+// rate divides by, and counting them would push every rate up by buyers who
+// came from outside the population. Those buyers are counted instead, once
+// each, in `buyers_last_visit_before_range` (their last visit started before
+// the range) and `buyers_last_visit_missing` (it is retracted or was never
+// recorded), and a buyer with any counted purchase is in `buyers` only, so
+// the three add up to every attributed buyer of the range.
+//
+// Conversions only: a new subscription or a one-off purchase (gap 7's
+// purchase-kind join). Renewals and plan changes are neither orders nor
+// revenue here, unlike the by-source breakdown, so that average order value
+// is revenue over the orders that produced it and value per visitor is what a
+// visit turned into, not what a subscription renewed into later. Revenue is
+// the reporting-currency gross of converted charges; an order with no usable
+// rate is counted in `unconverted_orders` and never folded in as zero.
+// Unattributed charges have no segment and are not counted at all.
+//
+// One pass per source: the visitors, per segment and site-wide, come from one
+// read of the session facts by `GROUPING SETS ((src, ctry, dev), ())`, and the
+// purchases the same way, so each operation reads the session facts twice
+// (the visitors, and the last-touch sessions by id) rather than once per
+// figure.
+//
+// Range capped at 92 days, the session-fact scan cap every read here shares.
+// ---------------------------------------------------------------------------
+
+/** Most segments one ranked read returns. */
+const REVENUE_SEGMENTS_MAX_ROWS = TOP_N_MAX
+
+/** Current, unretracted sessions that started in the range, with their segment. */
+const SEGMENT_SESSIONS = [
+  '      SELECT',
+  '        argMax(sfv.referrer_domain, sfv.version) AS src,',
+  '        argMax(sfv.country, sfv.version) AS ctry,',
+  '        argMax(sfv.device_type, sfv.version) AS dev,',
+  '        argMax(sfv.visitor_id, sfv.version) AS visitor_id,',
+  '        argMax(sfv.retracted, sfv.version) AS retracted',
+  '      FROM session_facts_versions AS sfv',
+  '      WHERE sfv.site_id = {site_id:UUID}',
+  "        AND sfv.session_start >= toDateTime64({from:String}, 3, 'UTC')",
+  "        AND sfv.session_start <  toDateTime64({to:String}, 3, 'UTC')",
+  '      GROUP BY sfv.site_id, sfv.session_id',
+].join('\n')
+
+/**
+ * Attributed conversions of the range, one row per charge, with their segment
+ * and whether they count: `counted` when the last-touch session is a visit of
+ * the range, `before_range` when it started before it. Neither is a last
+ * touch that is retracted or missing.
+ */
+const SEGMENT_PURCHASES = [
+  '      SELECT',
+  '        att.visitor_id AS visitor_id,',
+  '        att.src AS src,',
+  '        lts.ctry AS ctry,',
+  '        lts.dev AS dev,',
+  '        cur.reporting_gross_minor AS reporting_gross_minor,',
+  '        cur.conversion_source AS conversion_source,',
+  '        toUInt8(att.lt_in_range = 1 AND lts.found = 1) AS counted,',
+  '        toUInt8(att.lt_in_range = 0) AS before_range',
+  '      FROM (',
+  ATTRIBUTION_CHARGE_FACTS.replace(/^/gm, '      '),
+  '      ) AS cur',
+  '      INNER JOIN (',
+  '        SELECT',
+  '          ra.object_id AS object_id,',
+  '          argMax(ra.visitor_id, ra.version) AS visitor_id,',
+  '          argMax(ra.lt_referrer_domain, ra.version) AS src,',
+  '          argMax(ra.lt_session_id, ra.version) AS lt_session_id,',
+  "          toUInt8(argMax(ra.lt_session_start, ra.version) >= toDateTime64({from:String}, 3, 'UTC')) AS lt_in_range",
+  '        FROM revenue_attributions AS ra',
+  '        WHERE ra.site_id = {site_id:UUID}',
+  "          AND ra.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+  "          AND ra.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+  '        GROUP BY ra.site_id, ra.provider, ra.object_id',
+  '      ) AS att ON att.object_id = cur.object_id',
+  // A last touch of the range started inside it, so the session lookup needs
+  // no lookback; `found` is 0 on the rows the LEFT JOIN did not match.
+  '      LEFT JOIN (',
+  '        SELECT',
+  '          sfv.session_id AS session_id,',
+  '          argMax(sfv.country, sfv.version) AS ctry,',
+  '          argMax(sfv.device_type, sfv.version) AS dev,',
+  '          toUInt8(1) AS found',
+  '        FROM session_facts_versions AS sfv',
+  '        WHERE sfv.site_id = {site_id:UUID}',
+  "          AND sfv.session_start >= toDateTime64({from:String}, 3, 'UTC')",
+  "          AND sfv.session_start <  toDateTime64({to:String}, 3, 'UTC')",
+  '          AND sfv.session_id IN (',
+  '            SELECT ra_lt.lt_session_id',
+  '            FROM revenue_attributions AS ra_lt',
+  '            WHERE ra_lt.site_id = {site_id:UUID}',
+  "              AND ra_lt.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+  "              AND ra_lt.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+  "              AND ra_lt.lt_session_id != ''",
+  '          )',
+  '        GROUP BY sfv.site_id, sfv.session_id',
+  '        HAVING argMax(sfv.retracted, sfv.version) = 0',
+  '      ) AS lts ON lts.session_id = att.lt_session_id',
+  `      WHERE ${ATTRIBUTION_CHARGE_ELIGIBLE.join('\n        AND ')}`,
+  '        AND cur.is_conversion = 1',
+  "        AND att.visitor_id != ''",
+].join('\n')
+
+/** A row of `SEGMENT_COUNTS` that is a segment with something in it, not the site row. */
+const SEGMENT_ROW = '(seg.site_row = 0 AND (seg.visitors > 0 OR seg.orders > 0))'
+
+/**
+ * Every segment of the range with its counts, plus one row for the whole site
+ * (`site_row = 1`, empty key). The session side and the purchase side each
+ * aggregate once over `GROUPING SETS ((src, ctry, dev), ())` -- the segment
+ * rows and the site row from the same pass -- and are unioned and summed per
+ * key, so a segment with visitors and no buyer and one with a buyer and no
+ * visitor in the range both appear. `grouping(...)` tells the site row from
+ * the segment whose key is all empty (Direct, unknown country and device),
+ * which a key comparison could not. A key that only excluded purchases
+ * produced has nothing in it; the readers below skip it.
+ */
+const SEGMENT_COUNTS = [
+  '  SELECT',
+  '    u.site_row AS site_row,',
+  '    u.src AS source,',
+  '    u.ctry AS country,',
+  '    u.dev AS device,',
+  '    sum(u.visitors) AS visitors,',
+  '    sum(u.buyers) AS buyers,',
+  '    sum(u.orders) AS orders,',
+  '    sum(u.revenue_minor) AS revenue_minor,',
+  '    sum(u.unconverted_orders) AS unconverted_orders,',
+  '    sum(u.buyers_before_range) AS buyers_before_range,',
+  '    sum(u.buyers_missing) AS buyers_missing',
+  '  FROM (',
+  '    SELECT',
+  '      toUInt8(grouping(src, ctry, dev) != 0) AS site_row,',
+  '      toString(s.src) AS src,',
+  '      toString(s.ctry) AS ctry,',
+  '      toString(s.dev) AS dev,',
+  '      toUInt64(uniqExact(s.visitor_id)) AS visitors,',
+  '      toUInt64(0) AS buyers,',
+  '      toUInt64(0) AS orders,',
+  '      toInt64(0) AS revenue_minor,',
+  '      toUInt64(0) AS unconverted_orders,',
+  '      toUInt64(0) AS buyers_before_range,',
+  '      toUInt64(0) AS buyers_missing',
+  '    FROM (',
+  SEGMENT_SESSIONS,
+  '    ) AS s',
+  '    WHERE s.retracted = 0',
+  '    GROUP BY GROUPING SETS ((src, ctry, dev), ())',
+  '    UNION ALL',
+  '    SELECT',
+  '      toUInt8(grouping(src, ctry, dev) != 0) AS site_row,',
+  '      toString(p.src) AS src,',
+  '      toString(p.ctry) AS ctry,',
+  '      toString(p.dev) AS dev,',
+  '      toUInt64(0) AS visitors,',
+  '      toUInt64(uniqExactIf(p.visitor_id, p.counted = 1)) AS buyers,',
+  '      toUInt64(countIf(p.counted = 1)) AS orders,',
+  "      toInt64(sumIf(p.reporting_gross_minor, p.counted = 1 AND p.conversion_source != 'unavailable')) AS revenue_minor,",
+  "      toUInt64(countIf(p.counted = 1 AND p.conversion_source = 'unavailable')) AS unconverted_orders,",
+  // Once per buyer: a buyer with any counted purchase is a buyer, one with an
+  // earlier last visit and none counted is "before the range", and the rest
+  // had a last touch that is retracted or missing.
+  '      toUInt64(uniqExactIf(p.visitor_id, p.counted = 1 OR p.before_range = 1) - uniqExactIf(p.visitor_id, p.counted = 1)) AS buyers_before_range,',
+  '      toUInt64(uniqExact(p.visitor_id) - uniqExactIf(p.visitor_id, p.counted = 1 OR p.before_range = 1)) AS buyers_missing',
+  '    FROM (',
+  SEGMENT_PURCHASES,
+  '    ) AS p',
+  '    GROUP BY GROUPING SETS ((src, ctry, dev), ())',
+  '  ) AS u',
+  '  GROUP BY site_row, source, country, device',
+].join('\n')
+
+const revenueSegmentRangeParams = {
+  site_id: z.uuid(),
+  from: utcInstantSchema,
+  to: utcInstantSchema,
+}
+
+const revenueSegmentTotalsOperation = defineOperation({
+  id: 'analytics.revenue_segment_totals',
+  summary:
+    'Site visitors, attributed buyers, orders and revenue in a range, the buyers left out, and how many referrer x country x device segments it has and hides.',
+  requiresSiteScope: true,
+  cacheProfile: 'default',
+  params: z
+    .strictObject(revenueSegmentRangeParams)
+    .superRefine((value, ctx) =>
+      halfOpenSpan(value, ctx, REVENUE_FACT_SCAN_MAX_SPAN_MS, 'revenue segments'),
+    ),
+  sql: [
+    'SELECT',
+    '  toUInt64(sumIf(seg.visitors, seg.site_row = 1)) AS visitors,',
+    '  toUInt64(sumIf(seg.buyers, seg.site_row = 1)) AS buyers,',
+    '  toUInt64(sumIf(seg.orders, seg.site_row = 1)) AS orders,',
+    '  toInt64(sumIf(seg.revenue_minor, seg.site_row = 1)) AS revenue_minor,',
+    '  toUInt64(sumIf(seg.unconverted_orders, seg.site_row = 1)) AS unconverted_orders,',
+    '  toUInt64(sumIf(seg.buyers_before_range, seg.site_row = 1)) AS buyers_last_visit_before_range,',
+    '  toUInt64(sumIf(seg.buyers_missing, seg.site_row = 1)) AS buyers_last_visit_missing,',
+    `  toUInt64(countIf(${SEGMENT_ROW})) AS segments,`,
+    `  toUInt64(countIf(${SEGMENT_ROW} AND seg.visitors < ${REVENUE_SEGMENT_MIN_VISITORS})) AS hidden_segments`,
+    'FROM (',
+    SEGMENT_COUNTS,
+    ') AS seg',
+  ].join('\n'),
+  maxRows: 1,
+  bind: (params) => ({
+    site_id: params.site_id,
+    from: toClickHouseInstant(params.from),
+    to: toClickHouseInstant(params.to),
+  }),
+})
+
+const revenueSegmentsOperation = defineOperation({
+  id: 'analytics.revenue_segments',
+  summary:
+    'Referrer x country x device segments with visitors, attributed buyers, orders and revenue, ranked by smoothed value per visitor.',
+  requiresSiteScope: true,
+  cacheProfile: 'default',
+  params: z
+    .strictObject({
+      ...revenueSegmentRangeParams,
+      /** The site's value per visitor in the range, which the ranking smooths toward. */
+      prior_value_minor: z.number().finite().min(0),
+      limit: z.number().int().min(1).max(REVENUE_SEGMENTS_MAX_ROWS),
+    })
+    .superRefine((value, ctx) =>
+      halfOpenSpan(value, ctx, REVENUE_FACT_SCAN_MAX_SPAN_MS, 'revenue segments'),
+    ),
+  sql: [
+    'SELECT',
+    '  seg.source AS source,',
+    '  seg.country AS country,',
+    '  seg.device AS device,',
+    '  seg.visitors AS visitors,',
+    '  seg.buyers AS buyers,',
+    '  seg.orders AS orders,',
+    '  seg.revenue_minor AS revenue_minor,',
+    '  seg.unconverted_orders AS unconverted_orders',
+    'FROM (',
+    SEGMENT_COUNTS,
+    `  HAVING visitors >= ${REVENUE_SEGMENT_MIN_VISITORS} AND site_row = 0`,
+    ') AS seg',
+    // The api's own ranking (`rankRevenueSegments`), so the limit keeps the
+    // rows the api would have put first. Ties: bigger segment, then the key.
+    `ORDER BY (revenue_minor + ${REVENUE_SEGMENT_PRIOR_K} * {prior_value_minor:Float64}) / (visitors + ${REVENUE_SEGMENT_PRIOR_K}) DESC,`,
+    '  visitors DESC, source ASC, country ASC, device ASC',
+    'LIMIT {limit:UInt32}',
+  ].join('\n'),
+  maxRows: REVENUE_SEGMENTS_MAX_ROWS,
+  bind: (params) => ({
+    site_id: params.site_id,
+    from: toClickHouseInstant(params.from),
+    to: toClickHouseInstant(params.to),
+    prior_value_minor: params.prior_value_minor,
+    limit: params.limit,
+  }),
+})
+
 const revenueAttributionOperations: readonly QueryOperation[] = [
   ...REVENUE_ATTRIBUTION_TOUCHES.flatMap((touch) =>
     REVENUE_ATTRIBUTION_DIMENSIONS.map((dimension) =>
@@ -3574,6 +3865,8 @@ const revenueAttributionOperations: readonly QueryOperation[] = [
   ...REVENUE_ATTRIBUTION_DIMENSIONS.map((dimension) => defineRevenueAttributionVisitors(dimension)),
   revenuePurchasePopulationOperation,
   revenueEventsBeforePurchaseOperation,
+  revenueSegmentTotalsOperation,
+  revenueSegmentsOperation,
 ]
 
 // ---------------------------------------------------------------------------

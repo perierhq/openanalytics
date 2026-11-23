@@ -208,6 +208,10 @@ export type RevenueAttributionTouch = Schemas["RevenueAttributionTouch"];
 export type RevenueAttributionDimension = Schemas["RevenueAttributionDimension"];
 export type RevenueAttributionRow = Schemas["RevenueAttributionRow"];
 export type RevenueAttributionResponse = Schemas["RevenueAttributionResponse"];
+/** Revenue by segment: entry referrer × country × device, smoothed. */
+export type RevenueSegment = Schemas["RevenueSegment"];
+export type RevenueSegmentConfidence = Schemas["RevenueSegmentConfidence"];
+export type RevenueSegmentsResponse = Schemas["RevenueSegmentsResponse"];
 export type Money = Schemas["Money"];
 export type SiteMentionSettings = Schemas["SiteMentionSettings"];
 export type UpdateSiteMentionSettings =
@@ -576,6 +580,26 @@ export const revenue = {
         ...(dimension ? { dimension } : {}),
         ...(limit ? { limit: String(limit) } : {}),
       }
+    );
+  },
+
+  /**
+   * Visitor segments (entry referrer × country × device), ranked by smoothed
+   * value per visitor. `status: 'insufficient_data'` under 10 attributed
+   * buyers, with no segments and the site's counts. At most 92 days.
+   */
+  segments: (
+    siteId: string,
+    range: AnalyticsRange,
+    options?: RequestOptions & { limit?: number }
+  ) => {
+    const { limit, ...rest } = options ?? {};
+    return analyticsRevenueGet<RevenueSegmentsResponse>(
+      siteId,
+      "segments",
+      range,
+      rest,
+      limit ? { limit: String(limit) } : undefined
     );
   },
 

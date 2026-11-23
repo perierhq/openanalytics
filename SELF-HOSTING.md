@@ -923,6 +923,7 @@ they do in the dashboard. The read tools:
 | `list_notes`                                                                                       | `analytics:read` | Notes the team pinned to moments on a site's chart, newest first       |
 | `revenue_summary`, `revenue_timeseries`                                                            | `revenue:read`   | Revenue totals and buckets. Owners only                                |
 | `revenue_by_source`, `events_before_purchase`                                                      | `revenue:read`   | Revenue by source or entry page; events before buying. Owners only     |
+| `revenue_segments`                                                                                 | `revenue:read`   | Visitor segments (source × country × device) by value. Owners only     |
 | `subscription_summary`, `subscription_timeseries`                                                  | `revenue:read`   | MRR, churn, trials and new vs renewal charges. Owners only             |
 | `ads_campaigns`                                                                                    | `revenue:read`   | Meta ad spend, revenue and ROAS per campaign. Owners only              |
 | `team_members`                                                                                     | `team:read`      | A site's members, with email addresses                                 |

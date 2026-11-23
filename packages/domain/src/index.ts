@@ -964,3 +964,24 @@ export {
   type IngestExclusionsIssue,
   type IngestExclusionsResult,
 } from './ingest-exclusions.ts'
+
+/** Revenue by segment (source × country × device): the smoothing maths. */
+export {
+  REVENUE_SEGMENT_CONFIDENCE_EDGES,
+  REVENUE_SEGMENT_MIN_VISITORS,
+  REVENUE_SEGMENT_PRIOR_K,
+  REVENUE_SEGMENTS_MIN_BUYERS,
+  isRevenueSegmentShown,
+  rankRevenueSegments,
+  revenueSegmentConfidence,
+  revenueSegmentsStatus,
+  revenueSiteRates,
+  scoreRevenueSegment,
+  smoothTowardPrior,
+  withholdBesideLoneHidden,
+  type RevenueSegmentConfidence,
+  type RevenueSegmentCounts,
+  type RevenueSegmentScore,
+  type RevenueSegmentsPrior,
+  type RevenueSegmentsStatus,
+} from './revenue-segments.ts'

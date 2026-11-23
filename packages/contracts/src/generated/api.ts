@@ -1116,6 +1116,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/read/revenue/segments": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Visitor segments (source × country × device) by conversion and value per visitor, for the selected site. Session or OAuth, and owner-only.
+         * @description The same numbers, in the same shape, as
+         *     `GET /v1/sites/{site_id}/revenue/segments`, behind the same two checks
+         *     as `/v1/read/revenue/summary`: the `revenue:read` scope and the
+         *     owner-only capability. Aggregates only, which is why it travels to this
+         *     surface when `transactions` and `journey` do not (ADR-0049). Closed to
+         *     private keys for the reason the summary is.
+         */
+        get: operations["readRevenueSegments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/read/revenue/subscriptions/summary": {
         parameters: {
             query: {
@@ -6104,6 +6165,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{site_id}/revenue/segments": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Which visitor segments convert, and what a visit from each is worth. Requires `revenue:read` (owner-only).
+         * @description Visitor segments over the range, one per (entry referrer domain,
+         *     country, device type), with their visitors, attributed buyers, orders
+         *     and revenue, conversion rate, average order value and value per
+         *     visitor. Segment-level only: no visitor, customer or order id, and no
+         *     score on any person.
+         *
+         *     **Visitors** are the unique visitors whose session started in the
+         *     range, keyed by that session's entry referrer, country and device (the
+         *     session facts, as `/revenue/attribution` counts them). A visitor who
+         *     entered two ways counts in both segments, so the segments do not add
+         *     up to `site.visitors`.
+         *
+         *     **Buyers, orders and revenue** come from the charges' attribution,
+         *     last touch: the segment of a purchase is the last touch's referrer and
+         *     the country and device of that session. Conversions only: a charge
+         *     that started a subscription or was a one-off purchase. Renewals and
+         *     plan changes are neither orders nor revenue here, so
+         *     `average_order_value_minor` is revenue over the orders that produced
+         *     it. Revenue is the reporting-currency gross of converted charges; an
+         *     order with no usable exchange rate is counted in `unconverted_orders`
+         *     and is missing from the revenue, never folded in as zero. Failed,
+         *     canceled and unattributed charges count nowhere.
+         *
+         *     **Only buyers who are visitors of the range.** A purchase counts when
+         *     its last-touch session started inside the range and is still in the
+         *     session facts, so every buyer is one of the visitors the rates divide
+         *     by. A buyer whose last visit started before the range is left out and
+         *     counted in `site.buyers_last_visit_before_range`; one whose last-touch
+         *     session was retracted or never recorded, in
+         *     `site.buyers_last_visit_missing`. A buyer with any purchase that counts
+         *     is in `site.buyers` only, so the three add up to every attributed
+         *     buyer of the range.
+         *
+         *     **Smoothing.** Small segments are pulled toward the site's own rate so
+         *     a handful of visits cannot look like a sure thing:
+         *     `smoothed = (count + k × site_rate) / (visitors + k)` with
+         *     `k = prior.k` (200), for the conversion rate (toward
+         *     `site.conversion_rate`) and for value per visitor (toward
+         *     `site.value_per_visitor_minor`). Rows come sorted by
+         *     `smoothed_value_per_visitor_minor`, highest first; both the raw and
+         *     the smoothed figures are returned.
+         *
+         *     **What is left out.** A segment with fewer than
+         *     `thresholds.min_segment_visitors` (20) visitors is not returned;
+         *     `hidden_segments` says how many there were. When exactly one is, the
+         *     smallest shown segment is withheld with it and counted there too, so
+         *     no hidden segment can be worked out by subtracting the shown ones from
+         *     `site`. With fewer than
+         *     `thresholds.min_buyers` (10) attributed buyers in the range, or no
+         *     visitors at all, `status` is `insufficient_data`, `segments` is empty
+         *     and `site` still carries the counts.
+         *
+         *     The range is at most 92 days (`RANGE_TOO_LARGE` above that), the
+         *     session-fact cap every visitors read shares.
+         */
+        get: operations["getRevenueSegments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/revenue/webhooks/{provider}/{webhook_token}": {
         parameters: {
             query?: never;
@@ -9762,6 +9907,142 @@ export interface components {
             rows: components["schemas"]["RevenueEventBeforePurchaseRow"][];
         };
         /**
+         * @description How far a segment's own numbers can be trusted: `low` under 100
+         *     visitors or under 3 buyers, `high` at 1,000 visitors and 10 buyers or
+         *     more, `medium` in between.
+         * @enum {string}
+         */
+        RevenueSegmentConfidence: "low" | "medium" | "high";
+        RevenueSegment: {
+            /** @description The session's entry referrer domain. The empty string is Direct (no referrer). */
+            source: string;
+            /** @description ISO 3166-1 alpha-2 country of the session, or the empty string when unknown. */
+            country: string;
+            /** @description Device type of the session (`desktop`, `mobile`, `tablet`, …), or the empty string when unknown. */
+            device: string;
+            /**
+             * Format: int64
+             * @description Unique visitors whose session started in the range in this segment.
+             */
+            visitors: number;
+            /**
+             * Format: int64
+             * @description Distinct attributed identities with a conversion whose last touch is in this segment.
+             */
+            buyers: number;
+            /**
+             * Format: int64
+             * @description Conversions (new subscriptions and one-off purchases), converted to the reporting currency or not.
+             */
+            orders: number;
+            /**
+             * Format: int64
+             * @description Reporting-currency gross of the converted orders, in the minor unit of `currency`.
+             */
+            revenue_minor: number;
+            /**
+             * Format: int64
+             * @description Orders with no usable exchange rate, missing from `revenue_minor`.
+             */
+            unconverted_orders: number;
+            /** @description `buyers / visitors`, unsmoothed; `null` with no visitors. */
+            conversion_rate: number | null;
+            /** @description `(buyers + k × site.conversion_rate) / (visitors + k)`. */
+            smoothed_conversion_rate: number;
+            /** @description `revenue_minor / orders`, unrounded; `null` with no orders. */
+            average_order_value_minor: number | null;
+            /** @description `revenue_minor / visitors`, unsmoothed and unrounded; `null` with no visitors. */
+            value_per_visitor_minor: number | null;
+            /** @description `(revenue_minor + k × site.value_per_visitor_minor) / (visitors + k)`, unrounded. The sort key. */
+            smoothed_value_per_visitor_minor: number;
+            confidence: components["schemas"]["RevenueSegmentConfidence"];
+        };
+        RevenueSegmentsResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            /**
+             * @description `insufficient_data` when the range has fewer than
+             *     `thresholds.min_buyers` attributed buyers or no visitors; then
+             *     `segments` is empty and `site` says how far off it is.
+             * @enum {string}
+             */
+            status: "ok" | "insufficient_data";
+            /** @description The site's reporting currency, which every `*_minor` field is in. */
+            currency: string;
+            /** @description The whole site over the range, the rates every segment is smoothed toward. */
+            site: {
+                /**
+                 * Format: int64
+                 * @description Unique visitors with a session in the range.
+                 */
+                visitors: number;
+                /**
+                 * Format: int64
+                 * @description Distinct attributed identities with a conversion in the range
+                 *     whose last visit was a session of the range.
+                 */
+                buyers: number;
+                /**
+                 * Format: int64
+                 * @description Conversions only: new subscriptions and one-off purchases in the
+                 *     range whose last visit was a session of the range. Renewals and
+                 *     plan changes are not orders here, so this is not the site's
+                 *     order count.
+                 */
+                orders: number;
+                /**
+                 * Format: int64
+                 * @description Reporting-currency gross of the converted `orders`, in the minor
+                 *     unit of `currency`: new revenue from conversions, not the
+                 *     site's revenue. Renewals and plan changes are not in it.
+                 */
+                revenue_minor: number;
+                /**
+                 * Format: int64
+                 * @description Of `orders`, those with no usable exchange rate, missing from `revenue_minor`.
+                 */
+                unconverted_orders: number;
+                /**
+                 * Format: int64
+                 * @description Attributed buyers with a conversion in the range whose last
+                 *     visit started before it, and none after: not in `buyers`,
+                 *     `orders` or `revenue_minor`, because they are not visitors of
+                 *     the range.
+                 */
+                buyers_last_visit_before_range: number;
+                /**
+                 * Format: int64
+                 * @description Attributed buyers left out because their last-touch session was
+                 *     retracted or never recorded, and who are in neither `buyers` nor
+                 *     `buyers_last_visit_before_range`.
+                 */
+                buyers_last_visit_missing: number;
+                /** @description `buyers / visitors`; `null` with no visitors. */
+                conversion_rate: number | null;
+                /** @description `revenue_minor / visitors`, unrounded; `null` with no visitors. */
+                value_per_visitor_minor: number | null;
+            };
+            /** @description Shown segments, highest `smoothed_value_per_visitor_minor` first, at most `limit`. */
+            segments: components["schemas"]["RevenueSegment"][];
+            /**
+             * Format: int64
+             * @description Segments left out: those with fewer than
+             *     `thresholds.min_segment_visitors` visitors and, when exactly one
+             *     is, the smallest shown segment with it, so the site totals minus
+             *     the shown segments are never one hidden segment's own counts.
+             */
+            hidden_segments: number;
+            thresholds: {
+                /** @description Attributed buyers the range needs before any segment is ranked (10). */
+                min_buyers: number;
+                /** @description Visitors a segment needs to be shown (20). */
+                min_segment_visitors: number;
+            };
+            prior: {
+                /** @description How many visitors' worth of weight the site-wide rate carries in the smoothing (200). */
+                k: number;
+            };
+        };
+        /**
          * @description One bucket, with `RevenueTotals`' measures inlined. Written out rather
          *     than composed with `allOf`, because every schema here is
          *     `additionalProperties: false` and a composed one cannot then carry an
@@ -13166,6 +13447,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RevenueEventsBeforePurchaseResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readRevenueSegments: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's rates and its segments, most valuable per visitor first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevenueSegmentsResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];
@@ -18771,6 +19114,43 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["ForbiddenOrSuspended"];
             404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getRevenueSegments: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /** @description Maximum rows to return for a top-N report. */
+                limit?: components["parameters"]["TopNLimit"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's rates and its segments, most valuable per visitor first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevenueSegmentsResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
             503: components["responses"]["AnalyticsUnavailable"];
         };
     };

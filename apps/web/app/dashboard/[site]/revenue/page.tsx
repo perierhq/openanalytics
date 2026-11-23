@@ -6,6 +6,7 @@ import { IntervalProvider } from "@/components/dashboard/interval-context";
 import { IntervalSelect } from "@/components/dashboard/interval-select";
 import { RevenueBySource } from "@/components/dashboard/revenue-by-source";
 import { RevenueOverview } from "@/components/dashboard/revenue-overview";
+import { RevenueSegments } from "@/components/dashboard/revenue-segments";
 import { RevenueTransactions } from "@/components/dashboard/revenue-transactions";
 import { SubscriptionOverview } from "@/components/dashboard/subscription-overview";
 import { SquircleSurface } from "@/components/ui/squircle-card";
@@ -72,6 +73,9 @@ export default function RevenuePage() {
 
             {/* Where the money came from, before the lines behind it. */}
             <RevenueBySource siteId={site.data.site_id} />
+
+            {/* Which kinds of visitors convert, and what a visit is worth. */}
+            <RevenueSegments siteId={site.data.site_id} />
 
             <SquircleSurface
               className="flex flex-col border border-border p-1 shadow-[0_1px_2px_rgba(0,0,0,0.06)]"

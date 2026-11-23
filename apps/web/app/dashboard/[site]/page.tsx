@@ -20,6 +20,7 @@ import {
   RealtimeCard,
 } from "@/components/dashboard/realtime-card";
 import { RevenueCard } from "@/components/dashboard/revenue-card";
+import { MostValuableTrafficCard } from "@/components/dashboard/revenue-segments";
 import { ShareOverviewButton } from "@/components/dashboard/share-overview-button";
 import { HeaderTimezonePill } from "@/components/dashboard/timezone-pill";
 import { SourcesProvider } from "@/components/dashboard/sources-resource";
@@ -153,6 +154,10 @@ export default async function OverviewPage({
             modal (M13), so the header needs a click handler, not a href */}
         <CustomEventsCard />
 
+        {/* owner-only and only with a provider connected: it decides on the
+            shared revenue summary, and sits last so its arrival after that
+            read moves nothing anybody is reading */}
+        <MostValuableTrafficCard />
         {/* Meta ad spend and ROAS per campaign (migration 0052). Last, and
             drawn only for an owner whose site is connected: most sites never
             are, and a card that appeared and folded away would move the grid */}

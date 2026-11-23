@@ -58,6 +58,9 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
   // The referring pages behind a Sources row: the hosts are its subject.
   'analytics.referrer_paths': { referrer_domains: ['lobste.rs'] },
   'analytics.filtered_referrer_paths': { referrer_domains: ['lobste.rs'] },
+  // Revenue by segment: the site's value per visitor, which the rows are
+  // ranked against before the limit cuts them.
+  'analytics.revenue_segments': { prior_value_minor: 12.5 },
   // One event's property breakdown: the event and the
   // allowlist the api read from Postgres.
   'analytics.custom_event_properties_hour': { event_name: 'e', all_keys: true, keys: [] },

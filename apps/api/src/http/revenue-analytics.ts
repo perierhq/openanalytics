@@ -208,8 +208,9 @@ export function createRevenueAnalyticsRoutes(deps: {
     requireAnalyticsAccess(db),
     requireCapability('revenue:read'),
   )
-  // Perier fork: two aggregate reads, same stack.
-  for (const path of ['attribution', 'events-before-purchase']) {
+  // Perier fork: aggregate reads, same stack. `segments` is revenue by
+  // source × country × device.
+  for (const path of ['attribution', 'events-before-purchase', 'segments']) {
     app.use(
       `${base}/${path}`,
       siteMembership(db),
@@ -344,6 +345,21 @@ export function createRevenueAnalyticsRoutes(deps: {
     )
   })
 
+  app.get(`${base}/segments`, async (c) => {
+    const { siteId } = c.get('membership')
+    const query = c.req.query()
+    return c.json(
+      await service.revenueSegments({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(query),
+        ...parseRevenueSegments(query),
+      }),
+    )
+  })
+
   return app
 }
 
@@ -423,4 +439,11 @@ export function parseEventsBeforePurchase(query: Record<string, string | undefin
       fallback: EVENTS_LIMIT_DEFAULT,
     }),
   }
+}
+
+/** Revenue by segment: the row limit, 1 to 500, default 100 (`TopNLimit`). */
+export function parseRevenueSegments(query: Record<string, string | undefined>): {
+  limit: number
+} {
+  return { limit: parseIntegerParam(query, 'limit', { min: 1, max: 500, fallback: 100 }) }
 }

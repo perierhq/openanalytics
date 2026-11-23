@@ -58,6 +58,7 @@ import { bearerToken, canonicalSiteId } from './middleware.ts'
 import {
   parseEventsBeforePurchase,
   parseRevenueAttribution,
+  parseRevenueSegments,
   readConnection,
 } from './revenue-analytics.ts'
 import type { RateLimiter } from './rate-limit.ts'
@@ -1300,6 +1301,23 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
         connection: await readConnection(db, siteId),
         ...parseRange(query),
         ...parseRevenueAttribution(query),
+      }),
+    )
+  })
+
+  // Revenue by segment (source × country × device): segment aggregates, no
+  // visitor, customer or order id, so it travels on the same footing.
+  revenue.get('/segments', async (c) => {
+    const { siteId } = c.get('readPrincipal')
+    const query = c.req.query()
+    return c.json(
+      await analytics().revenueSegments({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        reportingCurrency: c.get('siteReportingCurrency'),
+        connection: await readConnection(db, siteId),
+        ...parseRange(query),
+        ...parseRevenueSegments(query),
       }),
     )
   })
