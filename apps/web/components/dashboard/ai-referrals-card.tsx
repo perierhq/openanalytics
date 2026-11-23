@@ -23,8 +23,7 @@ import {
   SquircleCardScroll,
 } from "@/components/ui/squircle-card";
 import type { AnalyticsMeta, SourceRow } from "@/lib/api";
-import type { FoldedRow } from "@/lib/source-rows";
-import { resolveAiUtm, resolveReferrer } from "@/lib/referrers";
+import { foldAiReferrals } from "@/lib/source-rows";
 import { trafficBars } from "@/lib/row-bars";
 
 /**
@@ -41,9 +40,12 @@ import { trafficBars } from "@/lib/row-bars";
  * named for what it can count.
  *
  * **How a tuple qualifies.** A sources row is the tuple referrer domain by
- * utm source, medium and campaign. It counts when its referrer is an
- * assistant, or, when it has no referrer at all, when the utm tag it carries
- * names one: ChatGPT appends `utm_source=chatgpt.com` to every link it hands
+ * utm source, medium and campaign, and the server labels each with its
+ * channel (`packages/domain/src/channel.ts`); this card is the `ai` rows,
+ * the same set the Sources card's Channels cut counts as AI. A tuple is `ai`
+ * when its referrer is an assistant, or, when it has no referrer at all, when
+ * the utm tag it carries names one, and no rule above AI (a paid, email or
+ * affiliate tag) claimed it first: ChatGPT appends `utm_source=chatgpt.com` to every link it hands
  * out, Claude appends `utm_source=Claude AI` with `utm_medium=claude.ai`,
  * and a click from their apps arrives with the tag and an empty referrer, so
  * it would otherwise sit under Direct. That is why the Referrers list can
@@ -63,39 +65,8 @@ import { trafficBars } from "@/lib/row-bars";
  * total joins it only in the See all modal's header.
  */
 
-/** The assistant rows, ranked by visitors. */
-export function foldAiReferrals(items: SourceRow[]): FoldedRow[] {
-  const byLabel = new Map<string, FoldedRow>();
-  for (const row of items) {
-    const referrer = row.referrer_domain
-      ? resolveReferrer(row.referrer_domain)
-      : null;
-    const source =
-      referrer !== null
-        ? referrer.kind === "ai"
-          ? referrer
-          : null
-        : resolveAiUtm(row.utm_source, row.utm_medium);
-    if (source === null) continue;
-    const bucket = byLabel.get(source.name) ?? {
-      label: source.name,
-      domain: source.domain,
-      direct: false,
-      views: 0,
-      visitors: 0,
-      raw: [],
-    };
-    bucket.views += row.views;
-    bucket.visitors += row.visitors;
-    // Only a referrer host is a filter value (ADR-0075 filters match the
-    // canonical host); a tuple that qualified by its tag alone adds none.
-    if (referrer !== null && !bucket.raw.includes(row.referrer_domain)) {
-      bucket.raw.push(row.referrer_domain);
-    }
-    byLabel.set(source.name, bucket);
-  }
-  return [...byLabel.values()].sort((a, b) => b.visitors - a.visitors);
-}
+/** The assistant rows, ranked by visitors (`lib/source-rows.ts`). */
+export { foldAiReferrals };
 
 /** The caveat beside the title, on the dashboard and on the public board. */
 export const AI_REFERRALS_CAVEAT =

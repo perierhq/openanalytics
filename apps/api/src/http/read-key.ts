@@ -49,7 +49,9 @@ import {
   parseLimit,
   parsePagesSort,
   parseRange,
+  parseReferrerPathsQuery,
   parseResolution,
+  parseSourcesGroupBy,
 } from './analytics.ts'
 import type { CredentialUseRecorder } from './credential-events.ts'
 import { bearerToken, canonicalSiteId } from './middleware.ts'
@@ -974,7 +976,35 @@ export function createReadKeyRoutes(deps: ReadKeyDeps): Hono<Env> {
       }),
     )
   })
-  report('sources', (s, req) => s.sources(req))
+  // Sources takes `group_by=channel`, and its referring pages are a read of
+  // their own; both are what the dashboard's sources routes serve.
+  reads.get('/sources', async (c) => {
+    const query = c.req.query()
+    return c.json(
+      await analytics().sources({
+        siteId: c.get('readPrincipal').siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        limit: parseLimit(query),
+        filters: parseFilters(query),
+        groupBy: parseSourcesGroupBy(query),
+      }),
+    )
+  })
+  reads.get('/sources/referrer-paths', async (c) => {
+    const query = c.req.query()
+    return c.json(
+      await analytics().referrerPaths({
+        siteId: c.get('readPrincipal').siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        filters: parseFilters(query),
+        ...parseReferrerPathsQuery(query, c.req.queries('referrer_domain')),
+      }),
+    )
+  })
   report('geography', (s, req) => s.geography(req))
   report('devices', (s, req) => s.devices(req))
 

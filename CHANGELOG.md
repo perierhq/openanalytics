@@ -17,6 +17,27 @@ registry until you set `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics` and
 `OA_IMAGE_TAG=v0.10.1` in its Environment tab and redeploy. Everyone else has
 nothing to do.
 
+### Added
+
+- **Channels on the Sources card.** A Channels cut groups visits into Paid,
+  Email, Affiliate, AI, Organic search, Social, Referral and Direct, each with
+  its own mark. The server decides the channel from each source's referrer
+  and utm tags, so every sources row of the dashboard, `/v1/read` and the MCP
+  `top_sources` tool now carries a `channel` field, and `group_by=channel`
+  returns one row per channel. The AI referrals card counts the same visits
+  the Channels cut calls AI. An ad click with only a click id and no utm tag
+  counts as Organic search or Social, because the sources data does not keep
+  click ids; tag ad links with a paid `utm_medium` to count them as Paid.
+  Channels show no revenue.
+- **Referring pages.** In the Referrers list under See all, a site that sent
+  visits from a particular page opens to show those pages, without their
+  query string, for ranges up to 92 days. Also at
+  `GET /v1/sites/{site_id}/analytics/sources/referrer-paths`,
+  `GET /v1/read/analytics/sources/referrer-paths` and the MCP
+  `referrer_paths` tool. Each page is shown without its query string,
+  fragment or `;` parameters, and a path segment shaped like a token or an
+  email address is shown as `[redacted]`.
+
 ### Changed
 
 - **The Coolify and Dokploy blueprints follow the fork's releases.** They were
@@ -24,6 +45,18 @@ nothing to do.
   since. They now default to `ghcr.io/perierhq/openanalytics` at `v0.10.1`, the
   Dokploy import blob is regenerated, and `meta.json` and the guides link to
   this repository.
+
+- **AI referrals.** The AI referrals card now counts exactly the visits the
+  Channels cut calls AI. A visit from an assistant whose link is also tagged
+  paid, email or affiliate (`utm_medium=cpc`, `newsletter`, `partner`, …) is
+  counted under that channel instead and no longer appears on the AI card, and
+  an assistant's subdomains (`www.perplexity.ai`, `labs.perplexity.ai`) now
+  count as that assistant.
+- **`SourceRow` has a new required `channel` field** on
+  `/v1/sites/{site_id}/analytics/sources`, `/v1/read/analytics/sources`, the
+  public share and the MCP `top_sources` tool. A client that validates
+  responses against the previous schema with `additionalProperties: false`
+  rejects the new field and must update to the new schema.
 
 ## [0.10.1] - 2026-11-22 (perierhq fork)
 

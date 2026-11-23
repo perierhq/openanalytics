@@ -68,3 +68,29 @@ describe("the revenue column", () => {
     expect(html).not.toContain("sr-only")
   })
 })
+
+describe("a breakdown row that expands", () => {
+  it("has no expander unless it is given something to expand", () => {
+    const html = render()
+    expect(html).not.toContain("aria-expanded")
+    expect(html).not.toContain("<button")
+  })
+
+  it("is a button that says whether it is open, and shows its details only when open", () => {
+    const closed = render({
+      expanded: false,
+      onToggle: () => {},
+      details: createElement("p", null, "lobste.rs/s/abc123"),
+    })
+    expect(tag(closed, "aria-expanded")).toContain('aria-expanded="false"')
+    expect(closed).not.toContain("lobste.rs/s/abc123")
+
+    const open = render({
+      expanded: true,
+      onToggle: () => {},
+      details: createElement("p", null, "lobste.rs/s/abc123"),
+    })
+    expect(tag(open, "aria-expanded")).toContain('aria-expanded="true"')
+    expect(open).toContain("lobste.rs/s/abc123")
+  })
+})

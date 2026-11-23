@@ -109,6 +109,29 @@ function buildApp(hasSession: boolean) {
             visitors: '4',
           },
         ]
+      } else if (operation === 'analytics.sources_hour') {
+        rows = [
+          {
+            referrer_domain: 'google.com',
+            utm_source: '',
+            utm_medium: '',
+            utm_campaign: '',
+            views: '12',
+            visitors: '9',
+          },
+          {
+            referrer_domain: 'lobste.rs',
+            utm_source: '',
+            utm_medium: '',
+            utm_campaign: '',
+            views: '5',
+            visitors: '4',
+          },
+        ]
+      } else if (operation === 'analytics.referrer_paths') {
+        rows = [
+          { referrer_domain: 'lobste.rs', ref_path: '/s/abc123/story', views: '5', visitors: '4' },
+        ]
       } else if (operation.startsWith('analytics.funnel_')) {
         rows = [{ step_1: '100', step_2: '40', step_3: '10' }]
       } else if (operation === 'analytics.recent_visitors') {
@@ -341,6 +364,69 @@ describe('analytics read authorization', () => {
       ),
     )
     expect(bad.status).toBe(400)
+  })
+
+  it('serves sources with a channel per row, and by channel, to a viewer', async () => {
+    const app = buildApp(true)
+    membership.value = { role: 'viewer', isBillingOwner: false }
+    siteBasics.value = { siteId: SITE, slug: 's', name: 'S', status: 'active' }
+    const url = `http://api.test/v1/sites/${SITE}/analytics/sources?from=2026-07-16T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC`
+
+    const res = await app.fetch(new Request(url))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: { referrer_domain: string; channel: string }[] }
+    expect(body.items.map((row) => [row.referrer_domain, row.channel])).toEqual([
+      ['google.com', 'organic_search'],
+      ['lobste.rs', 'referral'],
+    ])
+
+    const grouped = await app.fetch(new Request(`${url}&group_by=channel`))
+    expect(grouped.status).toBe(200)
+    const groupedBody = (await grouped.json()) as { items: { channel: string }[] }
+    expect(groupedBody.items.map((row) => row.channel)).toEqual(['organic_search', 'referral'])
+    expect(gatewayParams['analytics.sources_hour']).toMatchObject({ limit: 500 })
+
+    const bad = await app.fetch(new Request(`${url}&group_by=referrer`))
+    expect(bad.status).toBe(400)
+  })
+
+  it('serves the referring pages of a host to a viewer, and refuses a request with no host', async () => {
+    const app = buildApp(true)
+    membership.value = { role: 'viewer', isBillingOwner: false }
+    siteBasics.value = { siteId: SITE, slug: 's', name: 'S', status: 'active' }
+    const url = `http://api.test/v1/sites/${SITE}/analytics/sources/referrer-paths?from=2026-07-16T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC`
+
+    const res = await app.fetch(
+      new Request(`${url}&referrer_domain=lobste.rs&referrer_domain=t.co`),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { items: unknown[] }
+    expect(body.items).toEqual([
+      { referrer_domain: 'lobste.rs', path: '/s/abc123/story', views: 5, visitors: 4 },
+    ])
+    expect(gatewayParams['analytics.referrer_paths']).toMatchObject({
+      referrer_domains: ['lobste.rs', 't.co'],
+      limit: 10,
+    })
+
+    gatewayCalls = []
+    const missing = await app.fetch(new Request(url))
+    expect(missing.status).toBe(400)
+    const tooMany = await app.fetch(new Request(`${url}&referrer_domain=a.com&limit=21`))
+    expect(tooMany.status).toBe(400)
+    expect(gatewayCalls.filter((op) => op.includes('referrer_paths'))).toEqual([])
+  })
+
+  it('keeps the referring pages behind membership', async () => {
+    const app = buildApp(true)
+    membership.value = null
+    const res = await app.fetch(
+      new Request(
+        `http://api.test/v1/sites/${SITE}/analytics/sources/referrer-paths?from=2026-07-16T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC&referrer_domain=lobste.rs`,
+      ),
+    )
+    expect(res.status).toBe(404)
+    expect(gatewayCalls).toHaveLength(0)
   })
 
   it('serves one event’s property breakdown, busiest key first, to any member', async () => {

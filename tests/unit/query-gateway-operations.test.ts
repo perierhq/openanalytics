@@ -88,6 +88,10 @@ describe('operation registry', () => {
       'analytics.filtered_page_sessions_hour',
       'analytics.filtered_pages_day',
       'analytics.filtered_pages_hour',
+      // The referring pages behind a Sources row: raw events, 92 days, a host
+      // list and a per-host row cap. The filtered twin keeps a filtered card's
+      // paths on the card's own sessions.
+      'analytics.filtered_referrer_paths',
       'analytics.filtered_sources_day',
       'analytics.filtered_sources_hour',
       'analytics.filtered_timeseries_day',
@@ -123,6 +127,7 @@ describe('operation registry', () => {
       'analytics.performance_day',
       'analytics.performance_hour',
       'analytics.recent_visitors',
+      'analytics.referrer_paths',
       // The revenue read surface (ADR-0033, D7; CP5). Two bucket families over
       // the 0018 rollups, two object families over the 0016/0017 facts, and the
       // unconverted remainder — which reads facts for a range total because the
@@ -232,6 +237,10 @@ describe('operation registry', () => {
       'analytics.filtered_geography_day',
       'analytics.filtered_devices_hour',
       'analytics.filtered_devices_day',
+      // `referrer_path` lives on the raw event only: no rollup and no session
+      // fact carries it. Host-listed, 92 days, `LIMIT n BY` host.
+      'analytics.referrer_paths',
+      'analytics.filtered_referrer_paths',
     ])
     for (const operation of QUERY_OPERATIONS.values()) {
       if (rawReaders.has(operation.id)) {

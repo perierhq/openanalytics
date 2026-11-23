@@ -915,6 +915,7 @@ they do in the dashboard. The read tools:
 | `site_overview`, `site_timeseries`, `top_pages`, `top_sources`, `geography`, `devices`, `sessions` | `analytics:read` | The dashboard's aggregate reports                                      |
 | `custom_events`, `performance`                                                                     | `analytics:read` | Custom events with their labels; web vitals                            |
 | `custom_event_properties`                                                                          | `analytics:read` | One custom event's top property values per key, plus an `other` row    |
+| `referrer_paths`                                                                                   | `analytics:read` | The pages on a referring site that sent visits, at most 92 days        |
 | `funnel_results`                                                                                   | `analytics:read` | A stored funnel by id, or ad-hoc steps: counts and conversion per step |
 | `recent_visitors`, `visitor`                                                                       | `analytics:read` | Visitors of the last 1–24 hours, and one visitor's page trail          |
 | `list_funnels`, `list_event_definitions`, `list_widgets`, `share_settings`                         | `analytics:read` | A site's saved funnels, event definitions, widgets and share settings  |

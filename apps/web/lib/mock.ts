@@ -18,6 +18,8 @@ import type {
   AnalyticsPerformanceResponse,
   AnalyticsSessionsResponse,
   AnalyticsSourcesResponse,
+  ReferrerPathsResponse,
+  SourceRow,
   ApiKeySummary,
   ConnectedApp,
   CreatedSite,
@@ -363,20 +365,73 @@ export const MOCK_PAGES: AnalyticsPagesResponse = {
 
 export const MOCK_SOURCES: AnalyticsSourcesResponse = {
   meta: MOCK_ANALYTICS_META,
+  // `channel` is the server's (`packages/domain/src/channel.ts`); these are
+  // the values it gives each tuple.
   items: [
-    { referrer_domain: "google.com", utm_source: "", utm_medium: "", utm_campaign: "", views: 6320, visitors: 2941 },
-    { referrer_domain: "", utm_source: "", utm_medium: "", utm_campaign: "", views: 4805, visitors: 2210 },
-    { referrer_domain: "news.ycombinator.com", utm_source: "", utm_medium: "", utm_campaign: "", views: 2911, visitors: 1345 },
-    { referrer_domain: "x.com", utm_source: "", utm_medium: "", utm_campaign: "", views: 1984, visitors: 918 },
-    { referrer_domain: "github.com", utm_source: "", utm_medium: "", utm_campaign: "", views: 1310, visitors: 604 },
+    { referrer_domain: "google.com", utm_source: "", utm_medium: "", utm_campaign: "", channel: "organic_search", views: 6320, visitors: 2941 },
+    { referrer_domain: "", utm_source: "", utm_medium: "", utm_campaign: "", channel: "direct", views: 4805, visitors: 2210 },
+    { referrer_domain: "news.ycombinator.com", utm_source: "", utm_medium: "", utm_campaign: "", channel: "social", views: 2911, visitors: 1345 },
+    { referrer_domain: "x.com", utm_source: "", utm_medium: "", utm_campaign: "", channel: "social", views: 1984, visitors: 918 },
+    { referrer_domain: "github.com", utm_source: "", utm_medium: "", utm_campaign: "", channel: "referral", views: 1310, visitors: 604 },
+    // A paid campaign, a newsletter, a partner link and two more referrers,
+    // so every channel the Channels cut can show has a row.
+    { referrer_domain: "google.com", utm_source: "google", utm_medium: "cpc", utm_campaign: "brand", channel: "paid", views: 640, visitors: 301 },
+    { referrer_domain: "", utm_source: "beehiiv", utm_medium: "email", utm_campaign: "september-digest", channel: "email", views: 520, visitors: 260 },
+    { referrer_domain: "lobste.rs", utm_source: "", utm_medium: "", utm_campaign: "", channel: "referral", views: 412, visitors: 198 },
+    { referrer_domain: "linkedin.com", utm_source: "", utm_medium: "", utm_campaign: "", channel: "social", views: 380, visitors: 176 },
+    { referrer_domain: "", utm_source: "toolhunt", utm_medium: "affiliate", utm_campaign: "", channel: "affiliate", views: 180, visitors: 92 },
     // The assistants, for the AI referrals card. ChatGPT tags its links, and
     // the referrer-less tuple below is a click from its apps: the AI card
     // counts it, the Referrers cut files it under Direct.
-    { referrer_domain: "chatgpt.com", utm_source: "chatgpt.com", utm_medium: "", utm_campaign: "", views: 742, visitors: 356 },
-    { referrer_domain: "perplexity.ai", utm_source: "", utm_medium: "", utm_campaign: "", views: 288, visitors: 141 },
-    { referrer_domain: "", utm_source: "chatgpt.com", utm_medium: "", utm_campaign: "", views: 231, visitors: 118 },
-    { referrer_domain: "claude.ai", utm_source: "", utm_medium: "", utm_campaign: "", views: 173, visitors: 84 },
-    { referrer_domain: "gemini.google.com", utm_source: "", utm_medium: "", utm_campaign: "", views: 96, visitors: 45 },
+    { referrer_domain: "chatgpt.com", utm_source: "chatgpt.com", utm_medium: "", utm_campaign: "", channel: "ai", views: 742, visitors: 356 },
+    { referrer_domain: "perplexity.ai", utm_source: "", utm_medium: "", utm_campaign: "", channel: "ai", views: 288, visitors: 141 },
+    { referrer_domain: "", utm_source: "chatgpt.com", utm_medium: "", utm_campaign: "", channel: "ai", views: 231, visitors: 118 },
+    { referrer_domain: "claude.ai", utm_source: "", utm_medium: "", utm_campaign: "", channel: "ai", views: 173, visitors: 84 },
+    { referrer_domain: "gemini.google.com", utm_source: "", utm_medium: "", utm_campaign: "", channel: "ai", views: 96, visitors: 45 },
+  ],
+};
+
+/**
+ * `group_by=channel` over `MOCK_SOURCES`: one row per channel, summed, the
+ * tuple fields empty — the shape the api's collapse answers with.
+ */
+export const MOCK_CHANNELS: AnalyticsSourcesResponse = {
+  meta: MOCK_ANALYTICS_META,
+  items: Object.values(
+    MOCK_SOURCES.items.reduce<Record<string, SourceRow>>((byChannel, row) => {
+      const total = byChannel[row.channel] ?? {
+        referrer_domain: "",
+        utm_source: "",
+        utm_medium: "",
+        utm_campaign: "",
+        channel: row.channel,
+        views: 0,
+        visitors: 0,
+      };
+      total.views += row.views;
+      total.visitors += row.visitors;
+      byChannel[row.channel] = total;
+      return byChannel;
+    }, {})
+  ).sort((a, b) => b.visitors - a.visitors),
+};
+
+/**
+ * Referring pages for the hosts above that send one. Google, X, LinkedIn and
+ * the assistants send only their origin, so they have none, and their rows in
+ * the See-all list get no expander.
+ */
+export const MOCK_REFERRER_PATHS: ReferrerPathsResponse = {
+  meta: MOCK_ANALYTICS_META,
+  items: [
+    { referrer_domain: "news.ycombinator.com", path: "/item", views: 2410, visitors: 1102 },
+    { referrer_domain: "news.ycombinator.com", path: "/news", views: 388, visitors: 190 },
+    { referrer_domain: "news.ycombinator.com", path: "/best", views: 113, visitors: 53 },
+    { referrer_domain: "github.com", path: "/openanalytics/openanalytics", views: 902, visitors: 417 },
+    { referrer_domain: "github.com", path: "/awesome-selfhosted/awesome-selfhosted", views: 301, visitors: 139 },
+    { referrer_domain: "github.com", path: "/openanalytics/openanalytics/issues/412", views: 107, visitors: 48 },
+    { referrer_domain: "lobste.rs", path: "/s/k3x9q2/why_we_left_google_analytics", views: 344, visitors: 166 },
+    { referrer_domain: "lobste.rs", path: "/t/privacy", views: 68, visitors: 32 },
   ],
 };
 

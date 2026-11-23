@@ -55,6 +55,9 @@ const EXTRAS: Readonly<Record<string, Record<string, unknown>>> = {
     ]),
   ),
   'analytics.revenue_events_before_purchase': { window_ms: 86_400_000 },
+  // The referring pages behind a Sources row: the hosts are its subject.
+  'analytics.referrer_paths': { referrer_domains: ['lobste.rs'] },
+  'analytics.filtered_referrer_paths': { referrer_domains: ['lobste.rs'] },
   // One event's property breakdown: the event and the
   // allowlist the api read from Postgres.
   'analytics.custom_event_properties_hour': { event_name: 'e', all_keys: true, keys: [] },

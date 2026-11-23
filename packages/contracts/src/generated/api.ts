@@ -1745,6 +1745,20 @@ export interface paths {
                  * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
                  */
                 filters?: components["parameters"]["AnalyticsFilters"];
+                /**
+                 * @description `channel` collapses the source tuples into one row per channel
+                 *     (`SourceRow.channel`), with the referrer and utm fields empty and
+                 *     `views` and `visitors` summed over the channel's tuples. A visitor who
+                 *     arrived through two tuples of one channel counts twice, the same
+                 *     over-count the dashboard's own folds make. The collapse reads the
+                 *     deepest tuple list the report serves (500 live tuples, and 500 imported
+                 *     ones on a range that reaches imported days), so the totals do not
+                 *     depend on `limit`, and every tuple read counts towards its channel.
+                 *     `meta.truncated` is true when a tuple list came back full, so there may
+                 *     be tuples past it and the totals are a floor. Omitted, the response is
+                 *     the tuple list, each row carrying its channel.
+                 */
+                group_by?: components["parameters"]["SourcesGroupBy"];
             };
             header?: {
                 /**
@@ -1782,6 +1796,125 @@ export interface paths {
          * @description Requires the `analytics:read` scope.
          */
         get: operations["readAnalyticsSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/read/analytics/sources/referrer-paths": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description The referrer hosts to read paths for, as repeated `referrer_domain=`
+                 *     parameters (1–20), spelled as `SourceRow.referrer_domain` spells them.
+                 *     A Sources row that folds several hosts (`x.com`, `t.co`) names them all.
+                 */
+                referrer_domain: components["parameters"]["ReferrerDomains"];
+                /** @description The most paths returned per host, 1 to 20. */
+                limit?: components["parameters"]["ReferrerPathsLimit"];
+                /**
+                 * @description A **session-scoped** filter set (ADR-0075), as a URL-encoded JSON array
+                 *     of `{dimension, operator, values}`.
+                 *
+                 *     ## The grain rule, in one sentence
+                 *
+                 *     **A filter selects sessions, and the report then describes everything
+                 *     those sessions did.**
+                 *
+                 *     A visitor who arrives from YouTube and reads five pages shows five pages
+                 *     under `Source: youtube.com`, not one. Only the landing pageview carries
+                 *     the referrer, so filtering pageviews instead would report that YouTube
+                 *     sends people who bounce — the opposite of the truth. The same rule holds
+                 *     on every surface: this parameter means the same thing on the dashboard,
+                 *     on `/v1/read` and through MCP.
+                 *
+                 *     ## Grammar
+                 *
+                 *     - `dimension` — one of `referrer_domain`, `country`, `city`,
+                 *       `device_type`. The vocabulary is **closed**: an unknown dimension is a
+                 *       `VALIDATION_FAILED` naming it in `details.dimension`, never a silently
+                 *       ignored clause.
+                 *     - `operator` — `eq` (exactly one value) or `in` (up to 20). Absent means
+                 *       `in`.
+                 *     - `values` — strings, at most 128 characters each. Matched exactly, on
+                 *       the value the SESSION ENTRY carried.
+                 *
+                 *     Clauses are combined with **AND only**. There is no OR across
+                 *     dimensions, no negation, no regex and no free text in v1. Within one
+                 *     dimension the values are an OR, which is what `in` is; two clauses on
+                 *     the same dimension are merged into one rather than intersected to
+                 *     nothing.
+                 *
+                 *     ## What a filtered read costs and cannot do
+                 *
+                 *     A filtered read is answered from the event and session facts rather than
+                 *     from a rollup, so it is capped at **92 days** — a longer range is
+                 *     `RANGE_TOO_LARGE`, named and immediate, never a timeout. It is also
+                 *     **live-only**: a staged provider day carries no session for a
+                 *     session-scoped filter to select, so a range overlapping imported days
+                 *     comes back with `meta.partial: true`.
+                 *
+                 *     Events that carry no client session hint — a server-side SDK call, a
+                 *     widget write — belong to no session and are therefore outside every
+                 *     filtered read by construction, which is why a filtered total can sit
+                 *     below the unfiltered one by more than the filter alone explains.
+                 *
+                 *     Custom events and performance do not accept a filter yet; sending one is
+                 *     `VALIDATION_FAILED` naming the report.
+                 * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
+                 */
+                filters?: components["parameters"]["AnalyticsFilters"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Top referring pages for one or more referrer hosts.
+         * @description The same read as `GET /v1/sites/{site_id}/analytics/sources/referrer-paths`,
+         *     under the same rules: at most 92 days, live data only, query strings,
+         *     fragments and `;` parameters removed, token- and email-shaped segments
+         *     redacted.
+         *
+         *     Requires the `analytics:read` scope.
+         */
+        get: operations["readAnalyticsReferrerPaths"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3267,6 +3400,20 @@ export interface paths {
                  * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
                  */
                 filters?: components["parameters"]["AnalyticsFilters"];
+                /**
+                 * @description `channel` collapses the source tuples into one row per channel
+                 *     (`SourceRow.channel`), with the referrer and utm fields empty and
+                 *     `views` and `visitors` summed over the channel's tuples. A visitor who
+                 *     arrived through two tuples of one channel counts twice, the same
+                 *     over-count the dashboard's own folds make. The collapse reads the
+                 *     deepest tuple list the report serves (500 live tuples, and 500 imported
+                 *     ones on a range that reaches imported days), so the totals do not
+                 *     depend on `limit`, and every tuple read counts towards its channel.
+                 *     `meta.truncated` is true when a tuple list came back full, so there may
+                 *     be tuples past it and the totals are a floor. Omitted, the response is
+                 *     the tuple list, each row carrying its channel.
+                 */
+                group_by?: components["parameters"]["SourcesGroupBy"];
             };
             header?: never;
             path: {
@@ -3276,6 +3423,105 @@ export interface paths {
         };
         /** Top acquisition sources (referrer domain and UTM tuple) by views. */
         get: operations["getAnalyticsSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/analytics/sources/referrer-paths": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description The referrer hosts to read paths for, as repeated `referrer_domain=`
+                 *     parameters (1–20), spelled as `SourceRow.referrer_domain` spells them.
+                 *     A Sources row that folds several hosts (`x.com`, `t.co`) names them all.
+                 */
+                referrer_domain: components["parameters"]["ReferrerDomains"];
+                /** @description The most paths returned per host, 1 to 20. */
+                limit?: components["parameters"]["ReferrerPathsLimit"];
+                /**
+                 * @description A **session-scoped** filter set (ADR-0075), as a URL-encoded JSON array
+                 *     of `{dimension, operator, values}`.
+                 *
+                 *     ## The grain rule, in one sentence
+                 *
+                 *     **A filter selects sessions, and the report then describes everything
+                 *     those sessions did.**
+                 *
+                 *     A visitor who arrives from YouTube and reads five pages shows five pages
+                 *     under `Source: youtube.com`, not one. Only the landing pageview carries
+                 *     the referrer, so filtering pageviews instead would report that YouTube
+                 *     sends people who bounce — the opposite of the truth. The same rule holds
+                 *     on every surface: this parameter means the same thing on the dashboard,
+                 *     on `/v1/read` and through MCP.
+                 *
+                 *     ## Grammar
+                 *
+                 *     - `dimension` — one of `referrer_domain`, `country`, `city`,
+                 *       `device_type`. The vocabulary is **closed**: an unknown dimension is a
+                 *       `VALIDATION_FAILED` naming it in `details.dimension`, never a silently
+                 *       ignored clause.
+                 *     - `operator` — `eq` (exactly one value) or `in` (up to 20). Absent means
+                 *       `in`.
+                 *     - `values` — strings, at most 128 characters each. Matched exactly, on
+                 *       the value the SESSION ENTRY carried.
+                 *
+                 *     Clauses are combined with **AND only**. There is no OR across
+                 *     dimensions, no negation, no regex and no free text in v1. Within one
+                 *     dimension the values are an OR, which is what `in` is; two clauses on
+                 *     the same dimension are merged into one rather than intersected to
+                 *     nothing.
+                 *
+                 *     ## What a filtered read costs and cannot do
+                 *
+                 *     A filtered read is answered from the event and session facts rather than
+                 *     from a rollup, so it is capped at **92 days** — a longer range is
+                 *     `RANGE_TOO_LARGE`, named and immediate, never a timeout. It is also
+                 *     **live-only**: a staged provider day carries no session for a
+                 *     session-scoped filter to select, so a range overlapping imported days
+                 *     comes back with `meta.partial: true`.
+                 *
+                 *     Events that carry no client session hint — a server-side SDK call, a
+                 *     widget write — belong to no session and are therefore outside every
+                 *     filtered read by construction, which is why a filtered total can sit
+                 *     below the unfiltered one by more than the filter alone explains.
+                 *
+                 *     Custom events and performance do not accept a filter yet; sending one is
+                 *     `VALIDATION_FAILED` naming the report.
+                 * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
+                 */
+                filters?: components["parameters"]["AnalyticsFilters"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Top referring pages for one or more referrer hosts.
+         * @description The pages on a referrer host that sent visits, for the hosts named in
+         *     `referrer_domain`: the path only, with the query string, fragment and
+         *     `;` parameters removed, token- and email-shaped segments redacted, and
+         *     at most 200 characters, ranked by visitors, at most `limit` per host.
+         *
+         *     A host that sent only its origin (`/`) or no path at all has no rows,
+         *     and most hosts are like that: a browser's default referrer policy
+         *     trims a cross-origin referrer to the origin. Read from the raw events,
+         *     so the range is at most 92 days and the read is live data only
+         *     (imported days carry no referrer path). Filters apply as on every other
+         *     breakdown.
+         */
+        get: operations["getAnalyticsReferrerPaths"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8106,6 +8352,38 @@ export interface components {
             meta: components["schemas"]["AnalyticsMeta"];
             items: components["schemas"]["PageRow"][];
         };
+        /**
+         * @description The channel a source tuple belongs to, computed by the server from the
+         *     tuple's referrer host, `utm_source` and `utm_medium`. Rules are tried in
+         *     this order and the first match wins:
+         *
+         *     - `paid`: a paid `utm_medium` (cpc, ppc, paid, paidsearch, paid_search,
+         *       paidsocial, paid_social, paid_media, display, banner, cpm, ads).
+         *     - `email`: `utm_medium` email or newsletter, a `utm_source` naming a
+         *       newsletter or email tool, a `utm_source` of email or newsletter with
+         *       no `utm_medium`, or a webmail referrer.
+         *     - `affiliate`: `utm_medium` affiliate or partner.
+         *     - `ai`: an AI assistant referrer, or with no referrer a utm tag naming
+         *       one.
+         *     - `organic_search`: a search-engine referrer, `utm_medium` organic, or
+         *       with no referrer a `utm_source` naming an engine.
+         *     - `social`: a social-network referrer, a social `utm_medium`, or with no
+         *       referrer a `utm_source` naming a network.
+         *     - `referral`: any other referrer, or a visit with a `utm_source` or
+         *       `utm_medium` no rule matched.
+         *     - `direct`: no referrer, no `utm_source` and no `utm_medium`.
+         *       `utm_campaign` is not read: a link tagged with only a campaign and
+         *       no referrer is `direct`.
+         *
+         *     utm values compare case-insensitively, with `-`, `_` and spaces as one
+         *     separator. **An ad click without utm tags is not `paid` here**: a visit
+         *     that arrived with only a click id (`gclid`, `fbclid`, …) is stored under
+         *     the platform's host, and the sources rollup does not keep the click id,
+         *     so it reads as `organic_search` or `social`. Tag ad links with a paid
+         *     `utm_medium` to count them as `paid`.
+         * @enum {string}
+         */
+        SourceChannel: "paid" | "email" | "affiliate" | "ai" | "organic_search" | "social" | "referral" | "direct";
         SourceRow: {
             /**
              * @description The canonical external referrer host — lowercase, no `www.`, no
@@ -8118,6 +8396,7 @@ export interface components {
             utm_source: string;
             utm_medium: string;
             utm_campaign: string;
+            channel: components["schemas"]["SourceChannel"];
             /** Format: int64 */
             views: number;
             /**
@@ -8131,6 +8410,30 @@ export interface components {
         AnalyticsSourcesResponse: {
             meta: components["schemas"]["AnalyticsMeta"];
             items: components["schemas"]["SourceRow"][];
+        };
+        ReferrerPathRow: {
+            /** @description The referrer host this page is on, as `SourceRow.referrer_domain` spells it. */
+            referrer_domain: string;
+            /**
+             * @description The referring page's path: no query string, no fragment and no
+             *     `;` parameters, at most 200 characters. A segment shaped like a
+             *     token or an email address reads `[redacted]`, and paths that become
+             *     the same after that are one row with their counts summed. Never
+             *     empty and never `/`.
+             */
+            path: string;
+            /** Format: int64 */
+            views: number;
+            /** Format: int64 */
+            visitors: number;
+        };
+        ReferrerPathsResponse: {
+            meta: components["schemas"]["AnalyticsMeta"];
+            /**
+             * @description Grouped by host in the order the hosts were named, each host's paths
+             *     ranked by visitors. Empty when no named host sent a path.
+             */
+            items: components["schemas"]["ReferrerPathRow"][];
         };
         GeographyRow: {
             country: string;
@@ -11197,6 +11500,28 @@ export interface components {
          */
         AnalyticsFilters: string;
         /**
+         * @description `channel` collapses the source tuples into one row per channel
+         *     (`SourceRow.channel`), with the referrer and utm fields empty and
+         *     `views` and `visitors` summed over the channel's tuples. A visitor who
+         *     arrived through two tuples of one channel counts twice, the same
+         *     over-count the dashboard's own folds make. The collapse reads the
+         *     deepest tuple list the report serves (500 live tuples, and 500 imported
+         *     ones on a range that reaches imported days), so the totals do not
+         *     depend on `limit`, and every tuple read counts towards its channel.
+         *     `meta.truncated` is true when a tuple list came back full, so there may
+         *     be tuples past it and the totals are a floor. Omitted, the response is
+         *     the tuple list, each row carrying its channel.
+         */
+        SourcesGroupBy: "channel";
+        /**
+         * @description The referrer hosts to read paths for, as repeated `referrer_domain=`
+         *     parameters (1–20), spelled as `SourceRow.referrer_domain` spells them.
+         *     A Sources row that folds several hosts (`x.com`, `t.co`) names them all.
+         */
+        ReferrerDomains: string[];
+        /** @description The most paths returned per host, 1 to 20. */
+        ReferrerPathsLimit: number;
+        /**
          * @description Which measure decides the top-N cut on the pages report (ADR-0075,
          *     D-E2).
          *
@@ -13236,6 +13561,20 @@ export interface operations {
                  * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
                  */
                 filters?: components["parameters"]["AnalyticsFilters"];
+                /**
+                 * @description `channel` collapses the source tuples into one row per channel
+                 *     (`SourceRow.channel`), with the referrer and utm fields empty and
+                 *     `views` and `visitors` summed over the channel's tuples. A visitor who
+                 *     arrived through two tuples of one channel counts twice, the same
+                 *     over-count the dashboard's own folds make. The collapse reads the
+                 *     deepest tuple list the report serves (500 live tuples, and 500 imported
+                 *     ones on a range that reaches imported days), so the totals do not
+                 *     depend on `limit`, and every tuple read counts towards its channel.
+                 *     `meta.truncated` is true when a tuple list came back full, so there may
+                 *     be tuples past it and the totals are a floor. Omitted, the response is
+                 *     the tuple list, each row carrying its channel.
+                 */
+                group_by?: components["parameters"]["SourcesGroupBy"];
             };
             header?: {
                 /**
@@ -13277,6 +13616,126 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsSourcesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["MissingScopeOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    readAnalyticsReferrerPaths: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description The referrer hosts to read paths for, as repeated `referrer_domain=`
+                 *     parameters (1–20), spelled as `SourceRow.referrer_domain` spells them.
+                 *     A Sources row that folds several hosts (`x.com`, `t.co`) names them all.
+                 */
+                referrer_domain: components["parameters"]["ReferrerDomains"];
+                /** @description The most paths returned per host, 1 to 20. */
+                limit?: components["parameters"]["ReferrerPathsLimit"];
+                /**
+                 * @description A **session-scoped** filter set (ADR-0075), as a URL-encoded JSON array
+                 *     of `{dimension, operator, values}`.
+                 *
+                 *     ## The grain rule, in one sentence
+                 *
+                 *     **A filter selects sessions, and the report then describes everything
+                 *     those sessions did.**
+                 *
+                 *     A visitor who arrives from YouTube and reads five pages shows five pages
+                 *     under `Source: youtube.com`, not one. Only the landing pageview carries
+                 *     the referrer, so filtering pageviews instead would report that YouTube
+                 *     sends people who bounce — the opposite of the truth. The same rule holds
+                 *     on every surface: this parameter means the same thing on the dashboard,
+                 *     on `/v1/read` and through MCP.
+                 *
+                 *     ## Grammar
+                 *
+                 *     - `dimension` — one of `referrer_domain`, `country`, `city`,
+                 *       `device_type`. The vocabulary is **closed**: an unknown dimension is a
+                 *       `VALIDATION_FAILED` naming it in `details.dimension`, never a silently
+                 *       ignored clause.
+                 *     - `operator` — `eq` (exactly one value) or `in` (up to 20). Absent means
+                 *       `in`.
+                 *     - `values` — strings, at most 128 characters each. Matched exactly, on
+                 *       the value the SESSION ENTRY carried.
+                 *
+                 *     Clauses are combined with **AND only**. There is no OR across
+                 *     dimensions, no negation, no regex and no free text in v1. Within one
+                 *     dimension the values are an OR, which is what `in` is; two clauses on
+                 *     the same dimension are merged into one rather than intersected to
+                 *     nothing.
+                 *
+                 *     ## What a filtered read costs and cannot do
+                 *
+                 *     A filtered read is answered from the event and session facts rather than
+                 *     from a rollup, so it is capped at **92 days** — a longer range is
+                 *     `RANGE_TOO_LARGE`, named and immediate, never a timeout. It is also
+                 *     **live-only**: a staged provider day carries no session for a
+                 *     session-scoped filter to select, so a range overlapping imported days
+                 *     comes back with `meta.partial: true`.
+                 *
+                 *     Events that carry no client session hint — a server-side SDK call, a
+                 *     widget write — belong to no session and are therefore outside every
+                 *     filtered read by construction, which is why a filtered total can sit
+                 *     below the unfiltered one by more than the filter alone explains.
+                 *
+                 *     Custom events and performance do not accept a filter yet; sending one is
+                 *     `VALIDATION_FAILED` naming the report.
+                 * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
+                 */
+                filters?: components["parameters"]["AnalyticsFilters"];
+            };
+            header?: {
+                /**
+                 * @description Which site this request is about (ADR-0043, D3).
+                 *
+                 *     **Required with an OAuth token, refused with a private key**, and neither
+                 *     is a technicality:
+                 *
+                 *     - A token belongs to a *person* with several sites, so the request has to
+                 *       say which one. Omitted, `400 VALIDATION_FAILED` naming this header —
+                 *       there is no "your first site" default, because a CLI that silently
+                 *       reports on the wrong site is worse than one that asks.
+                 *     - A key *is* a site. Sending this with a key is `400 VALIDATION_FAILED`
+                 *       rather than being ignored: a caller that names a site is asserting
+                 *       something, and one that agrees by accident today would disagree
+                 *       tomorrow when somebody points the plugin at the wrong site.
+                 *
+                 *     The site is authorized **per request, from live membership**, not from a
+                 *     grant frozen at consent time. So a user removed from a site loses it on
+                 *     their very next request, with no token revocation and no new mechanism —
+                 *     and a site they were never in answers `SITE_NOT_FOUND`, the same answer a
+                 *     malformed id gets, so the two stay indistinguishable.
+                 *
+                 *     A header rather than a query parameter so it never mixes with the
+                 *     analytics parameters these routes already parse, and so the same URL
+                 *     means the same query for both credential kinds.
+                 */
+                "X-OA-Site"?: components["parameters"]["SiteSelector"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Top referring pages per host. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferrerPathsResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];
@@ -14983,6 +15442,20 @@ export interface operations {
                  * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
                  */
                 filters?: components["parameters"]["AnalyticsFilters"];
+                /**
+                 * @description `channel` collapses the source tuples into one row per channel
+                 *     (`SourceRow.channel`), with the referrer and utm fields empty and
+                 *     `views` and `visitors` summed over the channel's tuples. A visitor who
+                 *     arrived through two tuples of one channel counts twice, the same
+                 *     over-count the dashboard's own folds make. The collapse reads the
+                 *     deepest tuple list the report serves (500 live tuples, and 500 imported
+                 *     ones on a range that reaches imported days), so the totals do not
+                 *     depend on `limit`, and every tuple read counts towards its channel.
+                 *     `meta.truncated` is true when a tuple list came back full, so there may
+                 *     be tuples past it and the totals are a floor. Omitted, the response is
+                 *     the tuple list, each row carrying its channel.
+                 */
+                group_by?: components["parameters"]["SourcesGroupBy"];
             };
             header?: never;
             path: {
@@ -14999,6 +15472,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalyticsSourcesResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["SiteSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
+        };
+    };
+    getAnalyticsReferrerPaths: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+                /**
+                 * @description The referrer hosts to read paths for, as repeated `referrer_domain=`
+                 *     parameters (1–20), spelled as `SourceRow.referrer_domain` spells them.
+                 *     A Sources row that folds several hosts (`x.com`, `t.co`) names them all.
+                 */
+                referrer_domain: components["parameters"]["ReferrerDomains"];
+                /** @description The most paths returned per host, 1 to 20. */
+                limit?: components["parameters"]["ReferrerPathsLimit"];
+                /**
+                 * @description A **session-scoped** filter set (ADR-0075), as a URL-encoded JSON array
+                 *     of `{dimension, operator, values}`.
+                 *
+                 *     ## The grain rule, in one sentence
+                 *
+                 *     **A filter selects sessions, and the report then describes everything
+                 *     those sessions did.**
+                 *
+                 *     A visitor who arrives from YouTube and reads five pages shows five pages
+                 *     under `Source: youtube.com`, not one. Only the landing pageview carries
+                 *     the referrer, so filtering pageviews instead would report that YouTube
+                 *     sends people who bounce — the opposite of the truth. The same rule holds
+                 *     on every surface: this parameter means the same thing on the dashboard,
+                 *     on `/v1/read` and through MCP.
+                 *
+                 *     ## Grammar
+                 *
+                 *     - `dimension` — one of `referrer_domain`, `country`, `city`,
+                 *       `device_type`. The vocabulary is **closed**: an unknown dimension is a
+                 *       `VALIDATION_FAILED` naming it in `details.dimension`, never a silently
+                 *       ignored clause.
+                 *     - `operator` — `eq` (exactly one value) or `in` (up to 20). Absent means
+                 *       `in`.
+                 *     - `values` — strings, at most 128 characters each. Matched exactly, on
+                 *       the value the SESSION ENTRY carried.
+                 *
+                 *     Clauses are combined with **AND only**. There is no OR across
+                 *     dimensions, no negation, no regex and no free text in v1. Within one
+                 *     dimension the values are an OR, which is what `in` is; two clauses on
+                 *     the same dimension are merged into one rather than intersected to
+                 *     nothing.
+                 *
+                 *     ## What a filtered read costs and cannot do
+                 *
+                 *     A filtered read is answered from the event and session facts rather than
+                 *     from a rollup, so it is capped at **92 days** — a longer range is
+                 *     `RANGE_TOO_LARGE`, named and immediate, never a timeout. It is also
+                 *     **live-only**: a staged provider day carries no session for a
+                 *     session-scoped filter to select, so a range overlapping imported days
+                 *     comes back with `meta.partial: true`.
+                 *
+                 *     Events that carry no client session hint — a server-side SDK call, a
+                 *     widget write — belong to no session and are therefore outside every
+                 *     filtered read by construction, which is why a filtered total can sit
+                 *     below the unfiltered one by more than the filter alone explains.
+                 *
+                 *     Custom events and performance do not accept a filter yet; sending one is
+                 *     `VALIDATION_FAILED` naming the report.
+                 * @example [{"dimension":"country","operator":"in","values":["US","CA"]}]
+                 */
+                filters?: components["parameters"]["AnalyticsFilters"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Top referring pages per host. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferrerPathsResponse"];
                 };
             };
             400: components["responses"]["AnalyticsBadRange"];

@@ -50,8 +50,10 @@ export function useSiteAnalytics<T>(
    * whose endpoint refuses filters simply never passes it, which is what
    * keeps the chip row from 400-ing custom events and performance. `sort`
    * is the pages ranking (a column header is a request change, ADR-0075 §3).
+   * `enabled: false` holds the read (it stays loading and fires nothing) for
+   * a card that only needs it once a cut that uses it is picked.
    */
-  query?: { filters?: string; sort?: PagesSort }
+  query?: { filters?: string; sort?: PagesSort; enabled?: boolean }
 ): ApiResource<T> {
   const params = useParams<{ site: string }>();
   const slug = params.site ? decodeURIComponent(params.site) : "";
@@ -60,9 +62,11 @@ export function useSiteAnalytics<T>(
   // render cannot refire the request with unchanged values.
   const filters = query?.filters;
   const sort = query?.sort;
+  const enabled = query?.enabled ?? true;
 
   const load = React.useCallback(
     async (signal: AbortSignal): Promise<T> => {
+      if (!enabled) return new Promise<T>(() => {});
       if (!LIVE_API) return mock;
       // "All time" before its anchor: the range in hand is a placeholder
       // about to be replaced. Hold the first skeleton instead of fetching
@@ -75,7 +79,7 @@ export function useSiteAnalytics<T>(
         ...(sort !== undefined ? { sort } : {}),
       });
     },
-    [fetcher, mock, slug, range, rangePending, filters, sort]
+    [fetcher, mock, slug, range, rangePending, filters, sort, enabled]
   );
 
   return useApiResource(load);

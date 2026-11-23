@@ -12,17 +12,14 @@ export type ReferrerInfo = {
   name: string;
   /** Canonical domain to fetch a favicon for. */
   domain: string;
-  /**
-   * `ai` marks an assistant: a chat or answer product whose links out are
-   * clicks on an answer rather than on a search result or a post. The AI
-   * referrals card is the set of rows wearing this; everything else about
-   * the row is the same. Display-layer classification, like the names: the
-   * wire still carries the raw domain.
-   */
-  kind?: "ai";
 };
 
-const AI = "ai" as const;
+/*
+ * Which hosts and tags are AI assistants is NOT decided here. The server
+ * classifies every sources row into a channel (`packages/domain/src/
+ * channel.ts`, the one list) and the AI referrals card reads `channel ===
+ * "ai"`. This file only gives the assistants their household names.
+ */
 
 /** Full-host matches, after `www.` stripping — checked before suffixes so
  *  `mail.google.com` can be Gmail while `google.com` stays Google. */
@@ -38,16 +35,14 @@ const EXACT: Record<string, ReferrerInfo> = {
   "hn.algolia.com": { name: "Hacker News", domain: "news.ycombinator.com" },
   "mail.google.com": { name: "Gmail", domain: "mail.google.com" },
   "news.google.com": { name: "Google News", domain: "news.google.com" },
-  "gemini.google.com": { name: "Gemini", domain: "gemini.google.com", kind: AI },
+  "gemini.google.com": { name: "Gemini", domain: "gemini.google.com" },
   "notebooklm.google.com": {
     name: "NotebookLM",
     domain: "notebooklm.google.com",
-    kind: AI,
   },
   "copilot.microsoft.com": {
     name: "Copilot",
     domain: "copilot.microsoft.com",
-    kind: AI,
   },
   "t.me": { name: "Telegram", domain: "telegram.org" },
   "telegram.me": { name: "Telegram", domain: "telegram.org" },
@@ -56,69 +51,87 @@ const EXACT: Record<string, ReferrerInfo> = {
   "bsky.app": { name: "Bluesky", domain: "bsky.app" },
   "dev.to": { name: "DEV", domain: "dev.to" },
   "search.brave.com": { name: "Brave Search", domain: "search.brave.com" },
-  "chat.openai.com": { name: "ChatGPT", domain: "chatgpt.com", kind: AI },
-  "chatgpt.com": { name: "ChatGPT", domain: "chatgpt.com", kind: AI },
-  "claude.ai": { name: "Claude", domain: "claude.ai", kind: AI },
-  "perplexity.ai": { name: "Perplexity", domain: "perplexity.ai", kind: AI },
-  "grok.com": { name: "Grok", domain: "grok.com", kind: AI },
-  "chat.deepseek.com": { name: "DeepSeek", domain: "deepseek.com", kind: AI },
-  "chat.mistral.ai": { name: "Le Chat", domain: "mistral.ai", kind: AI },
-  "chat.qwen.ai": { name: "Qwen", domain: "qwen.ai", kind: AI },
-  "meta.ai": { name: "Meta AI", domain: "meta.ai", kind: AI },
-  "you.com": { name: "You.com", domain: "you.com", kind: AI },
-  "poe.com": { name: "Poe", domain: "poe.com", kind: AI },
-  "phind.com": { name: "Phind", domain: "phind.com", kind: AI },
-  "kimi.com": { name: "Kimi", domain: "kimi.com", kind: AI },
-  "duck.ai": { name: "Duck.ai", domain: "duck.ai", kind: AI },
+  "chat.openai.com": { name: "ChatGPT", domain: "chatgpt.com" },
+  "chatgpt.com": { name: "ChatGPT", domain: "chatgpt.com" },
+  "claude.ai": { name: "Claude", domain: "claude.ai" },
+  "perplexity.ai": { name: "Perplexity", domain: "perplexity.ai" },
+  "grok.com": { name: "Grok", domain: "grok.com" },
+  "chat.deepseek.com": { name: "DeepSeek", domain: "deepseek.com" },
+  "chat.mistral.ai": { name: "Le Chat", domain: "mistral.ai" },
+  "chat.qwen.ai": { name: "Qwen", domain: "qwen.ai" },
+  "meta.ai": { name: "Meta AI", domain: "meta.ai" },
+  "you.com": { name: "You.com", domain: "you.com" },
+  "poe.com": { name: "Poe", domain: "poe.com" },
+  "phind.com": { name: "Phind", domain: "phind.com" },
+  "kimi.com": { name: "Kimi", domain: "kimi.com" },
+  "duck.ai": { name: "Duck.ai", domain: "duck.ai" },
   "discord.gg": { name: "Discord", domain: "discord.com" },
 };
 
 /**
- * The utm values an assistant writes onto the links it hands out. ChatGPT
- * tags every link `utm_source=chatgpt.com`; Claude's tag arrives as
- * `utm_source=Claude AI` with `utm_medium=claude.ai` (seen on our own site,
- * 2026-09-10). A click from an assistant's apps carries the tag and no
- * referrer at all, which is the one case where the tag is the only trace of
- * the assistant. Keyed by the value with everything but letters and digits
- * removed, so "Claude AI", "claude_ai" and "ClaudeAI" are one key; a
- * host-shaped value goes through `resolveReferrer` instead, so this list
- * only needs the bare spellings.
+ * The names for the utm values an assistant writes onto the links it hands
+ * out, for a row the server already put in the `ai` channel by its tag alone.
+ * ChatGPT tags every link `utm_source=chatgpt.com`; Claude's tag arrives as
+ * `utm_source=Claude AI` with `utm_medium=claude.ai`. Keyed by the value with
+ * everything but letters and digits removed, so "Claude AI", "claude_ai" and
+ * "ClaudeAI" are one key; a host-shaped value goes through `resolveReferrer`
+ * instead. Display only: membership is the server's.
  */
 const AI_UTM_NAMES: Record<string, ReferrerInfo> = {
-  chatgpt: { name: "ChatGPT", domain: "chatgpt.com", kind: AI },
-  openai: { name: "ChatGPT", domain: "chatgpt.com", kind: AI },
-  claude: { name: "Claude", domain: "claude.ai", kind: AI },
-  claudeai: { name: "Claude", domain: "claude.ai", kind: AI },
-  anthropic: { name: "Claude", domain: "claude.ai", kind: AI },
-  perplexity: { name: "Perplexity", domain: "perplexity.ai", kind: AI },
-  perplexityai: { name: "Perplexity", domain: "perplexity.ai", kind: AI },
-  gemini: { name: "Gemini", domain: "gemini.google.com", kind: AI },
-  googlegemini: { name: "Gemini", domain: "gemini.google.com", kind: AI },
-  copilot: { name: "Copilot", domain: "copilot.microsoft.com", kind: AI },
+  chatgpt: { name: "ChatGPT", domain: "chatgpt.com" },
+  openai: { name: "ChatGPT", domain: "chatgpt.com" },
+  claude: { name: "Claude", domain: "claude.ai" },
+  claudeai: { name: "Claude", domain: "claude.ai" },
+  anthropic: { name: "Claude", domain: "claude.ai" },
+  perplexity: { name: "Perplexity", domain: "perplexity.ai" },
+  perplexityai: { name: "Perplexity", domain: "perplexity.ai" },
+  gemini: { name: "Gemini", domain: "gemini.google.com" },
+  googlegemini: { name: "Gemini", domain: "gemini.google.com" },
+  copilot: { name: "Copilot", domain: "copilot.microsoft.com" },
   microsoftcopilot: {
     name: "Copilot",
     domain: "copilot.microsoft.com",
-    kind: AI,
   },
-  grok: { name: "Grok", domain: "grok.com", kind: AI },
-  deepseek: { name: "DeepSeek", domain: "deepseek.com", kind: AI },
-  mistral: { name: "Le Chat", domain: "mistral.ai", kind: AI },
-  lechat: { name: "Le Chat", domain: "mistral.ai", kind: AI },
-  metaai: { name: "Meta AI", domain: "meta.ai", kind: AI },
+  grok: { name: "Grok", domain: "grok.com" },
+  deepseek: { name: "DeepSeek", domain: "deepseek.com" },
+  mistral: { name: "Le Chat", domain: "mistral.ai" },
+  lechat: { name: "Le Chat", domain: "mistral.ai" },
+  metaai: { name: "Meta AI", domain: "meta.ai" },
 };
+
+/**
+ * The favicon domains this file names assistants by (the `EXACT` entries for
+ * assistant hosts and every `AI_UTM_NAMES` value). A host-shaped tag names an
+ * assistant only when it resolves to one of these. Display only, like the
+ * names: which rows are AI is the server's answer.
+ */
+const AI_DOMAINS: ReadonlySet<string> = new Set([
+  ...Object.values(AI_UTM_NAMES).map((info) => info.domain),
+  "notebooklm.google.com",
+  "qwen.ai",
+  "you.com",
+  "poe.com",
+  "phind.com",
+  "kimi.com",
+  "duck.ai",
+]);
 
 function aiUtmValue(value: string): ReferrerInfo | null {
   const raw = value.trim().toLowerCase();
   if (raw === "") return null;
   if (raw.includes(".")) {
     const info = resolveReferrer(raw);
-    return info.kind === "ai" ? info : null;
+    // Only an assistant's host names the row: in a tuple the server put in
+    // `ai` by its *other* tag, `utm_source=facebook.com` must not label it
+    // Facebook.
+    return AI_DOMAINS.has(info.domain) ? info : null;
   }
   return AI_UTM_NAMES[raw.replace(/[^a-z0-9]/g, "")] ?? null;
 }
 
 /**
- * The assistant a link's utm tag names, or null for every other tag.
+ * The assistant a link's utm tag names, or null for a tag this file has no
+ * name for.
  * `utm_source` is the tag's home and is read first; `utm_medium` is read
  * only when the source names nothing, because Claude's medium carries the
  * host while its source carries the display name, and a fork of either

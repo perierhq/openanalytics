@@ -132,6 +132,7 @@ const EXPECTED_READ_TOOLS = [
   'site_timeseries',
   'top_pages',
   'top_sources',
+  'referrer_paths',
   'geography',
   'devices',
   'sessions',
@@ -199,9 +200,10 @@ describe('the tool roster is pinned by name, not derived', () => {
     // 36, and its subscription reads (`subscription_summary`,
     // `subscription_timeseries`, gap 7) 38, `list_mentions` (the X mentions
     // list) 39, and the chart notes (`list_notes`, `create_note`,
-    // `update_note`, `delete_note`) 43.
-    expect(MCP_TOOLS).toHaveLength(43)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(43)
+    // `update_note`, `delete_note`) 43, and `referrer_paths` (the referring
+    // pages behind a Sources row) 44.
+    expect(MCP_TOOLS).toHaveLength(44)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(44)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -293,6 +295,7 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
         'site_timeseries',
         'top_pages',
         'top_sources',
+        'referrer_paths',
         'geography',
         'devices',
         'sessions',

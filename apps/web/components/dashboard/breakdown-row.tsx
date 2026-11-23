@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowDown01Icon } from "hugeicons-react";
 import type * as React from "react";
 import { HoverRow } from "@/components/dashboard/hover-list";
 import { RowBar } from "@/components/dashboard/row-bar";
@@ -54,6 +55,10 @@ export function BreakdownRow({
   bar,
   revenue,
   tooltip,
+  expanded,
+  onToggle,
+  details,
+  reserveExpander,
 }: {
   name: string;
   value: string;
@@ -80,6 +85,19 @@ export function BreakdownRow({
   revenue?: string | null;
   /** A light tooltip on the row, for the numbers the row has no room for. */
   tooltip?: React.ReactNode;
+  /**
+   * Makes the row an expander: the whole row toggles `details` open below
+   * it, a chevron at its end turns with it. Given only to a row that has
+   * something to show, so no row ever opens onto nothing. Not combined with
+   * `onSelect`: a row is a filter door or an expander, never both.
+   */
+  onToggle?: () => void;
+  expanded?: boolean;
+  /** What an open expander shows under the row. */
+  details?: React.ReactNode;
+  /** Keeps the chevron's width on a row without one, so a list that mixes
+   *  expanders and plain rows keeps its numbers in one column. */
+  reserveExpander?: boolean;
 }) {
   const body = (
     <>
@@ -120,6 +138,18 @@ export function BreakdownRow({
           </span>
         )}
         {revenue !== undefined && <RevenueAmount amount={revenue} />}
+        {onToggle === undefined && reserveExpander === true && (
+          <span aria-hidden="true" className="w-3.5 shrink-0" />
+        )}
+        {onToggle !== undefined && (
+          <ArrowDown01Icon
+            aria-hidden="true"
+            className={
+              "size-3.5 shrink-0 self-center text-muted-foreground/60 transition-transform duration-200" +
+              (expanded === true ? " rotate-180" : "")
+            }
+          />
+        )}
       </span>
     </>
   );
@@ -131,7 +161,19 @@ export function BreakdownRow({
     (icon !== undefined ? "pl-4.5" : "pl-5");
 
   const row =
-    onSelect !== undefined ? (
+    onToggle !== undefined ? (
+      <button
+        aria-expanded={expanded === true}
+        className={
+          rowClass +
+          " w-full cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        }
+        onClick={onToggle}
+        type="button"
+      >
+        {body}
+      </button>
+    ) : onSelect !== undefined ? (
       <button
         aria-label={`Filter by ${name}`}
         className={
@@ -159,7 +201,7 @@ export function BreakdownRow({
       <div className={rowClass}>{body}</div>
     );
 
-  return (
+  const hoverRow = (
     <HoverRow
       backdrop={bar !== undefined ? <RowBar segments={bar} /> : undefined}
     >
@@ -174,5 +216,16 @@ export function BreakdownRow({
         row
       )}
     </HoverRow>
+  );
+
+  // The details are the row's next sibling rather than part of it, so the
+  // row's bar and the list's hover glide stay the height of the row.
+  return onToggle !== undefined && expanded === true ? (
+    <>
+      {hoverRow}
+      <li className="pb-1.5">{details}</li>
+    </>
+  ) : (
+    hoverRow
   );
 }

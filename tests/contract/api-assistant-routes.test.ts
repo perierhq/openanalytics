@@ -596,6 +596,7 @@ describe('the tool loop is the read route (D3, D4, D9, D10)', () => {
       'geography',
       'list_sites',
       'performance',
+      'referrer_paths',
       'revenue_by_source',
       'revenue_summary',
       'revenue_timeseries',

@@ -11,6 +11,9 @@ import {
   isUtcMinuteAligned,
   isUtcQuarterAligned,
   MAX_FUNNEL_STEP_CONDITIONS,
+  MAX_REFERRER_PATH_LENGTH,
+  REFERRER_PATHS_MAX_HOSTS,
+  REFERRER_PATHS_MAX_PER_HOST,
   funnelPagePatternToLike,
   funnelStepsSchema,
   parseFunnelStep,
@@ -4673,6 +4676,130 @@ const filteredPageSessionOperations: readonly QueryOperation[] = [
   }),
 ]
 
+// ---------------------------------------------------------------------------
+// Referring pages (the Sources card's referrer-path drill-down).
+//
+// The fourth family that reads `events_raw`, because nothing else carries the
+// column: `referrer_path` is stored on the raw event only — the sources rollups
+// group by host, and the session fact keeps the entry host but not its path. So
+// it earns the exception the way the filtered family does: a hard site filter,
+// a hard host list (at most `REFERRER_PATHS_MAX_HOSTS` hosts), the filtered
+// family's 92-day cap, page views only, and a row cap of `limit` paths per
+// host via `LIMIT n BY`.
+//
+// The query string, the fragment and any matrix parameter (`;jsessionid=…`)
+// are cut and the path is truncated **in the statement**, so the grouping is on
+// what is shown: two links to one page with different query strings are one
+// row, and a value that was stored with a token in its query never leaves
+// ClickHouse. `(?s)` matters: RE2's `.` stops at a newline by default, and a
+// path with a `\n` after its `?` would otherwise not match at all and keep its
+// whole query string. The api cuts again on the way out and also redacts token-
+// and email-shaped path segments (`referrerPathForDisplay`), which a regex here
+// cannot do the way `redactSensitiveText` does; it merges the rows that become
+// identical, so a per-host cap here can come back as fewer rows there. The `;`
+// is written `\x3B` (a ClickHouse string escape, so RE2 sees `;`) because no
+// statement here may contain a literal `;` (`defineOperation`). The
+// bare origin (`/`) and the empty path are dropped, because a list of them says
+// nothing the host row did not — most hosts send only their origin, and for
+// those this read returns no rows at all.
+// ---------------------------------------------------------------------------
+
+const REFERRER_PATH_EXPR = `substringUTF8(replaceRegexpOne(er.referrer_path, '(?s)[?#\\x3B].*', ''), 1, ${MAX_REFERRER_PATH_LENGTH})`
+
+function referrerPathsParamsSchema(filtered: boolean) {
+  const shape = {
+    site_id: z.uuid(),
+    from: utcInstantSchema,
+    to: utcInstantSchema,
+    referrer_domains: z
+      .array(z.string().min(1).max(MAX_FILTER_VALUE_LENGTH))
+      .min(1)
+      .max(REFERRER_PATHS_MAX_HOSTS),
+    limit: z.number().int().min(1).max(REFERRER_PATHS_MAX_PER_HOST).default(10),
+    ...(filtered
+      ? {
+          filters: z
+            .array(
+              z.strictObject({
+                dimension: z.enum(FILTER_DIMENSIONS),
+                operator: z.enum(FILTER_OPERATORS),
+                values: z
+                  .array(z.string().max(MAX_FILTER_VALUE_LENGTH))
+                  .min(1)
+                  .max(MAX_FILTER_VALUES),
+              }),
+            )
+            .min(1)
+            .max(MAX_FILTER_CLAUSES),
+        }
+      : {}),
+  }
+  return z.strictObject(shape).superRefine((value, ctx) => {
+    halfOpenSpan(value, ctx, FILTERED_MAX_SPAN_MS, 'referrer paths')
+  })
+}
+
+/**
+ * Visitors are `uniqExact`, as in every other read of `events_raw` here (the
+ * filtered reports, entry and exit pages): the rollups store `uniqState`
+ * because a state has to merge across buckets, and a raw read has no state to
+ * merge, so it counts exactly over a range the 92-day cap keeps small.
+ */
+function defineReferrerPaths(filtered: boolean): QueryOperation {
+  const source = filtered
+    ? filteredEventFilter(true)
+    : [
+        'FROM events_raw AS er',
+        'WHERE er.site_id = {site_id:UUID}',
+        "  AND er.occurred_at >= toDateTime64({from:String}, 3, 'UTC')",
+        "  AND er.occurred_at <  toDateTime64({to:String}, 3, 'UTC')",
+        "  AND er.type = 'page_view'",
+      ].join('\n')
+  const sql = [
+    'SELECT',
+    '  er.referrer_domain AS referrer_domain,',
+    `  ${REFERRER_PATH_EXPR} AS ref_path,`,
+    '  count() AS views,',
+    `  uniqExact(${FILTERED_VISITOR_EXPR}) AS visitors`,
+    source,
+    '  AND er.referrer_domain IN {referrer_domains:Array(String)}',
+    "  AND ref_path NOT IN ('', '/')",
+    'GROUP BY referrer_domain, ref_path',
+    'ORDER BY referrer_domain ASC, visitors DESC, views DESC, ref_path ASC',
+    'LIMIT {limit:UInt32} BY referrer_domain',
+  ].join('\n')
+
+  return defineOperation({
+    id: filtered ? 'analytics.filtered_referrer_paths' : 'analytics.referrer_paths',
+    summary: filtered
+      ? 'Top referring pages per referrer host for sessions matching a filter set, query string and fragment removed.'
+      : 'Top referring pages per referrer host, query string and fragment removed.',
+    requiresSiteScope: true,
+    allowRawEvents: true,
+    params: referrerPathsParamsSchema(filtered),
+    sql,
+    maxRows: REFERRER_PATHS_MAX_HOSTS * REFERRER_PATHS_MAX_PER_HOST,
+    bind: (params) => ({
+      site_id: params.site_id,
+      from: toClickHouseInstant(params.from),
+      to: toClickHouseInstant(params.to),
+      referrer_domains: toClickHouseStringArray(params.referrer_domains),
+      limit: params.limit,
+      ...(filtered
+        ? {
+            session_from: sessionWindowStart(params.from),
+            ...bindFilters((params as { filters: readonly AnalyticsFilter[] }).filters),
+          }
+        : {}),
+    }),
+  })
+}
+
+const referrerPathOperations: readonly QueryOperation[] = [
+  defineReferrerPaths(false),
+  defineReferrerPaths(true),
+]
+
 const filteredOperations: readonly QueryOperation[] = [
   ...filteredOverviewOperations,
   ...filteredTimeseriesOperations,
@@ -4693,6 +4820,7 @@ const OPERATIONS: readonly QueryOperation[] = [
   ...funnelOperations(),
   ...recentVisitorOperations,
   ...filteredOperations,
+  ...referrerPathOperations,
   ...revenueOperations,
   ...revenueAttributionOperations,
   ...subscriptionOperations,

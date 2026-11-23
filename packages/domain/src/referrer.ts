@@ -1,4 +1,4 @@
-import { sanitizeUrl } from './event-sanitize.ts'
+import { PII_REDACTED, redactSensitiveText, sanitizeUrl } from './event-sanitize.ts'
 
 /**
  * What a client-sent referrer becomes on the way into the pipeline (ADR-0028).
@@ -160,4 +160,58 @@ export function resolveReferrer(
   }
 
   return { domain, path: sanitized.path, isSelf: false }
+}
+
+// ---------------------------------------------------------------------------
+// Referring pages (the Sources card's referrer-path drill-down)
+// ---------------------------------------------------------------------------
+
+/** The longest referring path a read returns, in characters. */
+export const MAX_REFERRER_PATH_LENGTH = 200
+
+/** How many referrer hosts one referrer-paths read may name. */
+export const REFERRER_PATHS_MAX_HOSTS = 20
+
+/** The most paths one referrer-paths read returns per host. */
+export const REFERRER_PATHS_MAX_PER_HOST = 20
+
+/**
+ * A stored `referrer_path` as a read may show it: the path alone, cut at the
+ * first `?`, `#` or `;` (a query string, a fragment, a matrix parameter such as
+ * `;jsessionid=…`), every segment run through `redactSensitiveText`, and at
+ * most `MAX_REFERRER_PATH_LENGTH` characters long.
+ *
+ * The path is stored as the referrer's `pathname`, which the collector already
+ * cut from its query, and the tracker redacts sensitive values before that. A
+ * referring page can still carry a token in its query on a row written by
+ * another producer or an older collector, and a token can sit in the path
+ * itself (`/reset/<token>`, `/u/jane@example.com`, a magic link), so the read
+ * strips and redacts again rather than trusting the write. A segment is
+ * checked both as stored and percent-decoded, so `jane%40example.com` is
+ * caught as well. Redaction is per segment, so `/reset/<token>` becomes
+ * `/reset/[redacted]` and the page stays recognisable; two links that differ
+ * only in their token become the same path, and the caller merges them.
+ *
+ * The bare origin (`/`) is returned as `''`: it names no page, and a list of
+ * `/` rows says nothing the host row did not. Truncation counts characters
+ * (code points), as `substringUTF8` does in the statement, so it never splits
+ * a surrogate pair.
+ */
+export function referrerPathForDisplay(path: string): string {
+  const cut = path.replace(/[?#;].*$/s, '').trim()
+  if (cut === '' || cut === '/') return ''
+  const redacted = cut.split('/').map(redactPathSegment).join('/')
+  return Array.from(redacted).slice(0, MAX_REFERRER_PATH_LENGTH).join('')
+}
+
+function redactPathSegment(segment: string): string {
+  if (segment === '') return segment
+  let decoded = segment
+  try {
+    decoded = decodeURIComponent(segment)
+  } catch {
+    // A malformed escape is checked as stored.
+  }
+  if (decoded !== segment && redactSensitiveText(decoded) !== decoded) return PII_REDACTED
+  return redactSensitiveText(segment)
 }

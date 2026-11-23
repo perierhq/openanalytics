@@ -262,6 +262,37 @@ describe('scopes decide what a key may read (D3)', () => {
     }
   })
 
+  it('serves sources by channel and the referring pages to a key, behind analytics:read', async () => {
+    resolvedKey.value = {
+      id: 'key-1',
+      siteId: SITE,
+      type: 'private_read',
+      scopes: ['site:read', 'analytics:read'],
+    }
+    siteBasics.value = activeSite()
+
+    const grouped = await get(`/v1/read/analytics/sources?${RANGE}&group_by=channel`)
+    expect(grouped.status).toBe(200)
+    const paths = await get(
+      `/v1/read/analytics/sources/referrer-paths?${RANGE}&referrer_domain=lobste.rs`,
+    )
+    expect(paths.status).toBe(200)
+    expect(gatewayCalls).toContain('analytics.referrer_paths')
+    expect(gatewayParams['analytics.referrer_paths']).toMatchObject({
+      referrer_domains: ['lobste.rs'],
+    })
+
+    resolvedKey.value = { ...resolvedKey.value, scopes: ['site:read'] }
+    const app = buildApp()
+    const refused = await get(
+      `/v1/read/analytics/sources/referrer-paths?${RANGE}&referrer_domain=lobste.rs`,
+      KEY,
+      app,
+    )
+    expect(refused.status).toBe(403)
+    expect(gatewayCalls).toHaveLength(0)
+  })
+
   it('lets the minimum scope read the site context but nothing else', async () => {
     resolvedKey.value = { id: 'key-1', siteId: SITE, type: 'private_read', scopes: ['site:read'] }
     siteBasics.value = activeSite()

@@ -448,9 +448,44 @@ const mcpTools: McpToolDefinition[] = [
   {
     name: 'top_sources',
     title: 'Top Sources',
-    description: 'Where a site’s traffic came from — referrers and campaigns.',
+    description:
+      'Where a site’s traffic came from — referrers and campaigns. Each row is a referrer host × utm source/medium/campaign tuple with its `channel`: paid, email, affiliate, ai, organic_search, social, referral or direct. Pass group_by "channel" for one row per channel instead. An ad click that carried only a click id (gclid, fbclid) and no utm tag counts as organic_search or social, not paid, because the sources data does not keep click ids.',
     path: '/read/analytics/sources',
-    params: [...RANGE_PARAMS, LIMIT_PARAM, FILTERS_PARAM],
+    params: [
+      ...RANGE_PARAMS,
+      LIMIT_PARAM,
+      FILTERS_PARAM,
+      {
+        name: 'group_by',
+        description:
+          '"channel" to collapse the rows into one per channel, views and visitors summed. Omit for the tuple list.',
+        required: false,
+      },
+    ],
+    needsSite: true,
+    scope: 'analytics:read',
+  },
+  {
+    name: 'referrer_paths',
+    title: 'Referrer Paths',
+    description:
+      'The pages on a referring site that sent visits: for each named referrer host (as top_sources spells it), the top paths with views and unique visitors, ranked by visitors. Paths have no query string, fragment or ; parameters, a segment shaped like a token or an email address reads [redacted], and they are at most 200 characters. Most hosts send only their origin, and those return no rows. Read from raw events: the range is at most 92 days and covers live data only. Takes the same filters as top_sources.',
+    path: '/read/analytics/sources/referrer-paths',
+    params: [
+      ...RANGE_PARAMS,
+      {
+        name: 'referrer_domain',
+        description: 'One to 20 referrer hosts, e.g. ["lobste.rs"], as top_sources rows name them.',
+        required: true,
+        list: true,
+      },
+      {
+        name: 'limit',
+        description: 'Paths per host, 1 to 20. Defaults to 10.',
+        required: false,
+      },
+      FILTERS_PARAM,
+    ],
     needsSite: true,
     scope: 'analytics:read',
   },
