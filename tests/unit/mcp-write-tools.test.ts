@@ -359,7 +359,7 @@ describe('the Meta Ads campaigns tool', () => {
     })
     expect(req.method).toBe('GET')
     const url = new URL(req.url)
-    expect(url.pathname).toBe(`/v1/sites/${SITE}/ads/campaigns`)
+    expect(url.pathname).toBe(`/v1/sites/${SITE}/marketing/campaigns`)
     expect(url.searchParams.get('from')).toBe('2026-11-01T00:00:00Z')
     expect(url.searchParams.get('to')).toBe('2026-11-15T00:00:00Z')
     expect(url.searchParams.get('timezone')).toBe('Europe/Warsaw')

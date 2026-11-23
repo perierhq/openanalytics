@@ -8,6 +8,19 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
+## [Unreleased]
+
+**Upgrade notes: none.**
+
+### Fixed
+
+- **The Meta Ads card works with content blockers.** Its API paths contained
+  `/ads/`, which browser ad and content blockers drop before the request is
+  sent, so the card always showed an error for most visitors. The routes are
+  now `/v1/sites/{site_id}/marketing/meta/connection` and
+  `/v1/sites/{site_id}/marketing/campaigns`; the `/ads/` paths keep working for
+  server-side clients and are deprecated.
+
 ## [0.11.0] - 2026-11-23 (perierhq fork)
 
 New: channels and referring pages on the Sources card, Meta Ads spend and ROAS

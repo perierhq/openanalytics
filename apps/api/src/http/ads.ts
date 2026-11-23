@@ -29,7 +29,7 @@ import {
   type Database,
   type MetaAdsConnectionRecord,
 } from '@openanalytics/postgres'
-import { Hono } from 'hono'
+import { Hono, type Handler } from 'hono'
 import type { AnalyticsService } from '../analytics/service.ts'
 import { parseRange } from './analytics.ts'
 import {
@@ -64,9 +64,27 @@ import {
  * so a suspended site can still cut the link; `PUT` mounts only with a keyring.
  * The campaigns read mounts only with a query gateway, because the revenue half
  * of it is a gateway read.
+ *
+ * **Two paths, one handler.** The routes live under `/marketing/`. They were
+ * first mounted under `/ads/`, which browser ad and content blockers drop
+ * before the request is sent, so the dashboard card failed for most visitors.
+ * The `/ads/` paths stay, deprecated, for server-side clients; each is the same
+ * handler and the same middleware, never a copy.
  */
 
 type Env = { Variables: ApiVariables }
+
+/** The connection's paths: the current one first, then the deprecated one. */
+const CONNECTION_PATHS = [
+  '/sites/:site_id/marketing/meta/connection',
+  '/sites/:site_id/ads/meta/connection',
+] as const
+
+/** The campaigns read's paths: the current one first, then the deprecated one. */
+const CAMPAIGNS_PATHS = [
+  '/sites/:site_id/marketing/campaigns',
+  '/sites/:site_id/ads/campaigns',
+] as const
 
 /**
  * `utm_campaign` rows read per request: the gateway's own ceiling. The
@@ -166,25 +184,28 @@ export function createAdsRoutes(deps: AdsRoutesDeps): Hono<Env> {
   const { db } = deps
   const app = new Hono<Env>()
 
-  const connection = '/sites/:site_id/ads/meta/connection'
-  app.use(connection, siteMembership(db), requireCapability('revenue:read'))
-
-  app.get(connection, async (c) => {
+  const readConnection: Handler<Env> = async (c) => {
     const { siteId } = c.get('membership')
     const row = await readMetaAdsConnection(db, siteId)
     return c.json(row === null ? { status: 'not_connected' } : connectionJson(row))
-  })
+  }
 
-  app.delete(connection, async (c) => {
+  const disconnect: Handler<Env> = async (c) => {
     const { siteId } = c.get('membership')
     const removed = await deleteMetaAdsConnection(db, { siteId, actorUserId: c.get('user').id })
     if (!removed.deleted) throw new ApiError('NOT_FOUND', 'This site has no Meta Ads connection')
     return c.body(null, 204)
-  })
+  }
+
+  for (const path of CONNECTION_PATHS) {
+    app.use(path, siteMembership(db), requireCapability('revenue:read'))
+    app.get(path, readConnection)
+    app.delete(path, disconnect)
+  }
 
   if (deps.write) {
     const { vault, client } = deps.write
-    app.put(connection, async (c) => {
+    const connect: Handler<Env> = async (c) => {
       const actor = c.get('user')
       const { siteId } = c.get('membership')
       const body = await readBody(c)
@@ -276,20 +297,13 @@ export function createAdsRoutes(deps: AdsRoutesDeps): Hono<Env> {
         })
       }
       return c.json(connectionJson(saved.connection))
-    })
+    }
+    for (const path of CONNECTION_PATHS) app.put(path, connect)
   }
 
   if (deps.analytics) {
     const service = deps.analytics
-    const campaigns = '/sites/:site_id/ads/campaigns'
-    app.use(
-      campaigns,
-      siteMembership(db),
-      requireAnalyticsAccess(db),
-      requireCapability('revenue:read'),
-    )
-
-    app.get(campaigns, async (c) => {
+    const readCampaigns: Handler<Env> = async (c) => {
       const { siteId } = c.get('membership')
       const reporting = c.get('siteReportingCurrency').toUpperCase()
       const range = parseRange(c.req.query())
@@ -381,7 +395,17 @@ export function createAdsRoutes(deps: AdsRoutesDeps): Hono<Env> {
           spend_converted_minor: joined.unmatched.spendConvertedMinor,
         },
       })
-    })
+    }
+
+    for (const path of CAMPAIGNS_PATHS) {
+      app.use(
+        path,
+        siteMembership(db),
+        requireAnalyticsAccess(db),
+        requireCapability('revenue:read'),
+      )
+      app.get(path, readCampaigns)
+    }
   }
 
   return app
