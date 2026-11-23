@@ -8,14 +8,14 @@ taking.
 Releases before 0.6.0 have their notes on the
 [GitHub releases page](https://github.com/OpenLabs-so/openanalytics/releases).
 
-## [Unreleased]
+## [0.11.0] - 2026-11-23 (perierhq fork)
 
-**Upgrade notes: Coolify and Dokploy installs.** The blueprints now pull the
-fork's images (`ghcr.io/perierhq/openanalytics`) at `v0.10.1` by default. An
-install created from an earlier blueprint keeps pulling `v0.8.0` from OpenLabs'
-registry until you set `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics` and
-`OA_IMAGE_TAG=v0.10.1` in its Environment tab and redeploy. Everyone else has
-nothing to do.
+New: channels and referring pages on the Sources card, Meta Ads spend and ROAS
+per campaign, and the most valuable traffic by segment. The Coolify and Dokploy
+blueprints now follow the fork's releases.
+
+**Upgrade notes.** Run `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics
+./upgrade.sh --to v0.11.0` from the `v0.11.0` checkout.
 
 Postgres migration 0052 adds two tables for Meta Ads (the ad account
 connection and the daily spend per campaign) and changes nothing that exists;
@@ -23,6 +23,15 @@ nothing to do by hand. No new setting: Meta Ads uses the existing
 `OA_CREDENTIAL_KEYRING`, and it stays off for every site until the site's owner
 connects an ad account. Once one is connected, the worker and the API make
 outbound HTTPS requests to `graph.facebook.com`.
+
+**Coolify and Dokploy installs.** The blueprints now pull the fork's images
+(`ghcr.io/perierhq/openanalytics`) at `v0.11.0` by default. An install created
+from an earlier blueprint keeps pulling `v0.8.0` from OpenLabs' registry until
+you set `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics` and
+`OA_IMAGE_TAG=v0.11.0` in its Environment tab and redeploy.
+
+**API clients.** `SourceRow` has a new required `channel` field; a client that
+validates responses with `additionalProperties: false` must update.
 
 ### Added
 
@@ -84,7 +93,7 @@ outbound HTTPS requests to `graph.facebook.com`.
 
 - **The Coolify and Dokploy blueprints follow the fork's releases.** They were
   still pinned to upstream `v0.8.0`, so a platform install missed every release
-  since. They now default to `ghcr.io/perierhq/openanalytics` at `v0.10.1`, the
+  since. They now default to `ghcr.io/perierhq/openanalytics` at `v0.11.0`, the
   Dokploy import blob is regenerated, and `meta.json` and the guides link to
   this repository.
 
