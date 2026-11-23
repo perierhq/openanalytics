@@ -288,16 +288,26 @@ export function rowRevenueHold(request: {
   if (request.dimension === null || request.rangePending || request.filtered) {
     return true;
   }
-  const from = Date.parse(request.range.from);
-  const to = Date.parse(request.range.to);
-  if (Number.isNaN(from) || Number.isNaN(to)) return true;
-  const span =
-    (Math.ceil(to / QUARTER_HOUR_MS) - Math.floor(from / QUARTER_HOUR_MS)) *
-    QUARTER_HOUR_MS;
-  return span / 86_400_000 > ROW_REVENUE_MAX_SPAN_DAYS;
+  const days = snappedSpanDays(request.range);
+  return days === null || days > ROW_REVENUE_MAX_SPAN_DAYS;
 }
 
 const QUARTER_HOUR_MS = 15 * 60_000;
+
+/**
+ * A range's length in days once rounded outward to quarter hours, the way
+ * the api snaps a revenue read's range before it checks the cap; `null` for
+ * an unparseable range. The revenue segments' cap reads it too.
+ */
+export function snappedSpanDays(range: Pick<AnalyticsRange, "from" | "to">): number | null {
+  const from = Date.parse(range.from);
+  const to = Date.parse(range.to);
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  const span =
+    (Math.ceil(to / QUARTER_HOUR_MS) - Math.floor(from / QUARTER_HOUR_MS)) *
+    QUARTER_HOUR_MS;
+  return span / 86_400_000;
+}
 
 /** How long one attribution read answers for, per site, cut and range. */
 const ATTRIBUTION_TTL_MS = 60_000;

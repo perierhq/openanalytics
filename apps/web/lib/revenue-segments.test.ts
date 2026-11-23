@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RevenueSegment, RevenueSegmentsResponse } from "@/lib/api";
 import {
+  confidenceLabel,
   countryLabel,
   deviceLabel,
   formatRate,
@@ -10,13 +11,18 @@ import {
   SEGMENT_SORTS,
   segmentKey,
   segmentsNeedingHost,
+  segmentsSpanTooLong,
   SEGMENTS_FETCH_LIMIT,
   SEGMENTS_SUBTITLE,
   segmentSourceLabel,
   sortSegments,
   SMOOTHING_NOTE,
+  smoothingNote,
   truncatedCopy,
 } from "./revenue-segments";
+
+/** The response's `thresholds.confidence`, as the server sends it today. */
+const EDGES = { low_visitors: 100, low_buyers: 3, high_visitors: 1_000, high_buyers: 10 };
 
 const segment = (over: Partial<RevenueSegment>): RevenueSegment => ({
   source: "google.com",
@@ -78,6 +84,23 @@ describe("labels", () => {
   });
 });
 
+describe("segmentsSpanTooLong", () => {
+  const range = (from: string, to: string) => ({ from, to, timezone: "UTC" });
+
+  it("allows exactly 92 days and refuses 93", () => {
+    expect(segmentsSpanTooLong(range("2026-04-22T00:00:00.000Z", "2026-07-23T00:00:00.000Z"))).toBe(false);
+    expect(segmentsSpanTooLong(range("2026-04-21T00:00:00.000Z", "2026-07-23T00:00:00.000Z"))).toBe(true);
+  });
+
+  it("measures the range rounded outward to quarter hours, as the api does", () => {
+    // 92 days to the minute, but unaligned: the api reads 00:00 to 00:15,
+    // 92 days and a quarter hour, and refuses it.
+    expect(segmentsSpanTooLong(range("2026-04-22T00:07:00.000Z", "2026-07-23T00:07:00.000Z"))).toBe(true);
+    // A minute under 92 days that rounds out to exactly 92: allowed.
+    expect(segmentsSpanTooLong(range("2026-04-22T00:01:00.000Z", "2026-07-23T00:00:00.000Z"))).toBe(false);
+  });
+});
+
 describe("formatRate", () => {
   it("keeps one decimal under 10%, none above", () => {
     expect(formatRate(0.025)).toBe("2.5%");
@@ -92,6 +115,28 @@ describe("copy", () => {
       "Small segments are pulled toward your site's average so a handful of visits can't look like a sure thing. Value per visitor counts new revenue, from new subscriptions and one-off purchases."
     );
     expect(SEGMENTS_SUBTITLE).toContain("from new subscriptions and one-off purchases");
+  });
+
+  it("adds what the confidence dot means to the ⓘ, from the response's edges", () => {
+    expect(smoothingNote(EDGES)).toBe(
+      `${SMOOTHING_NOTE} The dot shows how much data is behind a row: low under 100 visitors or 3 buyers, high from 1,000 visitors and 10 buyers.`
+    );
+    // The numbers are the response's, not the copy's.
+    expect(
+      smoothingNote({ low_visitors: 50, low_buyers: 2, high_visitors: 5_000, high_buyers: 25 })
+    ).toContain("low under 50 visitors or 2 buyers, high from 5,000 visitors and 25 buyers.");
+    // No edges (nothing loaded yet, so no dots on screen): no dot sentence.
+    expect(smoothingNote(undefined)).toBe(SMOOTHING_NOTE);
+  });
+
+  it("labels each confidence band in short, with the same edges", () => {
+    expect(confidenceLabel("low", EDGES)).toBe("Low confidence: under 100 visitors or 3 buyers");
+    expect(confidenceLabel("medium", EDGES)).toBe(
+      "Medium confidence: at least 100 visitors and 3 buyers"
+    );
+    expect(confidenceLabel("high", EDGES)).toBe(
+      "High confidence: at least 1,000 visitors and 10 buyers"
+    );
   });
 
   it("calls the revenue column New revenue", () => {

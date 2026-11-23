@@ -187,7 +187,7 @@ interface SegmentsBody {
   site: Record<string, number | null>
   segments: Record<string, unknown>[]
   hidden_segments: number
-  thresholds: { min_buyers: number; min_segment_visitors: number }
+  thresholds: Record<string, unknown>
   prior: { k: number }
 }
 
@@ -206,7 +206,12 @@ describe('revenue by segment', () => {
     expect(body.currency).toBe('EUR')
     expect(body.meta.revenue.connection_status).toBe('not_connected')
     expect(body.prior).toEqual({ k: 200 })
-    expect(body.thresholds).toEqual({ min_buyers: 10, min_segment_visitors: 20 })
+    expect(body.thresholds).toEqual({
+      min_buyers: 10,
+      min_segment_visitors: 20,
+      // The confidence band edges, so the screen's copy reads the server's numbers.
+      confidence: { low_visitors: 100, low_buyers: 3, high_visitors: 1000, high_buyers: 10 },
+    })
     expect(body.hidden_segments).toBe(6)
     expect(body.site).toEqual({
       visitors: 2000,
@@ -251,7 +256,8 @@ describe('revenue by segment', () => {
         unconverted_orders: 1,
         conversion_rate: 0.025,
         smoothed_conversion_rate: 34 / 1400,
-        average_order_value_minor: 90000 / 33,
+        // 33 orders, 1 with no exchange rate: 90,000 is the revenue of 32.
+        average_order_value_minor: 90000 / 32,
         value_per_visitor_minor: 75,
         smoothed_value_per_visitor_minor: 100000 / 1400,
         confidence: 'high',
@@ -318,10 +324,22 @@ describe('revenue by segment', () => {
     expect(call?.params['to']).toBe('2026-07-23T10:15:00.000Z')
   })
 
+  it('serves exactly 92 days', async () => {
+    const res = await get(
+      sitePath('from=2026-04-22T00:00:00.000Z&to=2026-07-23T00:00:00.000Z&timezone=UTC'),
+      session,
+    )
+    expect(res.status).toBe(200)
+  })
+
   it('refuses more than 92 days by name, before the gateway is asked', async () => {
     const res = await get(sitePath(LONG_RANGE), session)
     expect(res.status).toBe(400)
-    expect((await errorOf(res)).code).toBe('RANGE_TOO_LARGE')
+    const error = (await res.json()) as {
+      error: { code: string; details: { max_span_days: number } }
+    }
+    expect(error.error.code).toBe('RANGE_TOO_LARGE')
+    expect(error.error.details.max_span_days).toBe(92)
     expect(operations().some((op) => op.startsWith('analytics.revenue_'))).toBe(false)
   })
 })

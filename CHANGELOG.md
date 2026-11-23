@@ -61,12 +61,13 @@ outbound HTTPS requests to `graph.facebook.com`.
 - **Most valuable traffic.** For a site's owner with revenue connected, visitor
   segments, one per source (referrer domain, Direct for none), country and
   device, ranked by what a visit is worth: conversion rate, average order
-  value and value per visitor over the range, from new subscriptions and
-  one-off purchases at the last touch. Small segments are pulled toward the
-  site's average (an additive prior worth 200 visitors) so a handful of visits
-  can't look like a sure thing; both raw and smoothed figures are returned, the
-  list is sorted by smoothed value per visitor, and each segment carries a
-  low, medium or high confidence band. A buyer counts only when their last
+  value (over the orders whose currency converted) and value per visitor over
+  the range, from new subscriptions and one-off purchases at the last touch.
+  Small segments are pulled toward the site's average (an additive prior worth
+  200 visitors) so a handful of visits can't look like a sure thing; both raw
+  and smoothed figures are returned, the list is sorted by smoothed value per
+  visitor, and each segment carries a low, medium or high confidence band,
+  whose edges the response states and the card's ⓘ explains. A buyer counts only when their last
   visit was in the range, so every buyer is one of the visitors the rate
   divides by; those whose last visit came earlier are counted separately.
   Segments under 20 visitors are left out and counted (with only one, the

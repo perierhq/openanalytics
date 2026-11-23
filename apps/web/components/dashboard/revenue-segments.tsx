@@ -40,7 +40,9 @@ import {
 } from "@/lib/mock";
 import {
   SEGMENTS_FETCH_LIMIT,
+  SEGMENTS_MAX_SPAN_DAYS,
   SEGMENTS_SUBTITLE,
+  segmentsSpanTooLong,
   type SegmentSort,
 } from "@/lib/revenue-segments";
 
@@ -70,11 +72,6 @@ import {
  */
 
 const CARD_ROWS = 5;
-const MAX_SPAN_MS = 92 * 86_400_000;
-
-function spanTooLong(range: AnalyticsRange): boolean {
-  return Date.parse(range.to) - Date.parse(range.from) > MAX_SPAN_MS;
-}
 
 /** Mock mode: a short range has too few sales, as a real site's would. */
 function mockSegments(range: AnalyticsRange): RevenueSegmentsResponse {
@@ -91,7 +88,7 @@ function useRevenueSegments(siteId: string | null): {
   const params = useParams<{ site: string }>();
   const slug = params.site ? decodeURIComponent(params.site) : "";
   const { range, rangePending } = useAnalyticsInterval();
-  const tooLong = !rangePending && spanTooLong(range);
+  const tooLong = !rangePending && segmentsSpanTooLong(range);
   const load = React.useCallback(
     async (signal: AbortSignal): Promise<RevenueSegmentsResponse> => {
       // Held, never resolved: the range is pending or past the cap, and the
@@ -109,8 +106,7 @@ function useRevenueSegments(siteId: string | null): {
   return { resource: useApiResource(load), tooLong };
 }
 
-const TOO_LONG_COPY =
-  "Traffic is ranked over 92 days at most. Pick a shorter range to see it.";
+const TOO_LONG_COPY = `Traffic is ranked over ${SEGMENTS_MAX_SPAN_DAYS} days at most. Pick a shorter range to see it.`;
 
 /* Overview card ------------------------------------------------------------ */
 
@@ -144,7 +140,15 @@ function MostValuableTrafficCardBody() {
         icon={<AnalyticsUpIcon aria-hidden="true" />}
         onSeeAll={() => setOpen(true)}
         title="Most valuable traffic"
-        titleAside={<SmoothingInfo />}
+        titleAside={
+          <SmoothingInfo
+            edges={
+              resource.status === "ready"
+                ? resource.data.thresholds.confidence
+                : undefined
+            }
+          />
+        }
       >
         {tooLong ? (
           <p className="flex h-full items-center px-5 text-sm leading-6 text-muted-foreground">
@@ -167,6 +171,7 @@ function MostValuableTrafficCardBody() {
                   <SegmentListColumns />
                   <SegmentList
                     currency={data.currency}
+                    edges={data.thresholds.confidence}
                     segments={data.segments.slice(0, CARD_ROWS)}
                   />
                 </SquircleCardScroll>
@@ -238,6 +243,7 @@ function SegmentsBody({
       ) : (
         <SegmentsTable
           currency={data.currency}
+          edges={data.thresholds.confidence}
           onSort={onSort}
           segments={data.segments}
           sort={sort}
@@ -263,7 +269,13 @@ export function RevenueSegments({ siteId }: { siteId: string }) {
         <p className="text-sm font-medium text-foreground/80">
           Most valuable traffic
         </p>
-        <SmoothingInfo />
+        <SmoothingInfo
+          edges={
+            resource.status === "ready"
+              ? resource.data.thresholds.confidence
+              : undefined
+          }
+        />
       </div>
       <SquircleSurface className="overflow-hidden rounded-[22px] border border-border bg-[#f6f6f6] px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.06)] [--card-clip-radius:12px] sm:rounded-[44px] sm:[--card-clip-radius:17px]">
         {tooLong ? (

@@ -1209,6 +1209,11 @@ export function mockRevenueAttribution(
  * consistent; the screens never recompute them.
  */
 const MOCK_SEGMENT_K = 200;
+const MOCK_SEGMENT_THRESHOLDS = {
+  min_buyers: 10,
+  min_segment_visitors: 20,
+  confidence: { low_visitors: 100, low_buyers: 3, high_visitors: 1_000, high_buyers: 10 },
+};
 const MOCK_SEGMENT_SITE = {
   visitors: 5_600,
   buyers: 46,
@@ -1243,14 +1248,17 @@ function mockSegment(
     unconverted_orders,
     conversion_rate: buyers / visitors,
     smoothed_conversion_rate: (buyers + MOCK_SEGMENT_K * p) / (visitors + MOCK_SEGMENT_K),
-    average_order_value_minor: orders > 0 ? revenue_minor / orders : null,
+    average_order_value_minor:
+      orders - unconverted_orders > 0 ? revenue_minor / (orders - unconverted_orders) : null,
     value_per_visitor_minor: revenue_minor / visitors,
     smoothed_value_per_visitor_minor:
       (revenue_minor + MOCK_SEGMENT_K * v) / (visitors + MOCK_SEGMENT_K),
     confidence:
-      visitors < 100 || buyers < 3
+      visitors < MOCK_SEGMENT_THRESHOLDS.confidence.low_visitors ||
+      buyers < MOCK_SEGMENT_THRESHOLDS.confidence.low_buyers
         ? "low"
-        : visitors >= 1_000 && buyers >= 10
+        : visitors >= MOCK_SEGMENT_THRESHOLDS.confidence.high_visitors &&
+            buyers >= MOCK_SEGMENT_THRESHOLDS.confidence.high_buyers
           ? "high"
           : "medium",
   };
@@ -1293,7 +1301,7 @@ export const MOCK_REVENUE_SEGMENTS: RevenueSegmentsResponse = {
       b.visitors - a.visitors
   ),
   hidden_segments: 48,
-  thresholds: { min_buyers: 10, min_segment_visitors: 20 },
+  thresholds: MOCK_SEGMENT_THRESHOLDS,
   prior: { k: MOCK_SEGMENT_K },
 };
 
@@ -1315,6 +1323,6 @@ export const MOCK_REVENUE_SEGMENTS_INSUFFICIENT: RevenueSegmentsResponse = {
   },
   segments: [],
   hidden_segments: 0,
-  thresholds: { min_buyers: 10, min_segment_visitors: 20 },
+  thresholds: MOCK_SEGMENT_THRESHOLDS,
   prior: { k: MOCK_SEGMENT_K },
 };

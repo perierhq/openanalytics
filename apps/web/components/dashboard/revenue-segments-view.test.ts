@@ -33,12 +33,15 @@ const segment = (over: Partial<RevenueSegment>): RevenueSegment => ({
   ...over,
 });
 
+/** The response's `thresholds.confidence`, as the server sends it today. */
+const EDGES = { low_visitors: 100, low_buyers: 3, high_visitors: 1_000, high_buyers: 10 };
+
 const html = (element: Parameters<typeof renderToStaticMarkup>[0]) =>
   renderToStaticMarkup(element);
 
 describe("a segment row", () => {
   it("shows the source, the flag, the device, smoothed value per visitor and conversion, and a confidence dot", () => {
-    const out = html(createElement(SegmentRow, { segment: segment({}), currency: "USD" }));
+    const out = html(createElement(SegmentRow, { segment: segment({}), currency: "USD", edges: EDGES }));
     expect(out).toContain("Google");
     expect(out).toContain("/flags/de.svg");
     expect(out).toContain("Germany");
@@ -55,7 +58,7 @@ describe("a segment row", () => {
     const out = html(
       createElement(SegmentRow, {
         segment: segment({ source: "", country: "", device: "", confidence: "low" }),
-        currency: "USD",
+        currency: "USD", edges: EDGES,
       })
     );
     expect(out).toContain("Direct / none");
@@ -68,9 +71,17 @@ describe("a segment row", () => {
 describe("the confidence dot", () => {
   it("names its band for a screen reader", () => {
     for (const band of ["low", "medium", "high"] as const) {
-      const out = html(createElement(ConfidenceDot, { confidence: band }));
+      const out = html(createElement(ConfidenceDot, { confidence: band, edges: EDGES }));
       expect(out).toMatch(new RegExp(`${band} confidence`, "i"));
     }
+  });
+
+  it("says in its tooltip and label what its band means", () => {
+    const low = html(createElement(ConfidenceDot, { confidence: "low", edges: EDGES }));
+    expect(low).toContain('title="Low confidence: under 100 visitors or 3 buyers"');
+    expect(low).toContain(">Low confidence: under 100 visitors or 3 buyers</span>");
+    const high = html(createElement(ConfidenceDot, { confidence: "high", edges: EDGES }));
+    expect(high).toContain('title="High confidence: at least 1,000 visitors and 10 buyers"');
   });
 });
 
@@ -93,7 +104,7 @@ describe("the full table", () => {
     const out = html(
       createElement(SegmentsTable, {
         segments: rows,
-        currency: "USD",
+        currency: "USD", edges: EDGES,
         sort: "visitors",
         onSort: () => {},
       })
@@ -111,7 +122,7 @@ describe("the full table", () => {
     const out = html(
       createElement(SegmentsTable, {
         segments: rows,
-        currency: "USD",
+        currency: "USD", edges: EDGES,
         sort: "value",
         onSort: () => {},
       })
@@ -133,7 +144,7 @@ describe("rows that read the same", () => {
     const out = html(
       createElement(SegmentsTable, {
         segments: twins,
-        currency: "USD",
+        currency: "USD", edges: EDGES,
         sort: "value",
         onSort: () => {},
       })
@@ -145,14 +156,14 @@ describe("rows that read the same", () => {
   });
 
   it("shows the raw host on the card too", () => {
-    const out = html(createElement(SegmentList, { segments: twins, currency: "USD" }));
+    const out = html(createElement(SegmentList, { segments: twins, currency: "USD", edges: EDGES }));
     expect(out.match(/data-segment-host/g) ?? []).toHaveLength(2);
     expect(out).toContain(">google.de</span>");
   });
 
   it("shows no host when every row reads differently", () => {
     const out = html(
-      createElement(SegmentList, { segments: [twins[0]!, twins[2]!], currency: "USD" })
+      createElement(SegmentList, { segments: [twins[0]!, twins[2]!], currency: "USD", edges: EDGES })
     );
     expect(out).not.toContain("data-segment-host");
   });
@@ -161,9 +172,10 @@ describe("rows that read the same", () => {
 describe("the row tooltip", () => {
   it("says how many orders had no exchange rate", () => {
     const out = html(
-      createElement(SegmentTip, { segment: segment({ unconverted_orders: 2 }), currency: "USD" })
+      createElement(SegmentTip, { segment: segment({ unconverted_orders: 2 }), currency: "USD", edges: EDGES })
     );
     expect(out).toContain("2 orders with no exchange rate not counted.");
+    expect(out).toContain("High confidence: at least 1,000 visitors and 10 buyers");
     expect(out).not.toContain("other currencies");
     expect(out).toContain("New revenue");
   });
@@ -243,8 +255,17 @@ describe("the notes", () => {
     expect(html(createElement(SegmentsHiddenNote, { hidden: 0, minVisitors: 20 }))).toBe("");
   });
 
+  it("says what the confidence dot means behind the ⓘ, with the response's edges", () => {
+    const out = html(createElement(SmoothingInfo, { edges: EDGES }));
+    expect(out).toContain(
+      "The dot shows how much data is behind a row: low under 100 visitors or 3 buyers, high from 1,000 visitors and 10 buyers."
+    );
+    // Before the read answers there are no dots, and no sentence about them.
+    expect(html(createElement(SmoothingInfo, {}))).not.toContain("The dot shows");
+  });
+
   it("explains smoothing behind the ⓘ, and where the revenue comes from", () => {
-    const out = html(createElement(SmoothingInfo));
+    const out = html(createElement(SmoothingInfo, {}));
     expect(out).toContain(
       "Small segments are pulled toward your site&#x27;s average so a handful of visits can&#x27;t look like a sure thing."
     );

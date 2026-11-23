@@ -10,8 +10,10 @@ import {
   MAX_FUNNEL_RANGE_MS,
   mergeImportedRows,
   rankRevenueSegments,
+  REVENUE_SEGMENT_CONFIDENCE_EDGES,
   REVENUE_SEGMENT_MIN_VISITORS,
   REVENUE_SEGMENT_PRIOR_K,
+  REVENUE_SEGMENTS_MAX_SPAN_DAYS,
   REVENUE_SEGMENTS_MIN_BUYERS,
   revenueSegmentsStatus,
   revenueSiteRates,
@@ -2735,11 +2737,11 @@ export class AnalyticsService {
    * for every surface. With exactly one segment hidden, one more row is read
    * and the smallest is withheld beside it (`withholdBesideLoneHidden`).
    *
-   * Capped at 92 days, the session-fact cap, refused by name here before the
-   * gateway sees it.
+   * Capped at `REVENUE_SEGMENTS_MAX_SPAN_DAYS` (92, the session-fact cap),
+   * refused by name here before the gateway sees it.
    */
   async revenueSegments(req: RevenueSegmentsRequest): Promise<Schemas['RevenueSegmentsResponse']> {
-    const range = revenueAttributionRange(req, MAX_FUNNEL_RANGE_MS / 86_400_000)
+    const range = revenueAttributionRange(req, REVENUE_SEGMENTS_MAX_SPAN_DAYS)
     const [totals, freshness] = await Promise.all([
       this.#gateway.query<Record<string, unknown>>(
         'analytics.revenue_segment_totals',
@@ -2853,6 +2855,12 @@ export class AnalyticsService {
       thresholds: {
         min_buyers: REVENUE_SEGMENTS_MIN_BUYERS,
         min_segment_visitors: REVENUE_SEGMENT_MIN_VISITORS,
+        confidence: {
+          low_visitors: REVENUE_SEGMENT_CONFIDENCE_EDGES.lowVisitors,
+          low_buyers: REVENUE_SEGMENT_CONFIDENCE_EDGES.lowBuyers,
+          high_visitors: REVENUE_SEGMENT_CONFIDENCE_EDGES.highVisitors,
+          high_buyers: REVENUE_SEGMENT_CONFIDENCE_EDGES.highBuyers,
+        },
       },
       prior: { k: REVENUE_SEGMENT_PRIOR_K },
     }
