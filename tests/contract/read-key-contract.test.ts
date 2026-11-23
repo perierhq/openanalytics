@@ -294,7 +294,10 @@ describe('scopes (ADR-0042 D3; ADR-0043 D4 and D5)', () => {
     const stillLegitimate = [
       ...spec.matchAll(/'422':\n\s+\$ref: '#\/components\/responses\/(\w+)'/gu),
     ]
+    // The Meta Ads connect is documented twice: under `/marketing/` and at
+    // its deprecated `/ads/` path, which the same handler still answers.
     expect(stillLegitimate.map((match) => match[1]).sort()).toEqual([
+      'AdsCredentialRejected',
       'AdsCredentialRejected',
       'RevenueCredentialRejected',
       'RevenueCredentialRejected',

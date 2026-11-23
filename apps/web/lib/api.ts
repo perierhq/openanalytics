@@ -1376,11 +1376,14 @@ export const mentions = {
  * means "this deployment cannot store a token", never a bad site id. The token
  * goes in and never comes back: the connection carries its last four
  * characters only.
+ *
+ * The paths are under `/marketing/`, never `/ads/`: browser ad and content
+ * blockers drop a request whose URL contains `/ads/` before it is sent.
  */
 export const metaAds = {
   state: (siteId: string, options?: RequestOptions) =>
     api.get<MetaAdsConnectionState>(
-      `/v1/sites/${encodeURIComponent(siteId)}/ads/meta/connection`,
+      `/v1/sites/${encodeURIComponent(siteId)}/marketing/meta/connection`,
       options
     ),
   connect: (
@@ -1389,14 +1392,14 @@ export const metaAds = {
   ) =>
     send<MetaAdsConnection>(
       "PUT",
-      `/v1/sites/${encodeURIComponent(siteId)}/ads/meta/connection`,
+      `/v1/sites/${encodeURIComponent(siteId)}/marketing/meta/connection`,
       { body }
     ),
   /** Deletes the stored token and the spend read with it. */
   disconnect: (siteId: string) =>
     send<null>(
       "DELETE",
-      `/v1/sites/${encodeURIComponent(siteId)}/ads/meta/connection`
+      `/v1/sites/${encodeURIComponent(siteId)}/marketing/meta/connection`
     ),
   /**
    * Spend, last-touch revenue by `utm_campaign`, and ROAS per campaign.
@@ -1413,7 +1416,7 @@ export const metaAds = {
       timezone: range.timezone,
     });
     return api.get<AdCampaignsResponse>(
-      `/v1/sites/${encodeURIComponent(siteId)}/ads/campaigns?${query}`,
+      `/v1/sites/${encodeURIComponent(siteId)}/marketing/campaigns?${query}`,
       options
     );
   },

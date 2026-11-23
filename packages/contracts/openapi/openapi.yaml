@@ -93,7 +93,7 @@ tags:
       mounted only where the credential keyring is configured, and it stays
       reachable while a site is `suspended` — a blocked site must still be
       able to disconnect.
-  - name: ads
+  - name: marketing
     description: |
       Ad spend from the site owner's own Meta ad account, beside the revenue
       each campaign brought in. The owner connects one ad account per site
@@ -102,6 +102,11 @@ tags:
       by any operation. A worker reads daily spend per campaign from
       `graph.facebook.com` every six hours. Owner-only, like every revenue
       read, because return on ad spend is a statement about money.
+
+      The routes live under `/v1/sites/{site_id}/marketing/`. Browser ad and
+      content blockers drop any request whose URL contains `/ads/` before it
+      is sent, so the first paths under `/ads/` are deprecated and kept only
+      for server-side clients.
   - name: public
     description: |
       Unauthenticated public-dashboard reads, addressed by an opaque share slug
@@ -5818,12 +5823,12 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthenticated'
 
-  /v1/sites/{site_id}/ads/meta/connection:
+  /v1/sites/{site_id}/marketing/meta/connection:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
     get:
-      operationId: getSiteMetaAdsConnection
-      tags: [ads]
+      operationId: getSiteMarketingMetaConnection
+      tags: [marketing]
       summary: The site's Meta ad account connection. Owner-only.
       description: |
         Never returns the token: `token_last4` and `status` are the whole read
@@ -5852,8 +5857,8 @@ paths:
         '404':
           $ref: '#/components/responses/SiteNotFound'
     put:
-      operationId: connectSiteMetaAds
-      tags: [ads]
+      operationId: connectSiteMarketingMeta
+      tags: [marketing]
       summary: Connect (or reconnect) a Meta ad account. Owner-only.
       description: |
         The token is **checked against Meta before anything is stored**, with
@@ -5907,8 +5912,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
     delete:
-      operationId: disconnectSiteMetaAds
-      tags: [ads]
+      operationId: disconnectSiteMarketingMeta
+      tags: [marketing]
       summary: Disconnect the Meta ad account. Owner-only.
       description: |
         Deletes the stored token and the spend read with it. Nothing is sent
@@ -5925,15 +5930,15 @@ paths:
         '404':
           $ref: '#/components/responses/SiteNotFound'
 
-  /v1/sites/{site_id}/ads/campaigns:
+  /v1/sites/{site_id}/marketing/campaigns:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/RangeFrom'
       - $ref: '#/components/parameters/RangeTo'
       - $ref: '#/components/parameters/QueryTimezone'
     get:
-      operationId: getSiteAdCampaigns
-      tags: [ads]
+      operationId: getSiteMarketingCampaigns
+      tags: [marketing]
       summary: Spend, attributed revenue and ROAS per Meta campaign. Requires `revenue:read` (owner-only).
       description: |
         One row per campaign that has spend recorded on a day in the range,
@@ -5966,6 +5971,142 @@ paths:
 
         `connection` is `null` when the site has no Meta connection, and the
         lists are then empty.
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session (the `ads_campaigns` MCP tool).
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['revenue:read']
+      responses:
+        '200':
+          description: Campaigns, totals and unmatched spend.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdCampaignsResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/sites/{site_id}/ads/meta/connection:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: getSiteMetaAdsConnection
+      deprecated: true
+      tags: [marketing]
+      summary: The site's Meta ad account connection. Owner-only.
+      description: |
+        Deprecated: browser content blockers drop URLs containing /ads/. Use
+        /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+        server-side clients.
+
+        Same handler, auth and responses as `getSiteMarketingMetaConnection`.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The connection, or an explicit "not connected".
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/MetaAdsConnection'
+                  - $ref: '#/components/schemas/MetaAdsNotConnected'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+    put:
+      operationId: connectSiteMetaAds
+      deprecated: true
+      tags: [marketing]
+      summary: Connect (or reconnect) a Meta ad account. Owner-only.
+      description: |
+        Deprecated: browser content blockers drop URLs containing /ads/. Use
+        /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+        server-side clients.
+
+        Same handler, auth and responses as `connectSiteMarketingMeta`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectMetaAdsRequest'
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Connected. The token is stored encrypted and never returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaAdsConnection'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '422':
+          $ref: '#/components/responses/AdsCredentialRejected'
+        '503':
+          description: Meta did not answer or is throttling; nothing was stored (`PROVIDER_UNAVAILABLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: disconnectSiteMetaAds
+      deprecated: true
+      tags: [marketing]
+      summary: Disconnect the Meta ad account. Owner-only.
+      description: |
+        Deprecated: browser content blockers drop URLs containing /ads/. Use
+        /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+        server-side clients.
+
+        Same handler, auth and responses as `disconnectSiteMarketingMeta`.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Disconnected.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+
+  /v1/sites/{site_id}/ads/campaigns:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: getSiteAdCampaigns
+      deprecated: true
+      tags: [marketing]
+      summary: Spend, attributed revenue and ROAS per Meta campaign. Requires `revenue:read` (owner-only).
+      description: |
+        Deprecated: browser content blockers drop URLs containing /ads/. Use
+        /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+        server-side clients.
+
+        Same handler, auth and responses as `getSiteMarketingCampaigns`.
       # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
       # grant may reach it as well as a browser session (the `ads_campaigns` MCP tool).
       security:

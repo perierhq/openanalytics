@@ -218,9 +218,12 @@ function buildApp(options: { vault?: boolean } = {}) {
 
 const app = buildApp()
 
-const CONNECTION = `/v1/sites/${SITE}/ads/meta/connection`
+const CONNECTION = `/v1/sites/${SITE}/marketing/meta/connection`
 const RANGE = 'from=2026-11-01T00:00:00.000Z&to=2026-11-08T00:00:00.000Z&timezone=UTC'
-const CAMPAIGNS = `/v1/sites/${SITE}/ads/campaigns?${RANGE}`
+const CAMPAIGNS = `/v1/sites/${SITE}/marketing/campaigns?${RANGE}`
+/** The first paths, kept for server-side clients: content blockers drop `/ads/`. */
+const OLD_CONNECTION = `/v1/sites/${SITE}/ads/meta/connection`
+const OLD_CAMPAIGNS = `/v1/sites/${SITE}/ads/campaigns?${RANGE}`
 
 const send = (
   method: string,
@@ -332,7 +335,7 @@ describe('who may touch the connection', () => {
   })
 })
 
-describe('GET /ads/meta/connection', () => {
+describe('GET /marketing/meta/connection', () => {
   it('says not_connected when there is none', async () => {
     const res = await send('GET', CONNECTION, OWNER)
     expect(await res.json()).toEqual({ status: 'not_connected' })
@@ -379,7 +382,7 @@ describe('GET /ads/meta/connection', () => {
   })
 })
 
-describe('PUT /ads/meta/connection', () => {
+describe('PUT /marketing/meta/connection', () => {
   it('checks the token with Meta, stores it encrypted to the site and account, and never returns it', async () => {
     const res = await send('PUT', CONNECTION, OWNER, {
       ad_account_id: ' 1234567890 ',
@@ -503,7 +506,7 @@ describe('PUT /ads/meta/connection', () => {
   })
 })
 
-describe('DELETE /ads/meta/connection', () => {
+describe('DELETE /marketing/meta/connection', () => {
   it('deletes the token and the spend', async () => {
     world.connection = storedConnection()
     const res = await send('DELETE', CONNECTION, OWNER)
@@ -567,7 +570,7 @@ const rate = (rateDate: string, currency: string, ratePerEur: string): CurrencyR
   fetchedAt: new Date('2026-11-01T16:00:00.000Z'),
 })
 
-describe('GET /ads/campaigns', () => {
+describe('GET /marketing/campaigns', () => {
   it('is owner-only: an admin and a viewer get 403 and nothing is read', async () => {
     world.connection = storedConnection()
     for (const user of [ADMIN, VIEWER]) {
@@ -722,7 +725,57 @@ describe('GET /ads/campaigns', () => {
   })
 
   it('refuses a malformed range', async () => {
-    const res = await send('GET', `/v1/sites/${SITE}/ads/campaigns?from=x&to=y&timezone=UTC`, OWNER)
+    const res = await send(
+      'GET',
+      `/v1/sites/${SITE}/marketing/campaigns?from=x&to=y&timezone=UTC`,
+      OWNER,
+    )
     expect(res.status).toBe(400)
+  })
+})
+
+describe('the deprecated /ads/ paths still answer, identically', () => {
+  it('GET connection: the same body under both paths, connected or not', async () => {
+    const before = await send('GET', OLD_CONNECTION, OWNER)
+    expect(before.status).toBe(200)
+    expect(await before.json()).toEqual(await (await send('GET', CONNECTION, OWNER)).json())
+
+    world.connection = storedConnection()
+    const old = await send('GET', OLD_CONNECTION, OWNER)
+    expect(old.status).toBe(200)
+    const body = await old.json()
+    expect(body).toMatchObject({ status: 'active', ad_account_id: 'act_1234567890' })
+    expect(body).toEqual(await (await send('GET', CONNECTION, OWNER)).json())
+  })
+
+  it('GET connection: the same refusals (admin 403, stranger 404, OAuth grant 403)', async () => {
+    expect((await send('GET', OLD_CONNECTION, ADMIN)).status).toBe(403)
+    expect((await send('GET', OLD_CONNECTION, STRANGER)).status).toBe(404)
+    const bearer = { authorization: `Bearer ${OAUTH_TOKEN}` }
+    expect((await send('GET', OLD_CONNECTION, undefined, undefined, app, bearer)).status).toBe(403)
+  })
+
+  it('PUT and DELETE connection still work there', async () => {
+    expect((await send('PUT', OLD_CONNECTION, OWNER, connectBody)).status).toBe(200)
+    expect(world.saves).toHaveLength(1)
+    expect((await send('DELETE', OLD_CONNECTION, OWNER)).status).toBe(204)
+    expect(world.deletes).toEqual([SITE])
+  })
+
+  it('GET campaigns: the same body under both paths, for a session and for an OAuth grant', async () => {
+    world.connection = storedConnection()
+    world.spend = [spendRow('111', 'Black Friday', '2026-11-02', 12_500)]
+    world.rates = [rate('2026-10-31', 'USD', '1.25'), rate('2026-10-31', 'EUR', '1')]
+    world.utmRows = [{ value: 'Black Friday', revenue_minor: '40000', orders: '4' }]
+
+    const old = await send('GET', OLD_CAMPAIGNS, OWNER)
+    expect(old.status).toBe(200)
+    const body = (await old.json()) as CampaignsBody
+    expect(body.campaigns).toHaveLength(1)
+    expect(body).toEqual(await (await send('GET', CAMPAIGNS, OWNER)).json())
+
+    const bearer = { authorization: `Bearer ${OAUTH_TOKEN}` }
+    expect((await send('GET', OLD_CAMPAIGNS, undefined, undefined, app, bearer)).status).toBe(200)
+    expect((await send('GET', OLD_CAMPAIGNS, ADMIN)).status).toBe(403)
   })
 })

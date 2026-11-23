@@ -881,7 +881,7 @@ const mcpTools: McpToolDefinition[] = [
     title: 'Ad Campaigns',
     description:
       'Meta ad spend per campaign for one site over a date range, beside the revenue it brought in and the return on ad spend. Spend is the ad account’s daily spend (`spend.amount_minor`, integer minor units of `spend.currency`, the ad account’s currency) and `spend_converted_minor` is the same spend in the site’s reporting currency (`currency`), converted at each day’s ECB rate, or null when a day had no rate. `revenue_minor` is last-touch revenue in the reporting currency whose utm_campaign equals the campaign’s name or id (trimmed, case-insensitive; `matched_by` says which). `roas` is revenue_minor / spend_converted_minor, null with `roas_unavailable` (`no_spend` or `no_rate`) when it cannot be computed — report it as unknown, never as zero. `unmatched` is spend of campaigns no utm_campaign matched. Revenue is read for the 499 utm_campaign values with the most revenue in the range; a campaign whose value ranks below them shows no revenue and counts as unmatched. `connection: null` means the site has no Meta Ads connection; `connection.status: needs_reconnect` means syncing stopped because Meta refused the token, and `connection.last_error: credential_undecryptable` means this install cannot read the stored token; either way recent spend may be missing. Owner-only: any other role is refused with FORBIDDEN.',
-    path: '/sites/{site_id}/ads/campaigns',
+    path: '/sites/{site_id}/marketing/campaigns',
     params: [...RANGE_PARAMS],
     needsSite: false,
     scope: 'revenue:read',

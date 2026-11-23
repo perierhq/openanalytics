@@ -102,7 +102,10 @@ const allowlist: GrantAllowRow[] = [
   // Meta Ads — the campaigns read only (the `ads_campaigns` tool), under the
   // scope every revenue read carries; the role check on the route still makes
   // it owner-only. The connection has no row: which token this install holds
-  // for an ad account is not something a grant may read or change.
+  // for an ad account is not something a grant may read or change. The
+  // `/ads/` path is the deprecated spelling of the same route, kept for
+  // server-side clients (browser content blockers drop `/ads/`).
+  { method: 'GET', path: '/v1/sites/:site/marketing/campaigns', scope: 'revenue:read' },
   { method: 'GET', path: '/v1/sites/:site/ads/campaigns', scope: 'revenue:read' },
 
   // Event definitions — create / draft / publish / rollback (publish is

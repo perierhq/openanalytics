@@ -5495,7 +5495,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sites/{site_id}/ads/meta/connection": {
+    "/v1/sites/{site_id}/marketing/meta/connection": {
         parameters: {
             query?: never;
             header?: never;
@@ -5515,7 +5515,7 @@ export interface paths {
          *     until the owner connects again. `last_error` is the category of the
          *     most recent failed sync, cleared by the next successful one.
          */
-        get: operations["getSiteMetaAdsConnection"];
+        get: operations["getSiteMarketingMetaConnection"];
         /**
          * Connect (or reconnect) a Meta ad account. Owner-only.
          * @description The token is **checked against Meta before anything is stored**, with
@@ -5538,20 +5538,20 @@ export interface paths {
          *     - `404 NOT_FOUND`: this deployment has no credential keyring, so it
          *       cannot store a token.
          */
-        put: operations["connectSiteMetaAds"];
+        put: operations["connectSiteMarketingMeta"];
         post?: never;
         /**
          * Disconnect the Meta ad account. Owner-only.
          * @description Deletes the stored token and the spend read with it. Nothing is sent
          *     to Meta. Answers `404` when there is no connection.
          */
-        delete: operations["disconnectSiteMetaAds"];
+        delete: operations["disconnectSiteMarketingMeta"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/v1/sites/{site_id}/ads/campaigns": {
+    "/v1/sites/{site_id}/marketing/campaigns": {
         parameters: {
             query: {
                 /** @description Half-open range start, ISO-8601 UTC. */
@@ -5599,6 +5599,85 @@ export interface paths {
          *
          *     `connection` is `null` when the site has no Meta connection, and the
          *     lists are then empty.
+         */
+        get: operations["getSiteMarketingCampaigns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/ads/meta/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The site's Meta ad account connection. Owner-only.
+         * @deprecated
+         * @description Deprecated: browser content blockers drop URLs containing /ads/. Use
+         *     /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+         *     server-side clients.
+         *
+         *     Same handler, auth and responses as `getSiteMarketingMetaConnection`.
+         */
+        get: operations["getSiteMetaAdsConnection"];
+        /**
+         * Connect (or reconnect) a Meta ad account. Owner-only.
+         * @deprecated
+         * @description Deprecated: browser content blockers drop URLs containing /ads/. Use
+         *     /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+         *     server-side clients.
+         *
+         *     Same handler, auth and responses as `connectSiteMarketingMeta`.
+         */
+        put: operations["connectSiteMetaAds"];
+        post?: never;
+        /**
+         * Disconnect the Meta ad account. Owner-only.
+         * @deprecated
+         * @description Deprecated: browser content blockers drop URLs containing /ads/. Use
+         *     /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+         *     server-side clients.
+         *
+         *     Same handler, auth and responses as `disconnectSiteMarketingMeta`.
+         */
+        delete: operations["disconnectSiteMetaAds"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/ads/campaigns": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Spend, attributed revenue and ROAS per Meta campaign. Requires `revenue:read` (owner-only).
+         * @deprecated
+         * @description Deprecated: browser content blockers drop URLs containing /ads/. Use
+         *     /v1/sites/{site_id}/marketing/... instead; this path keeps working for
+         *     server-side clients.
+         *
+         *     Same handler, auth and responses as `getSiteMarketingCampaigns`.
          */
         get: operations["getSiteAdCampaigns"];
         put?: never;
@@ -18522,6 +18601,128 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+        };
+    };
+    getSiteMarketingMetaConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection, or an explicit "not connected". */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetaAdsConnection"] | components["schemas"]["MetaAdsNotConnected"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    connectSiteMarketingMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectMetaAdsRequest"];
+            };
+        };
+        responses: {
+            /** @description Connected. The token is stored encrypted and never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetaAdsConnection"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+            422: components["responses"]["AdsCredentialRejected"];
+            /** @description Meta did not answer or is throttling; nothing was stored (`PROVIDER_UNAVAILABLE`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    disconnectSiteMarketingMeta: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    getSiteMarketingCampaigns: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Campaigns, totals and unmatched spend. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdCampaignsResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
         };
     };
     getSiteMetaAdsConnection: {
