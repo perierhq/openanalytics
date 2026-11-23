@@ -151,7 +151,7 @@ deployment names the fork's registry when it upgrades, because `upgrade.sh`
 defaults to OpenLabs':
 
 ```sh
-OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.11.0
+OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics ./upgrade.sh --to v0.11.1
 ```
 
 The Coolify and Dokploy blueprints default to the fork's registry, so their
