@@ -54,7 +54,7 @@
 #
 # ## Images
 #
-# Pinned to `v0.10.1`. The floor is `v0.4.0`, the first release whose `collector`
+# Pinned to `v0.11.0`. The floor is `v0.4.0`, the first release whose `collector`
 # image carries `oa.js`; before it this variant served a `404` for the one file
 # a customer pastes. Nothing here builds: the platform pulls
 # **nine** images, a couple of minutes rather than the fifteen a build costs on a
@@ -151,7 +151,7 @@ services:
   # directory and the container dies with "oa-entrypoint.sh: Is a directory".
   clickhouse:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/clickhouse:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/clickhouse:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       CLICKHOUSE_INGEST_PASSWORD: ${SERVICE_PASSWORD_CHINGEST}
@@ -175,7 +175,7 @@ services:
   # insert this instance holds the only copy of an event.
   valkey-queue:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/valkey:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/valkey:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       VALKEY_PASSWORD: ${SERVICE_PASSWORD_VALKEYQUEUE}
@@ -195,7 +195,7 @@ services:
   # Presence, rate-limit counters, short-lived caches. Losable by design.
   valkey-realtime:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/valkey:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/valkey:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       VALKEY_PASSWORD: ${SERVICE_PASSWORD_VALKEYREALTIME}
@@ -386,7 +386,7 @@ services:
   # both runners keep a ledger and apply only what is pending.
   migrate:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/migrate:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/migrate:${OA_IMAGE_TAG:-v0.11.0}
     restart: 'no'
     # **Required, not decoration.** This is the worker's image under another
     # tag, so without an entrypoint of its own it boots as the worker, loads the
@@ -443,7 +443,7 @@ services:
   # would.
   gateway:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/query-gateway:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/query-gateway:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -473,7 +473,7 @@ services:
   # the length of the window while a gateway-first one has no window at all.
   api:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/api:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/api:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -531,7 +531,7 @@ services:
   # not write. See `apps/collector/src/tracker-script.ts`.
   collector:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/collector:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/collector:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -584,7 +584,7 @@ services:
   # The SSE stream behind the live dashboard.
   realtime:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/realtime:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/realtime:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -618,7 +618,7 @@ services:
   # deletions. Never public.
   worker:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/worker:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/worker:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -668,7 +668,7 @@ services:
   # origins are not the ones baked in.
   web:
     logging: *logging
-    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/web:${OA_IMAGE_TAG:-v0.10.1}
+    image: ${OA_IMAGE_REPO:-ghcr.io/perierhq/openanalytics}/web:${OA_IMAGE_TAG:-v0.11.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
