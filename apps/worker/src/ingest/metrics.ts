@@ -490,4 +490,19 @@ export const WORKER_METRICS = {
    * `unsupported_type` (the bytes are not JPEG, PNG or WebP), or `error` (a
    * database failure reading or storing them). Never part of a poll's status. */
   mentionAvatars: 'worker_mention_avatars',
+
+  // ---------------------------------------------------------------------------
+  // Meta Ads spend (migration 0052).
+  // ---------------------------------------------------------------------------
+  /** One per connection sync, by `status`: `ok`, `paused` (a first sync's
+   * backfill stopped for Meta's usage budget and resumes after the backoff),
+   * `superseded` (the owner disconnected or switched account mid-sync; nothing
+   * was stored),
+   * `unauthorized` (the token was refused; the site stops syncing until its
+   * owner reconnects), `credential_undecryptable` (this install's keyring
+   * cannot read the stored token), `rate_limited`, `unavailable`,
+   * `invalid_response`, or `error` (a database failure inside the sync). */
+  metaAdsSync: 'worker_meta_ads_sync',
+  /** Campaign-day spend rows written (new and restated). */
+  metaAdsSpendRows: 'worker_meta_ads_spend_rows',
 } as const

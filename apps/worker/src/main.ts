@@ -20,6 +20,7 @@ import {
   createCredentialVault,
   createFxTwitterClient,
   createMentionAvatarClient,
+  createMetaAdsClient,
   createS3ObjectStorage,
   createPolarRevenueAdapter,
   createStripeRevenueAdapter,
@@ -43,6 +44,7 @@ import { startLifecycleProjection } from './revenue/project-lifecycle.ts'
 import { startRevenueReconcile } from './revenue/reconcile.ts'
 import { consumerNameFor, startIngest } from './ingest/index.ts'
 import { startMentionsPoller } from './mentions/poll.ts'
+import { startMetaAdsSync } from './ads/meta-sync.ts'
 
 /**
  * Worker entrypoint.
@@ -636,6 +638,27 @@ if (env.DATABASE_URL) {
     logger.info('mentions_poller_not_started', { reason: 'MENTIONS_ENABLED=false' })
   }
 
+  // The Meta Ads spend sync (migration 0052). It decrypts each connected
+  // site's token, so it starts only with a usable keyring, beside the revenue
+  // sweep; a site connects from the dashboard, and nothing is sent to Meta for
+  // a site that has not.
+  const metaAdsSync = revenue
+    ? startMetaAdsSync({
+        db,
+        logger,
+        metrics: serviceMetrics.metrics,
+        client: createMetaAdsClient({ version: env.SERVICE_VERSION }),
+        vault: revenue.vault,
+      })
+    : null
+  if (metaAdsSync) {
+    logger.info('meta_ads_sync_started', {})
+  } else {
+    logger.info('meta_ads_sync_not_started', {
+      reason: 'OA_CREDENTIAL_KEYRING missing or unusable',
+    })
+  }
+
   // Batch ingest is the worker's other half (docs snapshot 02 §7.5). It needs
   // the queue and ClickHouse as well as the database, and returns null without
   // them rather than starting a consumer that could take delivery of events it
@@ -680,6 +703,8 @@ if (env.DATABASE_URL) {
     // Independent of every job above; it only reads settings and writes
     // mention rows, so it stops wherever it is, before the pool closes.
     await mentionsPoller?.stop()
+    // The same: it reads Meta and writes spend rows, and nothing waits on it.
+    await metaAdsSync?.stop()
     // Observes only; nothing waits on it, so it stops wherever it is.
     await backupWatch?.stop()
     // After every job, so the last tick's counters make the final push.

@@ -17,6 +17,13 @@ registry until you set `OA_IMAGE_REPO=ghcr.io/perierhq/openanalytics` and
 `OA_IMAGE_TAG=v0.10.1` in its Environment tab and redeploy. Everyone else has
 nothing to do.
 
+Postgres migration 0052 adds two tables for Meta Ads (the ad account
+connection and the daily spend per campaign) and changes nothing that exists;
+nothing to do by hand. No new setting: Meta Ads uses the existing
+`OA_CREDENTIAL_KEYRING`, and it stays off for every site until the site's owner
+connects an ad account. Once one is connected, the worker and the API make
+outbound HTTPS requests to `graph.facebook.com`.
+
 ### Added
 
 - **Channels on the Sources card.** A Channels cut groups visits into Paid,
@@ -37,6 +44,19 @@ nothing to do.
   `referrer_paths` tool. Each page is shown without its query string,
   fragment or `;` parameters, and a path segment shaped like a token or an
   email address is shown as `[redacted]`.
+
+- **Meta Ads spend and ROAS per campaign.** A site's owner connects a Meta ad
+  account with a System User token that has `ads_read` (Settings →
+  Integrations → Meta Ads). The worker reads daily spend per campaign every
+  six hours, 90 days back on the first sync (resumable if Meta throttles it),
+  and the overview gets an Ad campaigns card with spend, revenue and ROAS per
+  campaign, sortable by spend or ROAS. Revenue is last-touch revenue whose `utm_campaign` matches the
+  campaign's name or id, case-insensitively. Spend is converted to the
+  reporting currency at each day's ECB rate; without a rate, ROAS shows a dash
+  and says why. The token is stored encrypted and never returned. New routes
+  `GET/PUT/DELETE /v1/sites/{site_id}/ads/meta/connection` (owner-only,
+  session only) and `GET /v1/sites/{site_id}/ads/campaigns` (owner-only), and
+  an `ads_campaigns` MCP tool under `revenue:read`.
 
 ### Changed
 

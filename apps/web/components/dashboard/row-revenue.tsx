@@ -96,15 +96,18 @@ export function RowSortToggle({
   sort,
   onSort,
   trafficLabel = "Visitors",
+  revenueLabel = "Revenue",
 }: {
   sort: RowSort;
   onSort: (sort: RowSort) => void;
   /** The card's own number, when it is not visitors (Entry pages: entries). */
   trafficLabel?: string;
+  /** The other order's name, when it is not revenue (Ad campaigns: ROAS). */
+  revenueLabel?: string;
 }) {
   const next: RowSort = sort === "visitors" ? "revenue" : "visitors";
   const label = (option: RowSort) =>
-    option === "visitors" ? trafficLabel : "Revenue";
+    option === "visitors" ? trafficLabel : revenueLabel;
   return (
     <button
       aria-label={`Sorted by ${label(sort).toLowerCase()}. Sort by ${label(next).toLowerCase()}`}

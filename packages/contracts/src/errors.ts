@@ -91,6 +91,12 @@ export const ERROR_CODES = [
   // remedy is in the provider's dashboard rather than in the form. Deliberately
   // not `PROVIDER_UNAVAILABLE` either: that one is retryable and this is not.
   'REVENUE_CREDENTIAL_REJECTED',
+  // Meta refused the ad account token during the connect check (migration
+  // 0052): revoked, expired, missing `ads_read`, or unable to see the account.
+  // Nothing is stored. Its own code rather than the revenue one because the
+  // remedy is in a different dashboard (Meta Business Settings), and a client
+  // that branches on the code names the right one.
+  'ADS_CREDENTIAL_REJECTED',
   'RATE_LIMITED',
   // The declared range is wider than this surface's ceiling (ADR-0043, D7). Its
   // own code rather than `VALIDATION_FAILED` because the request is well-formed
@@ -212,6 +218,9 @@ const PRODUCT_ERROR_STATUS = {
   // itself — is not usable. Not retryable: repeating it with the same key gets
   // the same answer.
   REVENUE_CREDENTIAL_REJECTED: 422,
+  // 422 for `REVENUE_CREDENTIAL_REJECTED`'s reason: the request is well-formed
+  // and the token in it is not usable. Not retryable.
+  ADS_CREDENTIAL_REJECTED: 422,
   PROVIDER_UNAVAILABLE: 503,
   DATA_NOT_READY: 503,
   SERVICE_UNAVAILABLE: 503,

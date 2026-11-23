@@ -215,6 +215,13 @@ export type UpdateSiteMentionSettings =
 export type Mention = Schemas["Mention"];
 export type MentionAuthor = Schemas["MentionAuthor"];
 export type MentionsResponse = Schemas["MentionsResponse"];
+export type MetaAdsConnection = Schemas["MetaAdsConnection"];
+export type MetaAdsConnectionState =
+  | MetaAdsConnection
+  | Schemas["MetaAdsNotConnected"];
+export type MetaAdsError = Schemas["MetaAdsError"];
+export type AdCampaignsResponse = Schemas["AdCampaignsResponse"];
+export type AdCampaignRow = Schemas["AdCampaignRow"];
 /** A note pinned to a moment on the overview chart (migration 0050). */
 export type ChartNote = Schemas["ChartNote"];
 export type ChartNotesResponse = Schemas["ChartNotesResponse"];
@@ -1336,6 +1343,59 @@ export const mentions = {
 };
 
 /**
+ * Meta Ads (migration 0052). **Owner-only on every call**: the connection and
+ * the campaigns read both need `revenue:read`, so an admin's or a viewer's is
+ * a `403` and the screens do not ask for them.
+ *
+ * `connect` is a live check against Meta and slow by nature. It is registered
+ * only where the deployment holds a credential keyring, so a `404` from it
+ * means "this deployment cannot store a token", never a bad site id. The token
+ * goes in and never comes back: the connection carries its last four
+ * characters only.
+ */
+export const metaAds = {
+  state: (siteId: string, options?: RequestOptions) =>
+    api.get<MetaAdsConnectionState>(
+      `/v1/sites/${encodeURIComponent(siteId)}/ads/meta/connection`,
+      options
+    ),
+  connect: (
+    siteId: string,
+    body: { ad_account_id: string; access_token: string }
+  ) =>
+    send<MetaAdsConnection>(
+      "PUT",
+      `/v1/sites/${encodeURIComponent(siteId)}/ads/meta/connection`,
+      { body }
+    ),
+  /** Deletes the stored token and the spend read with it. */
+  disconnect: (siteId: string) =>
+    send<null>(
+      "DELETE",
+      `/v1/sites/${encodeURIComponent(siteId)}/ads/meta/connection`
+    ),
+  /**
+   * Spend, last-touch revenue by `utm_campaign`, and ROAS per campaign.
+   * `connection: null` means the site has no Meta connection.
+   */
+  campaigns: (
+    siteId: string,
+    range: AnalyticsRange,
+    options?: RequestOptions
+  ) => {
+    const query = new URLSearchParams({
+      from: range.from,
+      to: range.to,
+      timezone: range.timezone,
+    });
+    return api.get<AdCampaignsResponse>(
+      `/v1/sites/${encodeURIComponent(siteId)}/ads/campaigns?${query}`,
+      options
+    );
+  },
+};
+
+/**
  * Notes pinned to moments on the overview chart, newest first, by `at` inside
  * the half-open range; at most 500 and no cursor. Every member reads them;
  * the writes are `site:settings` (owner or admin), so a viewer's dashboard
@@ -2008,6 +2068,11 @@ const PRESENTATIONS: Record<string, Omit<ErrorPresentation, "retryable">> = {
     kind: "conflict",
     title: "This site already has a provider",
     body: "Replace its key, or disconnect the current one first.",
+  },
+  ADS_CREDENTIAL_REJECTED: {
+    kind: "conflict",
+    title: "Meta refused that token",
+    body: "It is wrong, expired, missing ads_read, or can't see that ad account. Nothing was saved. Check the System User's access to the ad account in Meta Business Settings and make a new token.",
   },
   PROVIDER_UNAVAILABLE: {
     kind: "unavailable",

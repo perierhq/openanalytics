@@ -295,6 +295,7 @@ describe('scopes (ADR-0042 D3; ADR-0043 D4 and D5)', () => {
       ...spec.matchAll(/'422':\n\s+\$ref: '#\/components\/responses\/(\w+)'/gu),
     ]
     expect(stillLegitimate.map((match) => match[1]).sort()).toEqual([
+      'AdsCredentialRejected',
       'RevenueCredentialRejected',
       'RevenueCredentialRejected',
     ])

@@ -385,6 +385,12 @@ export const DELETION_POSTGRES_TARGETS = [
   // Chart notes (migration 0050). References only `sites` (and `users`,
   // outward); named for the same standing rule.
   'chart_notes',
+  // Meta Ads (migration 0052): the ad account connection (its token is
+  // already gone, dropped when the deletion started) and the daily campaign
+  // spend read from it. Both reference only `sites`; named for the same
+  // standing rule.
+  'meta_ads_connections',
+  'meta_ads_daily_spend',
 ] as const
 export type DeletionPostgresTarget = (typeof DELETION_POSTGRES_TARGETS)[number]
 
@@ -412,8 +418,8 @@ export interface DeletionTargetName {
 }
 
 /**
- * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 29
- * Postgres + 1 object target, in that order. **73**, and the number changes on
+ * The full snapshot a site deletion writes: 38 ClickHouse + 5 Redis + 31
+ * Postgres + 1 object target, in that order. **75**, and the number changes on
  * purpose as stores are added — the assertions that name it are the contract.
  *
  * How it got here, kept because each step is a decision somebody can check:
@@ -514,7 +520,12 @@ export interface DeletionTargetName {
  *   objects, so the object store did not move either;
  * - chart notes added `chart_notes` (Postgres migration 0050), so Postgres 28
  *   became **29** and the site total 72 became **73** (73 became **74** on
- *   hosted). A note is a Postgres row and nothing else.
+ *   hosted). A note is a Postgres row and nothing else;
+ * - Meta Ads added `meta_ads_connections` and `meta_ads_daily_spend`
+ *   (Postgres migration 0052), so Postgres 29 became **31** and the site total
+ *   73 became **75** (74 became **76** on hosted). Spend is a Postgres row and
+ *   nothing else, and neither table references `users`, so account deletion
+ *   did not move.
  *
  * `currency_rates` (migration 0034) is deliberately **not** here and never will
  * be. It is global reference data — one row per `(rate_date, currency)`, with no

@@ -2683,6 +2683,34 @@ export class AnalyticsService {
   }
 
   /**
+   * Last-touch revenue per `utm_campaign` value, for the Meta Ads campaigns
+   * read (migration 0052): the gateway operation behind
+   * `/revenue/attribution?touch=last&dimension=utm_campaign`, without that
+   * route's visitors read, which the campaigns join does not use. The rows are
+   * the converted revenue and the orders; the unattributed row is included and
+   * the join ignores it.
+   */
+  async lastTouchUtmCampaignRevenue(req: {
+    readonly siteId: string
+    readonly cacheEpoch: number
+    readonly from: string
+    readonly to: string
+    readonly limit: number
+  }): Promise<{ value: string | null; revenueMinor: number; orders: number }[]> {
+    const range = revenueAttributionRange(req, REVENUE_ATTRIBUTION_MAX_SPAN_DAYS)
+    const result = await this.#gateway.query<Record<string, unknown>>(
+      'analytics.revenue_attribution_last_utm_campaign',
+      { site_id: req.siteId, from: range.from, to: range.to, limit: req.limit },
+      { cacheEpoch: req.cacheEpoch },
+    )
+    return result.rows.map((row) => ({
+      value: row['value'] === null || row['value'] === undefined ? null : str(row['value']),
+      revenueMinor: num(row['revenue_minor']),
+      orders: num(row['orders']),
+    }))
+  }
+
+  /**
    * The custom events buyers fired before their first purchase, beside the
    * share of non-buyers who fired the same event.
    *

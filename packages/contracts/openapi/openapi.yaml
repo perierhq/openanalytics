@@ -93,6 +93,15 @@ tags:
       mounted only where the credential keyring is configured, and it stays
       reachable while a site is `suspended` — a blocked site must still be
       able to disconnect.
+  - name: ads
+    description: |
+      Ad spend from the site owner's own Meta ad account, beside the revenue
+      each campaign brought in. The owner connects one ad account per site
+      with a System User token that has `ads_read`; the token is verified
+      against Meta before it is stored, stored encrypted, and never returned
+      by any operation. A worker reads daily spend per campaign from
+      `graph.facebook.com` every six hours. Owner-only, like every revenue
+      read, because return on ad spend is a statement about money.
   - name: public
     description: |
       Unauthenticated public-dashboard reads, addressed by an opaque share slug
@@ -5767,6 +5776,177 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthenticated'
 
+  /v1/sites/{site_id}/ads/meta/connection:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: getSiteMetaAdsConnection
+      tags: [ads]
+      summary: The site's Meta ad account connection. Owner-only.
+      description: |
+        Never returns the token: `token_last4` and `status` are the whole read
+        surface of the credential. `{ "status": "not_connected" }` when the
+        site has no connection.
+
+        `status: needs_reconnect` means Meta refused the token (revoked,
+        expired, or without access to the ad account) and syncing has stopped
+        until the owner connects again. `last_error` is the category of the
+        most recent failed sync, cleared by the next successful one.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The connection, or an explicit "not connected".
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/MetaAdsConnection'
+                  - $ref: '#/components/schemas/MetaAdsNotConnected'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+    put:
+      operationId: connectSiteMetaAds
+      tags: [ads]
+      summary: Connect (or reconnect) a Meta ad account. Owner-only.
+      description: |
+        The token is **checked against Meta before anything is stored**, with
+        one read of the ad account's name, currency and status. A refusal
+        leaves an existing connection unchanged.
+
+        Connecting the same ad account again replaces the token and keeps the
+        spend already read. Connecting a different ad account replaces the
+        connection and deletes the previous account's spend; the first sync
+        then reads the last 90 days.
+
+        The token must be able to read the ad account (`ads_read`). A System
+        User token from Meta Business Settings is the intended kind: it
+        belongs to the business, not to a person.
+
+        - `422 ADS_CREDENTIAL_REJECTED`: Meta refused the token or the token
+          cannot see that ad account. Retrying unchanged will not help.
+        - `503 PROVIDER_UNAVAILABLE`: Meta did not answer, or asked us to slow
+          down. Retryable, and nothing was stored.
+        - `404 NOT_FOUND`: this deployment has no credential keyring, so it
+          cannot store a token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectMetaAdsRequest'
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Connected. The token is stored encrypted and never returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaAdsConnection'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '422':
+          $ref: '#/components/responses/AdsCredentialRejected'
+        '503':
+          description: Meta did not answer or is throttling; nothing was stored (`PROVIDER_UNAVAILABLE`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: disconnectSiteMetaAds
+      tags: [ads]
+      summary: Disconnect the Meta ad account. Owner-only.
+      description: |
+        Deletes the stored token and the spend read with it. Nothing is sent
+        to Meta. Answers `404` when there is no connection.
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Disconnected.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+
+  /v1/sites/{site_id}/ads/campaigns:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+    get:
+      operationId: getSiteAdCampaigns
+      tags: [ads]
+      summary: Spend, attributed revenue and ROAS per Meta campaign. Requires `revenue:read` (owner-only).
+      description: |
+        One row per campaign that has spend recorded on a day in the range,
+        largest spend first. The range's days are read in `timezone`; a spend
+        day is a day in the ad account's own timezone.
+
+        **Revenue is last-touch revenue by `utm_campaign`** (the same numbers
+        `/revenue/attribution?touch=last&dimension=utm_campaign` returns). A
+        `utm_campaign` value matches a campaign when, trimmed and compared
+        case-insensitively, it equals the campaign's **name** or its **id**
+        (tag links with `utm_campaign={{campaign.id}}` to survive renames).
+        Each value counts once: an id match wins, and a name shared by several
+        campaigns goes to the one that spent the most in the range.
+
+        **Currency.** Spend is reported in the ad account's currency
+        (`spend`) and converted to the site's reporting currency
+        (`spend_converted_minor`) at each day's ECB reference rate, the rates
+        revenue is converted with. When a day has no rate the converted spend
+        is `null`, and so is `roas`, with `roas_unavailable: no_rate`; it is
+        never a guess. `roas` is revenue divided by converted spend, and `null`
+        with `no_spend` when nothing was spent.
+
+        `unmatched` is the spend of campaigns that matched no `utm_campaign`
+        value with revenue in the range.
+
+        **Cap.** Revenue is read for the 499 `utm_campaign` values with the
+        most last-touch revenue in the range (the gateway returns 500 rows and
+        the unattributed row takes one). A campaign whose value ranks below
+        them shows no revenue and counts as unmatched.
+
+        `connection` is `null` when the site has no Meta connection, and the
+        lists are then empty.
+      # ADR-0048 D2: this route carries a `GRANT_WRITE_ALLOWLIST` row, so an OAuth
+      # grant may reach it as well as a browser session (the `ads_campaigns` MCP tool).
+      security:
+        - sessionCookie: []
+        - oauthAccessToken: ['revenue:read']
+      responses:
+        '200':
+          description: Campaigns, totals and unmatched spend.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdCampaignsResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/ForbiddenOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
   /v1/sites/{site_id}/revenue/connection:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -6737,6 +6917,7 @@ components:
         - EXPORT_EXPIRED
         - REVENUE_ALREADY_CONNECTED
         - REVENUE_CREDENTIAL_REJECTED
+        - ADS_CREDENTIAL_REJECTED
         - RATE_LIMITED
         - RANGE_TOO_LARGE
         - RESOLUTION_NOT_AVAILABLE
@@ -11308,6 +11489,257 @@ components:
         one. `disabled` — disconnected: the stored secrets are erased, the
         recorded revenue is untouched, and nothing new arrives.
 
+    MetaAdsError:
+      type: string
+      enum: [unauthorized, credential_undecryptable, rate_limited, unavailable, invalid_response]
+      description: |
+        Why the last sync failed: Meta refused the token (`unauthorized`),
+        this install's credential keyring cannot decrypt the stored token
+        (`credential_undecryptable`: a key was removed from
+        `OA_CREDENTIAL_KEYRING`; syncing goes on and recovers once the key is
+        restored and the worker restarted, or the owner reconnects), Meta
+        asked us to slow down (`rate_limited`), did not answer
+        (`unavailable`), or sent something that could not be read
+        (`invalid_response`). Never Meta's own message.
+
+    MetaAdsConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - ad_account_id
+        - ad_account_name
+        - ad_account_active
+        - currency
+        - token_last4
+        - connected_at
+        - last_attempted_at
+        - last_synced_at
+        - next_sync_at
+        - last_error
+      description: |
+        A site's Meta ad account connection. **No field carries the token.**
+      properties:
+        status:
+          type: string
+          enum: [active, needs_reconnect]
+          description: |
+            `active` is synced every six hours. `needs_reconnect` means Meta
+            refused the token and syncing has stopped until the owner connects
+            again.
+        ad_account_id:
+          type: string
+          pattern: '^act_[0-9]{1,20}$'
+        ad_account_name:
+          type: string
+          description: The account's name as Meta reported it on connect.
+        ad_account_active:
+          type: [boolean, 'null']
+          description: |
+            Whether Meta reported the ad account active (`account_status` 1)
+            when it was connected. `false` for a disabled, closed or unsettled
+            account, which can be connected but has no new spend to read;
+            `null` when Meta did not say.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: The ad account's currency; spend is reported in it.
+        token_last4:
+          type: string
+          description: The last four characters of the stored token, for display. Empty for a short token.
+        connected_at:
+          type: string
+          format: date-time
+        last_attempted_at:
+          type: [string, 'null']
+          format: date-time
+        last_synced_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last sync that read its whole window. Not moved by a failure.
+        next_sync_at:
+          type: string
+          format: date-time
+        last_error:
+          oneOf:
+            - $ref: '#/components/schemas/MetaAdsError'
+            - type: 'null'
+
+    MetaAdsNotConnected:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [not_connected]
+
+    ConnectMetaAdsRequest:
+      type: object
+      additionalProperties: false
+      required: [ad_account_id, access_token]
+      properties:
+        ad_account_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The ad account id, `act_` plus digits. Bare digits are accepted.
+        access_token:
+          type: string
+          minLength: 20
+          maxLength: 1024
+          writeOnly: true
+          description: A token with `ads_read` on the ad account. Stored encrypted, never returned.
+
+    AdSpend:
+      type: object
+      additionalProperties: false
+      required: [amount_minor, currency]
+      properties:
+        amount_minor:
+          type: integer
+          minimum: 0
+          description: Integer minor units of `currency`.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+
+    AdRoasUnavailable:
+      type: string
+      enum: [no_spend, no_rate]
+      description: |
+        Why `roas` is null: nothing was spent (`no_spend`), or the spend could
+        not be converted to the reporting currency because a day had no ECB
+        rate (`no_rate`).
+
+    AdCampaignRow:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - spend
+        - spend_converted_minor
+        - revenue_minor
+        - orders
+        - roas
+        - roas_unavailable
+        - matched_by
+      properties:
+        id:
+          type: string
+          description: Meta's campaign id.
+        name:
+          type: string
+          description: The campaign's newest name in the range; empty when Meta sent none.
+        spend:
+          $ref: '#/components/schemas/AdSpend'
+        spend_converted_minor:
+          type: [integer, 'null']
+          description: Spend in the reporting currency; null when a day had no rate.
+        revenue_minor:
+          type: integer
+          description: Last-touch revenue whose `utm_campaign` matched, in the reporting currency.
+        orders:
+          type: integer
+          minimum: 0
+        roas:
+          type: [number, 'null']
+          description: revenue_minor / spend_converted_minor.
+        roas_unavailable:
+          oneOf:
+            - $ref: '#/components/schemas/AdRoasUnavailable'
+            - type: 'null'
+        matched_by:
+          type: [string, 'null']
+          enum: [id, name, id_and_name, null]
+          description: How revenue was matched to this campaign; null when nothing matched.
+
+    AdCampaignsResponse:
+      type: object
+      additionalProperties: false
+      required: [connection, currency, from_day, to_day, campaigns, totals, unmatched]
+      properties:
+        connection:
+          oneOf:
+            - $ref: '#/components/schemas/MetaAdsConnectionSummary'
+            - type: 'null'
+        currency:
+          type: string
+          description: The site's reporting currency; revenue and converted spend are in it.
+        from_day:
+          type: string
+          format: date
+          description: The first spend day read, inclusive.
+        to_day:
+          type: string
+          format: date
+          description: The last spend day read, inclusive.
+        campaigns:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdCampaignRow'
+        totals:
+          type: object
+          additionalProperties: false
+          required:
+            - spend
+            - spend_converted_minor
+            - revenue_minor
+            - orders
+            - roas
+            - roas_unavailable
+          properties:
+            spend:
+              $ref: '#/components/schemas/AdSpend'
+            spend_converted_minor:
+              type: [integer, 'null']
+              description: Null when any campaign's spend could not be converted.
+            revenue_minor:
+              type: integer
+            orders:
+              type: integer
+              minimum: 0
+            roas:
+              type: [number, 'null']
+            roas_unavailable:
+              oneOf:
+                - $ref: '#/components/schemas/AdRoasUnavailable'
+                - type: 'null'
+        unmatched:
+          type: object
+          additionalProperties: false
+          required: [campaigns, spend, spend_converted_minor]
+          description: Campaigns that spent and matched no `utm_campaign` value with revenue.
+          properties:
+            campaigns:
+              type: integer
+              minimum: 0
+            spend:
+              $ref: '#/components/schemas/AdSpend'
+            spend_converted_minor:
+              type: [integer, 'null']
+
+    MetaAdsConnectionSummary:
+      type: object
+      additionalProperties: false
+      required: [status, ad_account_name, currency, last_synced_at, last_error]
+      properties:
+        status:
+          type: string
+          enum: [active, needs_reconnect]
+        ad_account_name:
+          type: string
+        currency:
+          type: string
+        last_synced_at:
+          type: [string, 'null']
+          format: date-time
+        last_error:
+          oneOf:
+            - $ref: '#/components/schemas/MetaAdsError'
+            - type: 'null'
+
     RevenueConnection:
       type: object
       additionalProperties: false
@@ -14795,6 +15227,17 @@ components:
         (`EXPORT_EXPIRED`). Permanent: request a new export rather than retrying.
         The export row and its audit trail survive, so `GET .../exports/{id}`
         still answers with `phase: expired`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    AdsCredentialRejected:
+      description: |
+        Meta refused the token during the connect check
+        (`ADS_CREDENTIAL_REJECTED`): it is revoked, expired, missing
+        `ads_read`, or cannot see that ad account. **Nothing was stored**, and
+        an existing connection is unchanged. The remedy is in Meta Business
+        Settings, not in the request.
       content:
         application/json:
           schema:

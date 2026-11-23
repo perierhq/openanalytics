@@ -5434,6 +5434,120 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sites/{site_id}/ads/meta/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The site's Meta ad account connection. Owner-only.
+         * @description Never returns the token: `token_last4` and `status` are the whole read
+         *     surface of the credential. `{ "status": "not_connected" }` when the
+         *     site has no connection.
+         *
+         *     `status: needs_reconnect` means Meta refused the token (revoked,
+         *     expired, or without access to the ad account) and syncing has stopped
+         *     until the owner connects again. `last_error` is the category of the
+         *     most recent failed sync, cleared by the next successful one.
+         */
+        get: operations["getSiteMetaAdsConnection"];
+        /**
+         * Connect (or reconnect) a Meta ad account. Owner-only.
+         * @description The token is **checked against Meta before anything is stored**, with
+         *     one read of the ad account's name, currency and status. A refusal
+         *     leaves an existing connection unchanged.
+         *
+         *     Connecting the same ad account again replaces the token and keeps the
+         *     spend already read. Connecting a different ad account replaces the
+         *     connection and deletes the previous account's spend; the first sync
+         *     then reads the last 90 days.
+         *
+         *     The token must be able to read the ad account (`ads_read`). A System
+         *     User token from Meta Business Settings is the intended kind: it
+         *     belongs to the business, not to a person.
+         *
+         *     - `422 ADS_CREDENTIAL_REJECTED`: Meta refused the token or the token
+         *       cannot see that ad account. Retrying unchanged will not help.
+         *     - `503 PROVIDER_UNAVAILABLE`: Meta did not answer, or asked us to slow
+         *       down. Retryable, and nothing was stored.
+         *     - `404 NOT_FOUND`: this deployment has no credential keyring, so it
+         *       cannot store a token.
+         */
+        put: operations["connectSiteMetaAds"];
+        post?: never;
+        /**
+         * Disconnect the Meta ad account. Owner-only.
+         * @description Deletes the stored token and the spend read with it. Nothing is sent
+         *     to Meta. Answers `404` when there is no connection.
+         */
+        delete: operations["disconnectSiteMetaAds"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sites/{site_id}/ads/campaigns": {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Spend, attributed revenue and ROAS per Meta campaign. Requires `revenue:read` (owner-only).
+         * @description One row per campaign that has spend recorded on a day in the range,
+         *     largest spend first. The range's days are read in `timezone`; a spend
+         *     day is a day in the ad account's own timezone.
+         *
+         *     **Revenue is last-touch revenue by `utm_campaign`** (the same numbers
+         *     `/revenue/attribution?touch=last&dimension=utm_campaign` returns). A
+         *     `utm_campaign` value matches a campaign when, trimmed and compared
+         *     case-insensitively, it equals the campaign's **name** or its **id**
+         *     (tag links with `utm_campaign={{campaign.id}}` to survive renames).
+         *     Each value counts once: an id match wins, and a name shared by several
+         *     campaigns goes to the one that spent the most in the range.
+         *
+         *     **Currency.** Spend is reported in the ad account's currency
+         *     (`spend`) and converted to the site's reporting currency
+         *     (`spend_converted_minor`) at each day's ECB reference rate, the rates
+         *     revenue is converted with. When a day has no rate the converted spend
+         *     is `null`, and so is `roas`, with `roas_unavailable: no_rate`; it is
+         *     never a guess. `roas` is revenue divided by converted spend, and `null`
+         *     with `no_spend` when nothing was spent.
+         *
+         *     `unmatched` is the spend of campaigns that matched no `utm_campaign`
+         *     value with revenue in the range.
+         *
+         *     **Cap.** Revenue is read for the 499 `utm_campaign` values with the
+         *     most last-touch revenue in the range (the gateway returns 500 rows and
+         *     the unattributed row takes one). A campaign whose value ranks below
+         *     them shows no revenue and counts as unmatched.
+         *
+         *     `connection` is `null` when the site has no Meta connection, and the
+         *     lists are then empty.
+         */
+        get: operations["getSiteAdCampaigns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sites/{site_id}/revenue/connection": {
         parameters: {
             query?: never;
@@ -6154,7 +6268,7 @@ export interface components {
          *     `message` (docs snapshot 03 §6.1).
          * @enum {string}
          */
-        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "REAUTH_REQUIRED" | "SITE_SUSPENDED" | "SITE_NOT_FOUND" | "NOT_FOUND" | "VALIDATION_FAILED" | "PAYLOAD_TOO_LARGE" | "IDEMPOTENCY_CONFLICT" | "ALREADY_MEMBER" | "ACCOUNT_DELETION_BLOCKED" | "IMPORT_IN_PROGRESS" | "IMPORT_UPLOAD_MISSING" | "IMPORT_ROLLBACK_UNAVAILABLE" | "EXPORT_IN_PROGRESS" | "EXPORT_EXPIRED" | "REVENUE_ALREADY_CONNECTED" | "REVENUE_CREDENTIAL_REJECTED" | "RATE_LIMITED" | "RANGE_TOO_LARGE" | "RESOLUTION_NOT_AVAILABLE" | "EVENT_DEFINITION_NAME_TAKEN" | "EVENT_DEFINITION_VERSION_CONFLICT" | "IMPORT_FAILED" | "PROVIDER_UNAVAILABLE" | "DATA_NOT_READY" | "SERVICE_UNAVAILABLE" | "INTERNAL_ERROR";
+        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "REAUTH_REQUIRED" | "SITE_SUSPENDED" | "SITE_NOT_FOUND" | "NOT_FOUND" | "VALIDATION_FAILED" | "PAYLOAD_TOO_LARGE" | "IDEMPOTENCY_CONFLICT" | "ALREADY_MEMBER" | "ACCOUNT_DELETION_BLOCKED" | "IMPORT_IN_PROGRESS" | "IMPORT_UPLOAD_MISSING" | "IMPORT_ROLLBACK_UNAVAILABLE" | "EXPORT_IN_PROGRESS" | "EXPORT_EXPIRED" | "REVENUE_ALREADY_CONNECTED" | "REVENUE_CREDENTIAL_REJECTED" | "ADS_CREDENTIAL_REJECTED" | "RATE_LIMITED" | "RANGE_TOO_LARGE" | "RESOLUTION_NOT_AVAILABLE" | "EVENT_DEFINITION_NAME_TAKEN" | "EVENT_DEFINITION_VERSION_CONFLICT" | "IMPORT_FAILED" | "PROVIDER_UNAVAILABLE" | "DATA_NOT_READY" | "SERVICE_UNAVAILABLE" | "INTERNAL_ERROR";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -9112,6 +9226,136 @@ export interface components {
          */
         RevenueConnectionStatus: "active" | "degraded" | "disabled";
         /**
+         * @description Why the last sync failed: Meta refused the token (`unauthorized`),
+         *     this install's credential keyring cannot decrypt the stored token
+         *     (`credential_undecryptable`: a key was removed from
+         *     `OA_CREDENTIAL_KEYRING`; syncing goes on and recovers once the key is
+         *     restored and the worker restarted, or the owner reconnects), Meta
+         *     asked us to slow down (`rate_limited`), did not answer
+         *     (`unavailable`), or sent something that could not be read
+         *     (`invalid_response`). Never Meta's own message.
+         * @enum {string}
+         */
+        MetaAdsError: "unauthorized" | "credential_undecryptable" | "rate_limited" | "unavailable" | "invalid_response";
+        /** @description A site's Meta ad account connection. **No field carries the token.** */
+        MetaAdsConnection: {
+            /**
+             * @description `active` is synced every six hours. `needs_reconnect` means Meta
+             *     refused the token and syncing has stopped until the owner connects
+             *     again.
+             * @enum {string}
+             */
+            status: "active" | "needs_reconnect";
+            ad_account_id: string;
+            /** @description The account's name as Meta reported it on connect. */
+            ad_account_name: string;
+            /**
+             * @description Whether Meta reported the ad account active (`account_status` 1)
+             *     when it was connected. `false` for a disabled, closed or unsettled
+             *     account, which can be connected but has no new spend to read;
+             *     `null` when Meta did not say.
+             */
+            ad_account_active: boolean | null;
+            /** @description The ad account's currency; spend is reported in it. */
+            currency: string;
+            /** @description The last four characters of the stored token, for display. Empty for a short token. */
+            token_last4: string;
+            /** Format: date-time */
+            connected_at: string;
+            /** Format: date-time */
+            last_attempted_at: string | null;
+            /**
+             * Format: date-time
+             * @description The last sync that read its whole window. Not moved by a failure.
+             */
+            last_synced_at: string | null;
+            /** Format: date-time */
+            next_sync_at: string;
+            last_error: components["schemas"]["MetaAdsError"] | null;
+        };
+        MetaAdsNotConnected: {
+            /** @enum {string} */
+            status: "not_connected";
+        };
+        ConnectMetaAdsRequest: {
+            /** @description The ad account id, `act_` plus digits. Bare digits are accepted. */
+            ad_account_id: string;
+            /** @description A token with `ads_read` on the ad account. Stored encrypted, never returned. */
+            access_token: string;
+        };
+        AdSpend: {
+            /** @description Integer minor units of `currency`. */
+            amount_minor: number;
+            currency: string;
+        };
+        /**
+         * @description Why `roas` is null: nothing was spent (`no_spend`), or the spend could
+         *     not be converted to the reporting currency because a day had no ECB
+         *     rate (`no_rate`).
+         * @enum {string}
+         */
+        AdRoasUnavailable: "no_spend" | "no_rate";
+        AdCampaignRow: {
+            /** @description Meta's campaign id. */
+            id: string;
+            /** @description The campaign's newest name in the range; empty when Meta sent none. */
+            name: string;
+            spend: components["schemas"]["AdSpend"];
+            /** @description Spend in the reporting currency; null when a day had no rate. */
+            spend_converted_minor: number | null;
+            /** @description Last-touch revenue whose `utm_campaign` matched, in the reporting currency. */
+            revenue_minor: number;
+            orders: number;
+            /** @description revenue_minor / spend_converted_minor. */
+            roas: number | null;
+            roas_unavailable: components["schemas"]["AdRoasUnavailable"] | null;
+            /**
+             * @description How revenue was matched to this campaign; null when nothing matched.
+             * @enum {string|null}
+             */
+            matched_by: "id" | "name" | "id_and_name" | null;
+        };
+        AdCampaignsResponse: {
+            connection: components["schemas"]["MetaAdsConnectionSummary"] | null;
+            /** @description The site's reporting currency; revenue and converted spend are in it. */
+            currency: string;
+            /**
+             * Format: date
+             * @description The first spend day read, inclusive.
+             */
+            from_day: string;
+            /**
+             * Format: date
+             * @description The last spend day read, inclusive.
+             */
+            to_day: string;
+            campaigns: components["schemas"]["AdCampaignRow"][];
+            totals: {
+                spend: components["schemas"]["AdSpend"];
+                /** @description Null when any campaign's spend could not be converted. */
+                spend_converted_minor: number | null;
+                revenue_minor: number;
+                orders: number;
+                roas: number | null;
+                roas_unavailable: components["schemas"]["AdRoasUnavailable"] | null;
+            };
+            /** @description Campaigns that spent and matched no `utm_campaign` value with revenue. */
+            unmatched: {
+                campaigns: number;
+                spend: components["schemas"]["AdSpend"];
+                spend_converted_minor: number | null;
+            };
+        };
+        MetaAdsConnectionSummary: {
+            /** @enum {string} */
+            status: "active" | "needs_reconnect";
+            ad_account_name: string;
+            currency: string;
+            /** Format: date-time */
+            last_synced_at: string | null;
+            last_error: components["schemas"]["MetaAdsError"] | null;
+        };
+        /**
          * @description A site's revenue connection. **No field of this object ever carries a
          *     secret**: the stored API key and webhook signing secret go in on connect
          *     and are never returned by any operation.
@@ -11274,6 +11518,21 @@ export interface components {
          *     still answers with `phase: expired`.
          */
         ExportExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /**
+         * @description Meta refused the token during the connect check
+         *     (`ADS_CREDENTIAL_REJECTED`): it is revoked, expired, missing
+         *     `ads_read`, or cannot see that ad account. **Nothing was stored**, and
+         *     an existing connection is unchanged. The remedy is in Meta Business
+         *     Settings, not in the request.
+         */
+        AdsCredentialRejected: {
             headers: {
                 [name: string]: unknown;
             };
@@ -17902,6 +18161,128 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthenticated"];
+        };
+    };
+    getSiteMetaAdsConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection, or an explicit "not connected". */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetaAdsConnection"] | components["schemas"]["MetaAdsNotConnected"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    connectSiteMetaAds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectMetaAdsRequest"];
+            };
+        };
+        responses: {
+            /** @description Connected. The token is stored encrypted and never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetaAdsConnection"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+            422: components["responses"]["AdsCredentialRejected"];
+            /** @description Meta did not answer or is throttling; nothing was stored (`PROVIDER_UNAVAILABLE`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    disconnectSiteMetaAds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["SiteNotFound"];
+        };
+    };
+    getSiteAdCampaigns: {
+        parameters: {
+            query: {
+                /** @description Half-open range start, ISO-8601 UTC. */
+                from: components["parameters"]["RangeFrom"];
+                /** @description Half-open range end (exclusive), ISO-8601 UTC. */
+                to: components["parameters"]["RangeTo"];
+                /** @description IANA timezone the calendar boundaries are expressed in. */
+                timezone: components["parameters"]["QueryTimezone"];
+            };
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Campaigns, totals and unmatched spend. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdCampaignsResponse"];
+                };
+            };
+            400: components["responses"]["AnalyticsBadRange"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["ForbiddenOrSuspended"];
+            404: components["responses"]["SiteNotFound"];
+            503: components["responses"]["AnalyticsUnavailable"];
         };
     };
     getSiteRevenueConnection: {

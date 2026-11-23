@@ -644,22 +644,22 @@ Nothing here refuses to boot. Every one of these degrades a surface and says so
 in the log, which is the deliberate shape: a deployment must not fail over a
 feature it has not enabled.
 
-| Missing                                                                  | What breaks                                                                                                                                                                                                            |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mail transport (stored settings, `RESEND_API_KEY` or SMTP) on the worker | **Magic-link sign-in cannot complete**; invitations never arrive. Nothing is sent and the link is written nowhere. Sign in with the account the first-run screen made, then configure a relay in Account → Deployment. |
-| `AUTH_TRUSTED_ORIGINS` on the api                                        | **Every browser call from the dashboard is refused.** No `Access-Control-Allow-Origin` is emitted at all — fail-closed by design.                                                                                      |
-| `APP_BASE_URL` on the api                                                | Human-facing links (invitation acceptance, billing returns) point at pages the api does not serve.                                                                                                                     |
-| `GOOGLE_*` / `GITHUB_*`                                                  | No Google/GitHub button. A provider appears only when both its id and secret are present.                                                                                                                              |
-| `GEOIP_DB_PATH`                                                          | Every event carries null geo. No country, no city.                                                                                                                                                                     |
-| `CLICKHOUSE_MAINTENANCE_*` on the worker                                 | **Site and account deletion queue and retry forever** instead of erasing anything. A wait, not a loss — but a silent one.                                                                                              |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`                            | Billing surfaces disable themselves. Normally what a self-hosted install wants.                                                                                                                                        |
-| `OPENAI_API_KEY` **and** no stored provider                              | The AI assistant answers `503 not configured` — _before_ any question is charged — and the dashboard draws its chat button disabled.                                                                                   |
-| `OA_CREDENTIAL_KEYRING`                                                  | Revenue-connection routes that encrypt are not mounted (404); reading and disconnecting still work. Account → Deployment closes with `no_keyring`, because it would be storing secrets it cannot protect.              |
-| `CREDENTIAL_SOURCE_SECRET`                                               | No credential events are journalled at all. Reads are untouched.                                                                                                                                                       |
-| `OBJECT_STORAGE_*`                                                       | Data import and export are not mounted.                                                                                                                                                                                |
-| `REALTIME_CACHE_REDIS_URL` on the gateway                                | Replay defence becomes per-process — correct only with a single gateway instance. It warns.                                                                                                                            |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_NOTIFY_CHAT_ID`                         | Notifications use the log transport.                                                                                                                                                                                   |
-| `METRICS_REMOTE_WRITE_*`                                                 | No metrics pipeline; the structured-log metrics floor remains.                                                                                                                                                         |
+| Missing                                                                  | What breaks                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Mail transport (stored settings, `RESEND_API_KEY` or SMTP) on the worker | **Magic-link sign-in cannot complete**; invitations never arrive. Nothing is sent and the link is written nowhere. Sign in with the account the first-run screen made, then configure a relay in Account → Deployment.                                                                     |
+| `AUTH_TRUSTED_ORIGINS` on the api                                        | **Every browser call from the dashboard is refused.** No `Access-Control-Allow-Origin` is emitted at all — fail-closed by design.                                                                                                                                                          |
+| `APP_BASE_URL` on the api                                                | Human-facing links (invitation acceptance, billing returns) point at pages the api does not serve.                                                                                                                                                                                         |
+| `GOOGLE_*` / `GITHUB_*`                                                  | No Google/GitHub button. A provider appears only when both its id and secret are present.                                                                                                                                                                                                  |
+| `GEOIP_DB_PATH`                                                          | Every event carries null geo. No country, no city.                                                                                                                                                                                                                                         |
+| `CLICKHOUSE_MAINTENANCE_*` on the worker                                 | **Site and account deletion queue and retry forever** instead of erasing anything. A wait, not a loss — but a silent one.                                                                                                                                                                  |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`                            | Billing surfaces disable themselves. Normally what a self-hosted install wants.                                                                                                                                                                                                            |
+| `OPENAI_API_KEY` **and** no stored provider                              | The AI assistant answers `503 not configured` — _before_ any question is charged — and the dashboard draws its chat button disabled.                                                                                                                                                       |
+| `OA_CREDENTIAL_KEYRING`                                                  | Revenue-connection routes that encrypt are not mounted (404); reading and disconnecting still work. Account → Deployment closes with `no_keyring`, because it would be storing secrets it cannot protect. The Meta Ads connect route is not mounted and the worker does not sync ad spend. |
+| `CREDENTIAL_SOURCE_SECRET`                                               | No credential events are journalled at all. Reads are untouched.                                                                                                                                                                                                                           |
+| `OBJECT_STORAGE_*`                                                       | Data import and export are not mounted.                                                                                                                                                                                                                                                    |
+| `REALTIME_CACHE_REDIS_URL` on the gateway                                | Replay defence becomes per-process — correct only with a single gateway instance. It warns.                                                                                                                                                                                                |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_NOTIFY_CHAT_ID`                         | Notifications use the log transport.                                                                                                                                                                                                                                                       |
+| `METRICS_REMOTE_WRITE_*`                                                 | No metrics pipeline; the structured-log metrics floor remains.                                                                                                                                                                                                                             |
 
 ---
 
@@ -924,6 +924,7 @@ they do in the dashboard. The read tools:
 | `revenue_summary`, `revenue_timeseries`                                                            | `revenue:read`   | Revenue totals and buckets. Owners only                                |
 | `revenue_by_source`, `events_before_purchase`                                                      | `revenue:read`   | Revenue by source or entry page; events before buying. Owners only     |
 | `subscription_summary`, `subscription_timeseries`                                                  | `revenue:read`   | MRR, churn, trials and new vs renewal charges. Owners only             |
+| `ads_campaigns`                                                                                    | `revenue:read`   | Meta ad spend, revenue and ROAS per campaign. Owners only              |
 | `team_members`                                                                                     | `team:read`      | A site's members, with email addresses                                 |
 
 The write tools need the matching write scope (`sites:write`, `funnels:write`,
@@ -975,6 +976,67 @@ To turn it off for the whole install, set `MENTIONS_ENABLED=false` in
 dashboard until the site is deleted. The metric `worker_mentions_poll{status}`
 tells you whether searches are working; a site's settings screen also shows
 when its last search ran and why it failed.
+
+### Meta Ads
+
+A site's owner can connect one Meta ad account in Settings → Integrations →
+Meta Ads. The worker then reads the account's daily spend per campaign every
+six hours, and the overview shows an Ad campaigns card with spend, revenue and
+return on ad spend (ROAS) per campaign. Only the owner sees the card and the
+connection, the same as every revenue read.
+
+What it sends, and where: the ad account id and the access token, to
+`graph.facebook.com` (Graph API v27.0), with the token in an
+`Authorization: Bearer` header. The worker sends them on every sync; the API
+sends them once when the owner connects, to check the token can read the
+account. Nothing about the site's visitors is sent. Allow outbound HTTPS to
+`graph.facebook.com` from the worker and the API if your network restricts
+egress.
+
+The token is stored encrypted with `OA_CREDENTIAL_KEYRING`, the same way a
+revenue provider key is, and is never shown again, logged or returned by the
+API. Without a keyring the connect form answers that the deployment cannot
+store a token, and the worker does not sync. Disconnecting deletes the token
+and the spend that was read with it.
+
+To make the token, in Meta's own screens:
+
+1. In Meta for Developers, create an app of the Business type and add it to
+   the business that owns the ad account.
+2. In Meta Business Settings, add a System User and give it access to the ad
+   account. Viewing performance is enough.
+3. Generate a token for that System User with the app, with the `ads_read`
+   permission and no expiry. Reading your own ad accounts needs no App Review.
+   If your business requires expiring tokens, the token lasts 60 days and the
+   card asks for a new one when Meta refuses it.
+
+How revenue is matched to a campaign: by last-touch `utm_campaign`, compared
+trimmed and case-insensitively with the campaign's name or its id. Tagging ad
+links with `utm_campaign={{campaign.id}}` keeps the match when a campaign is
+renamed. Spend is converted to the site's reporting currency at each day's ECB
+rate; when a day has no rate, ROAS shows as a dash with the reason instead of
+a guess.
+
+Each sync reads the last three days, because Meta restates recent spend. The
+first sync of a connection reads those three days first, then the 90 days
+before them in 30-day chunks; each chunk is saved as it completes, so a first
+sync cut short by a rate limit picks up where it stopped. Above 75% of any
+Meta rate-limit budget (the `x-app-usage`, `x-business-use-case-usage` and
+`x-ad-account-usage` headers) the worker stops calling Meta until the budget
+recovers. When Meta refuses the token, syncing stops for that site until the
+owner connects again. When the worker cannot decrypt a stored token (a key was
+removed from `OA_CREDENTIAL_KEYRING`), the card says so and syncing goes on:
+put the key back and restart the worker, which retries those sites on its
+first tick, or have the owner reconnect. Spend read for a connection that was
+disconnected or switched to another account while the sync ran is discarded.
+The metric `worker_meta_ads_sync{status}` counts syncs by outcome (`ok`,
+`paused`, `superseded`, `unauthorized`, `credential_undecryptable`,
+`rate_limited`, `unavailable`, `invalid_response`, `error`) and
+`worker_meta_ads_spend_rows` counts the campaign-days written.
+
+The Ad campaigns card and `ads_campaigns` read revenue for the 499
+`utm_campaign` values with the most last-touch revenue in the range; a campaign
+whose value ranks below them shows no revenue.
 
 ### Health
 

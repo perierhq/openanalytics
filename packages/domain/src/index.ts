@@ -900,6 +900,48 @@ export {
 } from './chart-notes.ts'
 
 /**
+ * Meta Ads spend and ROAS (migration 0052): the insights parser, rate-limit
+ * reading, Graph error categories, sync windows and the campaign to
+ * `utm_campaign` join.
+ */
+export {
+  META_ADS_BACKFILL_CHUNK_DAYS,
+  META_ADS_ERRORS,
+  META_ADS_FIRST_SYNC_DAYS,
+  META_ADS_RESYNC_DAYS,
+  META_ADS_STATUSES,
+  META_ADS_SYNC_INTERVAL_HOURS,
+  META_ADS_USAGE_BACKOFF_PERCENT,
+  META_GRAPH_API_VERSION,
+  META_GRAPH_HOST,
+  classifyMetaGraphError,
+  convertCampaignSpend,
+  joinCampaignRevenue,
+  metaAdsCredentialAad,
+  metaBackfillChunk,
+  metaSyncWindow,
+  metaUsage,
+  normalizeMetaAccessToken,
+  normalizeMetaAdAccountId,
+  normalizeUtmCampaign,
+  parseMetaInsightsPage,
+  parseMetaSpendMinor,
+  spendDayRange,
+  type CampaignJoin,
+  type CampaignMatch,
+  type CampaignResult,
+  type CampaignSpend,
+  type HeaderReader,
+  type MetaAdsError,
+  type MetaAdsStatus,
+  type MetaInsightsParse,
+  type MetaSpendRow,
+  type MetaUsage,
+  type RoasUnavailable,
+  type UtmCampaignRevenue,
+} from './meta-ads.ts'
+
+/**
  * Server-side ingest exclusions: IP ranges, paths, countries and hostnames a
  * site's owner asked not to count. Normalised for storage by the API and
  * compiled once per config version for matching by the collector.

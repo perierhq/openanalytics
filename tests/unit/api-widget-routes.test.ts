@@ -579,7 +579,7 @@ describe('the published fixture is what the route actually returns', () => {
   })
 })
 
-describe('the deletion registry, at 73 after ClickHouse 0030/0031 and Postgres 0047/0048/0049/0050', () => {
+describe('the deletion registry, at 75 after ClickHouse 0030/0031 and Postgres 0047/0048/0049/0050/0052', () => {
   /**
    * Pinned here as well as in the migration suite because that suite needs a
    * database and therefore only runs in CI: a widget table that is not a
@@ -588,7 +588,7 @@ describe('the deletion registry, at 73 after ClickHouse 0030/0031 and Postgres 0
    */
   it('names the widget table as a Postgres target', () => {
     expect(DELETION_POSTGRES_TARGETS).toContain('widgets')
-    // 73, not 74: `billing_transfer_offers` is registered by the hosted surface
+    // 75, not 76: `billing_transfer_offers` is registered by the hosted surface
     // (`CLOUD_DELETION_EXTENSION`), so what this pins is the set a build with no
     // such surface erases. 62 became 72 when ADR-0079 booked the ten `*_15m`
     // rollups (ClickHouse migrations 0025/0026), 72 became 62 again when
@@ -597,10 +597,19 @@ describe('the deletion registry, at 73 after ClickHouse 0030/0031 and Postgres 0
     // the subscription lifecycle added three Postgres tables (0047) and two
     // ClickHouse tables (0031), 69 became 71 when X mentions added two
     // Postgres tables (0048), 71 became 72 when the mention authors'
-    // pictures added one more (0049), and 72 became 73 when chart notes
-    // added one more (0050).
-    expect(SITE_DELETION_TARGETS).toHaveLength(73)
-    expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(29)
+    // pictures added one more (0049), 72 became 73 when chart notes
+    // added one more (0050), and 73 became 75 when Meta Ads added its
+    // connection and daily spend tables (0052).
+    expect(SITE_DELETION_TARGETS).toHaveLength(75)
+    expect(SITE_DELETION_TARGETS.filter((t) => t.store === 'postgres')).toHaveLength(31)
     expect(SITE_DELETION_TARGETS).toContainEqual({ store: 'postgres', target: 'widgets' })
+    expect(SITE_DELETION_TARGETS).toContainEqual({
+      store: 'postgres',
+      target: 'meta_ads_connections',
+    })
+    expect(SITE_DELETION_TARGETS).toContainEqual({
+      store: 'postgres',
+      target: 'meta_ads_daily_spend',
+    })
   })
 })
