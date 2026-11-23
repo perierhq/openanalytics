@@ -44,6 +44,8 @@ import type {
   RevenueAttributionDimension,
   RevenueAttributionResponse,
   RevenueAttributionRow,
+  RevenueSegment,
+  RevenueSegmentsResponse,
   SiteIngestSettings,
   SiteMentionSettings,
   ChartNote,
@@ -1194,3 +1196,125 @@ export function mockRevenueAttribution(
     ),
   };
 }
+
+/**
+ * Revenue by segment (`GET /revenue/segments`): eleven shown segments of a
+ * month, and the site behind them. The site's totals hold the shown rows plus
+ * 48 small hidden segments (two buyers, two orders, 9,900 between them), and
+ * its visitors are fewer than the rows' sum would be with no overlap, as on
+ * the wire: a visitor who entered two ways counts in both segments.
+ *
+ * The smoothed figures are the server's formula, `(count + k × site rate) /
+ * (visitors + k)` with k = 200, computed here only so the fixture is
+ * consistent; the screens never recompute them.
+ */
+const MOCK_SEGMENT_K = 200;
+const MOCK_SEGMENT_SITE = {
+  visitors: 5_600,
+  buyers: 46,
+  orders: 47,
+  revenue_minor: 266_400,
+  unconverted_orders: 1,
+  // Bought in the range after a visit before it: not counted above.
+  buyers_last_visit_before_range: 3,
+  buyers_last_visit_missing: 0,
+};
+
+function mockSegment(
+  source: string,
+  country: string,
+  device: string,
+  visitors: number,
+  buyers: number,
+  orders: number,
+  revenue_minor: number,
+  unconverted_orders = 0
+): RevenueSegment {
+  const p = MOCK_SEGMENT_SITE.buyers / MOCK_SEGMENT_SITE.visitors;
+  const v = MOCK_SEGMENT_SITE.revenue_minor / MOCK_SEGMENT_SITE.visitors;
+  return {
+    source,
+    country,
+    device,
+    visitors,
+    buyers,
+    orders,
+    revenue_minor,
+    unconverted_orders,
+    conversion_rate: buyers / visitors,
+    smoothed_conversion_rate: (buyers + MOCK_SEGMENT_K * p) / (visitors + MOCK_SEGMENT_K),
+    average_order_value_minor: orders > 0 ? revenue_minor / orders : null,
+    value_per_visitor_minor: revenue_minor / visitors,
+    smoothed_value_per_visitor_minor:
+      (revenue_minor + MOCK_SEGMENT_K * v) / (visitors + MOCK_SEGMENT_K),
+    confidence:
+      visitors < 100 || buyers < 3
+        ? "low"
+        : visitors >= 1_000 && buyers >= 10
+          ? "high"
+          : "medium",
+  };
+}
+
+const MOCK_SEGMENTS_META = {
+  ...MOCK_REVENUE_SUMMARY.meta,
+  resolution: "hour" as const,
+};
+
+export const MOCK_REVENUE_SEGMENTS: RevenueSegmentsResponse = {
+  meta: MOCK_SEGMENTS_META,
+  status: "ok",
+  currency: "USD",
+  site: {
+    ...MOCK_SEGMENT_SITE,
+    conversion_rate: MOCK_SEGMENT_SITE.buyers / MOCK_SEGMENT_SITE.visitors,
+    value_per_visitor_minor:
+      MOCK_SEGMENT_SITE.revenue_minor / MOCK_SEGMENT_SITE.visitors,
+  },
+  segments: [
+    mockSegment("google.com", "US", "desktop", 1_140, 14, 15, 74_500, 1),
+    mockSegment("google.com", "DE", "desktop", 620, 6, 6, 29_400),
+    // Also "Google" from Germany on a desktop: the rows show their hosts.
+    mockSegment("google.de", "DE", "desktop", 240, 2, 2, 9_800),
+    mockSegment("news.ycombinator.com", "US", "desktop", 780, 9, 9, 44_100),
+    mockSegment("", "US", "desktop", 690, 5, 5, 24_500),
+    mockSegment("google.com", "US", "mobile", 510, 2, 2, 9_800),
+    mockSegment("chatgpt.com", "US", "desktop", 260, 4, 4, 39_600),
+    mockSegment("news.ycombinator.com", "GB", "desktop", 230, 2, 2, 9_800),
+    mockSegment("", "DE", "mobile", 410, 1, 1, 4_900),
+    mockSegment("x.com", "US", "mobile", 180, 0, 0, 0),
+    // Tiny, with one big order: 209 per visitor raw, and smoothing keeps it
+    // from topping the list on the strength of one buyer.
+    mockSegment("github.com", "DE", "desktop", 95, 1, 1, 19_900),
+    mockSegment("", "GB", "mobile", 140, 0, 0, 0),
+  ].sort(
+    (a, b) =>
+      b.smoothed_value_per_visitor_minor - a.smoothed_value_per_visitor_minor ||
+      b.visitors - a.visitors
+  ),
+  hidden_segments: 48,
+  thresholds: { min_buyers: 10, min_segment_visitors: 20 },
+  prior: { k: MOCK_SEGMENT_K },
+};
+
+/** A day's worth: four buyers, under the minimum of ten. */
+export const MOCK_REVENUE_SEGMENTS_INSUFFICIENT: RevenueSegmentsResponse = {
+  meta: MOCK_SEGMENTS_META,
+  status: "insufficient_data",
+  currency: "USD",
+  site: {
+    visitors: 1_250,
+    buyers: 4,
+    orders: 4,
+    revenue_minor: 24_100,
+    unconverted_orders: 0,
+    buyers_last_visit_before_range: 1,
+    buyers_last_visit_missing: 0,
+    conversion_rate: 4 / 1_250,
+    value_per_visitor_minor: 24_100 / 1_250,
+  },
+  segments: [],
+  hidden_segments: 0,
+  thresholds: { min_buyers: 10, min_segment_visitors: 20 },
+  prior: { k: MOCK_SEGMENT_K },
+};

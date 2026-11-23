@@ -713,6 +713,25 @@ const mcpTools: McpToolDefinition[] = [
     scope: 'revenue:read',
   },
 
+  // Revenue by segment: source × country × device, segment aggregates only.
+  {
+    name: 'revenue_segments',
+    title: 'Revenue Segments',
+    description:
+      'Which kinds of visitors convert and what a visit from each is worth: visitor segments of one site over a date range, one per entry referrer domain × country × device type (empty source is Direct, empty country or device is unknown), with visitors, attributed buyers, orders and revenue (new subscriptions and one-off purchases only, last-touch attribution, integer minor units of `currency`; `unconverted_orders` had no exchange rate and are missing from revenue), conversion_rate, average_order_value_minor and value_per_visitor_minor. Small segments are pulled toward the site average: `smoothed_conversion_rate` and `smoothed_value_per_visitor_minor` are (count + k × site rate) / (visitors + k) with k in `prior.k`; rows are sorted by smoothed value per visitor, and `confidence` is low, medium or high. Quote the smoothed figures and the confidence, not the raw rate of a low-confidence segment. Only buyers whose last visit was a session of the range count, so every buyer is one of the visitors; `site.buyers_last_visit_before_range` and `site.buyers_last_visit_missing` count the buyers left out. Segments under 20 visitors are left out and counted in `hidden_segments` (with exactly one, the smallest shown segment is left out too). With fewer than 10 attributed buyers `status` is `insufficient_data` and there are no segments. Segment-level only: no visitor or customer is scored. The range is at most 92 days. Same owner-only rule and `meta.revenue.connection_status` caveat as revenue_summary.',
+    path: '/read/revenue/segments',
+    params: [
+      ...RANGE_PARAMS,
+      {
+        name: 'limit',
+        description: 'How many segments to return, 1 to 500. Defaults to 100.',
+        required: false,
+      },
+    ],
+    needsSite: true,
+    scope: 'revenue:read',
+  },
+
   // Perier gap 7: subscription lifecycle. Aggregates only, owner-only, like
   // the two revenue reads above.
   {

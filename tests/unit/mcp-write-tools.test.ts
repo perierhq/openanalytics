@@ -146,6 +146,7 @@ const EXPECTED_READ_TOOLS = [
   'revenue_timeseries',
   'revenue_by_source',
   'events_before_purchase',
+  'revenue_segments',
   'subscription_summary',
   'subscription_timeseries',
   'site_install',
@@ -202,10 +203,10 @@ describe('the tool roster is pinned by name, not derived', () => {
     // `subscription_timeseries`, gap 7) 38, `list_mentions` (the X mentions
     // list) 39, the chart notes (`list_notes`, `create_note`,
     // `update_note`, `delete_note`) 43, `referrer_paths` (the referring
-    // pages behind a Sources row) 44, and the Meta Ads campaigns read
-    // (`ads_campaigns`) 45.
-    expect(MCP_TOOLS).toHaveLength(45)
-    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(45)
+    // pages behind a Sources row) 44, the Meta Ads campaigns read
+    // (`ads_campaigns`) 45, and revenue by segment (`revenue_segments`) 46.
+    expect(MCP_TOOLS).toHaveLength(46)
+    expect(EXPECTED_READ_TOOLS.length + EXPECTED_WRITE_TOOLS.length).toBe(46)
     // The five that were missing until the roster was pinned. Named
     // individually so a regression says which one went.
     for (const name of [
@@ -309,6 +310,8 @@ describe('the assistant sees the analytics and revenue reads, and nothing else',
         'funnel_results',
         'revenue_by_source',
         'events_before_purchase',
+        // Segment aggregates (source × country × device), no person in them.
+        'revenue_segments',
         // Perier gap 7: Kacper's decision, the assistant gets the subscription reads.
         'subscription_summary',
         'subscription_timeseries',

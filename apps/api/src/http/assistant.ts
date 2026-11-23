@@ -121,8 +121,8 @@ const ASSISTANT_READ_PREFIXES = ['/read/analytics/', '/read/revenue/']
 /**
  * Perier fork: the assistant gets the aggregate reads MCP gained after
  * ADR-0046 D3 (custom events and their properties, performance, funnel
- * results, revenue by source, events before purchase); a site owner asked for
- * them. The two per-visitor reads stay out: the assistant's provider is a third
+ * results, revenue by source, events before purchase, revenue by segment); a
+ * site owner asked for them. The two per-visitor reads stay out: the assistant's provider is a third
  * party, and a single visitor's journey is not an aggregate.
  */
 const ASSISTANT_EXCLUDED_PATHS = ['/read/analytics/recent-visitors', '/read/analytics/visitor']
@@ -174,7 +174,7 @@ function systemPrompt(now: Date): string {
     '- A tool may answer with an error envelope instead — `RANGE_TOO_LARGE`, `SITE_NOT_FOUND`, `SITE_SUSPENDED`, `RATE_LIMITED`, `SERVICE_UNAVAILABLE`. That is a fact to report to the person, with what it means, not an absence to paper over. `RANGE_TOO_LARGE` you can act on yourself by asking for a narrower window.',
     '',
     'Reading revenue (ADR-0049):',
-    '- `revenue_summary`, `revenue_timeseries`, `revenue_by_source`, `events_before_purchase`, `subscription_summary` and `subscription_timeseries` read money, and they are **owner-only**. If one answers `FORBIDDEN`, the signed-in person is not an owner of that site: say exactly that, tell them an owner can see it, and do not retry, do not try another tool and do not estimate the figure from anything else.',
+    '- `revenue_summary`, `revenue_timeseries`, `revenue_by_source`, `events_before_purchase`, `revenue_segments`, `subscription_summary` and `subscription_timeseries` read money, and they are **owner-only**. If one answers `FORBIDDEN`, the signed-in person is not an owner of that site: say exactly that, tell them an owner can see it, and do not retry, do not try another tool and do not estimate the figure from anything else.',
     '- Amounts are integers in the minor unit of the currency named in the response (`totals.currency`). Convert before you write a sentence — 91000 USD minor units is $910.00 — and always name the currency.',
     '- `meta.revenue.connection_status` decides what a zero means, and you must read it: `not_connected` means no payment provider was ever connected, so a zero is not a statement about sales; `disconnected` or `degraded` means the figures are as complete as what we already hold, and `last_synced_at` says as of when. A provider problem is never reported as revenue of zero.',
     '',

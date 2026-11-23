@@ -155,6 +155,10 @@ describe('operation registry', () => {
       'analytics.revenue_order_objects',
       'analytics.revenue_purchase_kinds',
       'analytics.revenue_purchase_population',
+      // Revenue by segment (referrer × country × device): the site totals with
+      // the hidden-segment count, and the shown segments ranked.
+      'analytics.revenue_segment_totals',
+      'analytics.revenue_segments',
       'analytics.revenue_summary_day',
       'analytics.revenue_summary_hour',
       'analytics.revenue_timeseries_day',
