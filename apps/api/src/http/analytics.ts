@@ -8,7 +8,10 @@ import {
 } from '@openanalytics/contracts'
 import {
   funnelConfigSchema,
+  MAX_FILTER_VALUE_LENGTH,
   parseAnalyticsFilters,
+  REFERRER_PATHS_MAX_HOSTS,
+  REFERRER_PATHS_MAX_PER_HOST,
   roleHasCapability,
   type AnalyticsFilter,
   type FunnelScope,
@@ -168,6 +171,51 @@ export function parsePagesSort(query: Record<string, string | undefined>): Pages
   throw new ApiError('VALIDATION_FAILED', 'sort must be one of: views, entrances, exits', {
     details: { issues: [{ path: 'sort', message: 'must be one of: views, entrances, exits' }] },
   })
+}
+
+/** `group_by=channel` on the sources report; absent is the tuple list. */
+export function parseSourcesGroupBy(
+  query: Record<string, string | undefined>,
+): 'channel' | undefined {
+  const raw = query['group_by']
+  if (raw === undefined || raw === '') return undefined
+  if (raw === 'channel') return raw
+  throw new ApiError('VALIDATION_FAILED', 'group_by must be: channel', {
+    details: { issues: [{ path: 'group_by', message: 'must be: channel' }] },
+  })
+}
+
+/**
+ * The referrer-paths read's own parameters: the repeated `referrer_domain`
+ * hosts (1 to `REFERRER_PATHS_MAX_HOSTS`) and a per-host `limit` (1 to
+ * `REFERRER_PATHS_MAX_PER_HOST`, default 10).
+ */
+export function parseReferrerPathsQuery(
+  query: Record<string, string | undefined>,
+  hosts: readonly string[] | undefined,
+): { referrerDomains: string[]; limit: number } {
+  const invalid = (path: string, message: string): never => {
+    throw new ApiError('VALIDATION_FAILED', `${path} ${message}`, {
+      details: { issues: [{ path, message }] },
+    })
+  }
+  const referrerDomains = (hosts ?? []).map((host) => host.trim()).filter((host) => host !== '')
+  if (referrerDomains.length === 0) invalid('referrer_domain', 'is required')
+  if (referrerDomains.length > REFERRER_PATHS_MAX_HOSTS) {
+    invalid('referrer_domain', `may name at most ${REFERRER_PATHS_MAX_HOSTS} hosts`)
+  }
+  if (referrerDomains.some((host) => host.length > MAX_FILTER_VALUE_LENGTH)) {
+    invalid('referrer_domain', `must be at most ${MAX_FILTER_VALUE_LENGTH} characters`)
+  }
+  const raw = query['limit']
+  let limit = 10
+  if (raw !== undefined) {
+    limit = Number(raw)
+    if (!Number.isInteger(limit) || limit < 1 || limit > REFERRER_PATHS_MAX_PER_HOST) {
+      invalid('limit', `must be an integer in [1, ${REFERRER_PATHS_MAX_PER_HOST}]`)
+    }
+  }
+  return { referrerDomains, limit }
 }
 
 export function parseLimit(query: Record<string, string | undefined>): number {
@@ -512,7 +560,39 @@ export function createAnalyticsRoutes(deps: {
       }),
     )
   })
-  reportRoute('sources', (s, req) => s.sources(req), { filterable: true })
+  // Sources, with its `group_by=channel` collapse; spelled out for the same
+  // reason pages is: it is the one report besides pages with a parameter of
+  // its own.
+  app.get(`${base}/sources`, async (c) => {
+    const { siteId } = c.get('membership')
+    const query = c.req.query()
+    return c.json(
+      await service.sources({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        limit: parseLimit(query),
+        filters: parseFilters(query),
+        groupBy: parseSourcesGroupBy(query),
+      }),
+    )
+  })
+  // The referring pages behind a Sources row (raw events, 92 days at most).
+  app.get(`${base}/sources/referrer-paths`, async (c) => {
+    const { siteId } = c.get('membership')
+    const query = c.req.query()
+    return c.json(
+      await service.referrerPaths({
+        siteId,
+        cacheEpoch: c.get('siteCacheEpoch'),
+        importPointer: c.get('siteImportPointer'),
+        ...parseRange(query),
+        filters: parseFilters(query),
+        ...parseReferrerPathsQuery(query, c.req.queries('referrer_domain')),
+      }),
+    )
+  })
   reportRoute('geography', (s, req) => s.geography(req), { filterable: true })
   reportRoute('devices', (s, req) => s.devices(req), { filterable: true })
   // Custom events, with their dashboard labels; see `customEventsWithLabels`.

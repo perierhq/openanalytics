@@ -22,6 +22,7 @@ export {
   REALTIME_BASE_URL,
 } from "./api-config";
 import { API_BASE_URL, COLLECTOR_BASE_URL } from "./api-config";
+import { sourcesReadParams } from "./source-rows";
 
 /** Auth cookies are host-only on the api host, so every call includes them. */
 export const api = new OpenAnalyticsClient({
@@ -69,6 +70,9 @@ export type AnalyticsPagesResponse = Schemas["AnalyticsPagesResponse"];
 export type PageRow = Schemas["PageRow"];
 export type AnalyticsSourcesResponse = Schemas["AnalyticsSourcesResponse"];
 export type SourceRow = Schemas["SourceRow"];
+export type SourceChannel = Schemas["SourceChannel"];
+export type ReferrerPathsResponse = Schemas["ReferrerPathsResponse"];
+export type ReferrerPathRow = Schemas["ReferrerPathRow"];
 export type AnalyticsGeographyResponse = Schemas["AnalyticsGeographyResponse"];
 export type GeographyRow = Schemas["GeographyRow"];
 export type AnalyticsDevicesResponse = Schemas["AnalyticsDevicesResponse"];
@@ -1703,15 +1707,54 @@ export function getVisitorTrail(
 export function getAnalyticsSources(
   siteId: string,
   range: AnalyticsRange,
-  options?: RequestOptions & { filters?: string }
+  options?: RequestOptions & { filters?: string; groupBy?: "channel" }
 ): Promise<AnalyticsSourcesResponse> {
-  const { filters, ...rest } = options ?? {};
+  const { filters, groupBy, ...rest } = options ?? {};
   return analyticsGet<AnalyticsSourcesResponse>(
     siteId,
     "sources",
     range,
     rest,
-    filters ? { filters } : undefined
+    sourcesReadParams({ groupBy, filters })
+  );
+}
+
+/**
+ * Sources with `group_by=channel`: one row per channel, summed by the api
+ * over the deepest tuple list it serves. The Channels cut reads this rather
+ * than folding the card's own top-100 tuple read.
+ */
+export function getAnalyticsChannels(
+  siteId: string,
+  range: AnalyticsRange,
+  options?: RequestOptions & { filters?: string }
+): Promise<AnalyticsSourcesResponse> {
+  return getAnalyticsSources(siteId, range, { ...options, groupBy: "channel" });
+}
+
+/**
+ * The referring pages behind a Sources row: the top paths per named host,
+ * query string and fragment removed. Read from the raw events, so the range
+ * is at most 92 days; filters apply as on the sources read itself.
+ */
+export function getReferrerPaths(
+  siteId: string,
+  range: AnalyticsRange,
+  hosts: readonly string[],
+  options?: RequestOptions & { filters?: string; limit?: number }
+): Promise<ReferrerPathsResponse> {
+  const { filters, limit, ...rest } = options ?? {};
+  const query = new URLSearchParams({
+    from: range.from,
+    to: range.to,
+    timezone: range.timezone,
+  });
+  for (const host of hosts) query.append("referrer_domain", host);
+  if (limit !== undefined) query.set("limit", String(limit));
+  if (filters) query.set("filters", filters);
+  return api.get<ReferrerPathsResponse>(
+    `/v1/sites/${encodeURIComponent(siteId)}/analytics/sources/referrer-paths?${query}`,
+    rest
   );
 }
 

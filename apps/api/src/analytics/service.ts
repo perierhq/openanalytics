@@ -1,7 +1,9 @@
 import { ApiError, buildCursorPage } from '@openanalytics/contracts'
 import type { components } from '@openanalytics/contracts'
 import {
+  classifyChannel,
   classifyImportedRange,
+  CHANNELS,
   coarsenPublicGeography,
   derivePreviousPeriod,
   hasActiveFilters,
@@ -9,6 +11,7 @@ import {
   mergeImportedRows,
   normalizeFilters,
   mergeSessionLayers,
+  referrerPathForDisplay,
   resolveAnalyticsSources,
   spansOneProviderDay,
   splitSessionRange,
@@ -146,6 +149,19 @@ export interface AnalyticsRequest extends CacheEpochScoped, ImportScoped {
 
 export interface AnalyticsReportRequest extends AnalyticsRequest {
   readonly limit: number
+}
+
+export interface AnalyticsSourcesRequest extends AnalyticsReportRequest {
+  /**
+   * `channel` collapses the tuples into one row per channel. Absent is the
+   * tuple list, every row carrying its channel.
+   */
+  readonly groupBy?: 'channel' | undefined
+}
+
+export interface AnalyticsReferrerPathsRequest extends AnalyticsReportRequest {
+  /** The referrer hosts to read paths for, as the sources rows spell them. */
+  readonly referrerDomains: readonly string[]
 }
 
 /** Which measure decides the pages report's top-N cut (ADR-0075, D-E2). */
@@ -1226,17 +1242,129 @@ export class AnalyticsService {
     return { byPath, complete: result.rows.length < fetchLimit, truncated: result.meta.truncated }
   }
 
-  async sources(req: AnalyticsReportRequest): Promise<Schemas['AnalyticsSourcesResponse']> {
-    const { meta, rows, imported } = await this.#report('sources', req)
+  /**
+   * Top sources, every tuple carrying its channel (`classifyChannel`, computed
+   * here at read time from the tuple itself — the rollup stores no channel).
+   *
+   * `groupBy: 'channel'` collapses the tuples into one row per channel. It
+   * reads the deepest tuple list the gateway serves rather than the caller's
+   * `limit`, because a channel total over the top ten tuples is not the
+   * channel's total, and it merges the live and imported lists without a cut:
+   * every tuple either list returned counts towards its channel. When either
+   * list came back full (`TOP_N_MAX` tuples) there may be more past it, so the
+   * totals are a floor and `meta.truncated` says so.
+   */
+  async sources(req: AnalyticsSourcesRequest): Promise<Schemas['AnalyticsSourcesResponse']> {
+    const byChannel = req.groupBy === 'channel'
+    const limit = byChannel ? TOP_N_MAX : req.limit
+    const { meta, rows, imported } = await this.#report('sources', { ...req, limit })
+    const items = mergeImportedRows(rows.map(mapSourceRow), imported.map(mapSourceRow), {
+      keyOf: (row) =>
+        [row.referrer_domain, row.utm_source, row.utm_medium, row.utm_campaign].join('\u0000'),
+      add: (a, b) => ({ ...a, views: a.views + b.views, visitors: a.visitors + b.visitors }),
+      rank: (row) => row.views,
+      limit: byChannel ? rows.length + imported.length : limit,
+    }) as Schemas['SourceRow'][]
+    if (!byChannel) return { meta, items }
+    const readFull = rows.length >= TOP_N_MAX || imported.length >= TOP_N_MAX
     return {
-      meta,
-      items: mergeImportedRows(rows.map(mapSourceRow), imported.map(mapSourceRow), {
-        keyOf: (row) =>
-          [row.referrer_domain, row.utm_source, row.utm_medium, row.utm_campaign].join('\u0000'),
-        add: (a, b) => ({ ...a, views: a.views + b.views, visitors: a.visitors + b.visitors }),
-        rank: (row) => row.views,
-        limit: req.limit,
-      }) as Schemas['AnalyticsSourcesResponse']['items'],
+      meta: readFull && !meta.truncated ? { ...meta, truncated: true } : meta,
+      items: collapseByChannel(items),
+    }
+  }
+
+  /**
+   * The referring pages behind one Sources row: the top paths per named host.
+   *
+   * Read from `events_raw` (the only table that keeps `referrer_path`), so it is
+   * held to the filtered family's 92-day cap and refused by name past it, before
+   * any query. A filter set routes to the filtered twin, so the paths under a
+   * filtered Sources card describe the same sessions the card does. Imported
+   * days carry no referrer path, so a range that reaches into them is `partial`.
+   */
+  async referrerPaths(
+    req: AnalyticsReferrerPathsRequest,
+  ): Promise<Schemas['ReferrerPathsResponse']> {
+    const resolved = resolveAggregate(req)
+    if (!resolved.servable) this.#notServable(resolved.reason)
+
+    const effective = { from: resolved.effectiveFrom, to: resolved.effectiveTo }
+    const spanDays = (Date.parse(effective.to) - Date.parse(effective.from)) / 86_400_000
+    if (spanDays > FILTERED_MAX_SPAN_DAYS) {
+      throw new ApiError(
+        'RANGE_TOO_LARGE',
+        `referring pages cover at most ${FILTERED_MAX_SPAN_DAYS} days`,
+        {
+          details: {
+            max_span_days: FILTERED_MAX_SPAN_DAYS,
+            requested_span_days: Number(spanDays.toFixed(2)),
+            reason: 'referring pages are read from the raw events, not from a rollup',
+          },
+        },
+      )
+    }
+
+    const hosts = [...new Set(req.referrerDomains)]
+    const filters = this.#filtersOf(req)
+    const operation =
+      filters.length > 0 ? 'analytics.filtered_referrer_paths' : 'analytics.referrer_paths'
+
+    const [result, freshness] = await Promise.all([
+      this.#gateway.query<Record<string, unknown>>(
+        operation,
+        {
+          site_id: req.siteId,
+          ...effective,
+          referrer_domains: hosts,
+          limit: req.limit,
+          ...(filters.length > 0 ? { filters } : {}),
+        },
+        { cacheEpoch: req.cacheEpoch },
+      ),
+      this.#freshness(req.siteId, req.cacheEpoch, null),
+    ])
+
+    // Redaction can make two stored paths one shown path (`/reset/<token>` →
+    // `/reset/[redacted]`), so the rows are merged after it. Visitors are
+    // summed: a visitor who arrived through two such links counts twice, the
+    // same over-count the dashboard's own folds make.
+    const order = new Map(hosts.map((host, index) => [host, index]))
+    const merged = new Map<string, Schemas['ReferrerPathRow']>()
+    for (const row of result.rows) {
+      const referrer_domain = str(row['referrer_domain'])
+      const path = referrerPathForDisplay(str(row['ref_path']))
+      if (path === '') continue
+      const key = `${referrer_domain}\u0000${path}`
+      const existing = merged.get(key)
+      merged.set(key, {
+        referrer_domain,
+        path,
+        views: num(row['views']) + (existing?.views ?? 0),
+        visitors: num(row['visitors']) + (existing?.visitors ?? 0),
+      })
+    }
+    const items = [...merged.values()].sort(
+      (a, b) =>
+        (order.get(a.referrer_domain) ?? hosts.length) -
+          (order.get(b.referrer_domain) ?? hosts.length) ||
+        b.visitors - a.visitors ||
+        b.views - a.views ||
+        (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+    )
+
+    return {
+      meta: this.#meta({
+        requested: { from: req.from, to: req.to },
+        effective,
+        timezone: req.timezone,
+        resolution: resolved.grain,
+        freshness,
+        comparisonRange: null,
+        truncated: result.meta.truncated,
+        cached: result.meta.cached,
+        partial: this.#filteredPartial(effective, req),
+      }),
+      items,
     }
   }
 
@@ -2848,14 +2976,55 @@ function pageRankOf(sort: PagesSort): (row: Schemas['PageRow']) => number {
 }
 
 function mapSourceRow(r: Record<string, unknown>): Schemas['SourceRow'] {
+  const referrer_domain = str(r['referrer_domain'])
+  const utm_source = str(r['utm_source'])
+  const utm_medium = str(r['utm_medium'])
   return {
-    referrer_domain: str(r['referrer_domain']),
-    utm_source: str(r['utm_source']),
-    utm_medium: str(r['utm_medium']),
+    referrer_domain,
+    utm_source,
+    utm_medium,
     utm_campaign: str(r['utm_campaign']),
+    // The rollup carries no click id, so none is passed: see `channel.ts`.
+    channel: classifyChannel({
+      referrerDomain: referrer_domain,
+      utmSource: utm_source,
+      utmMedium: utm_medium,
+    }),
     views: num(r['views']),
     visitors: num(r['visitors']),
   }
+}
+
+/**
+ * One row per channel: the tuple fields empty, views and visitors summed. A
+ * visitor who arrived through two tuples of one channel counts twice, the same
+ * over-count the dashboard's own folds make. Ranked by visitors, then views,
+ * then channel precedence, so equal channels come out in a stable order.
+ */
+function collapseByChannel(rows: readonly Schemas['SourceRow'][]): Schemas['SourceRow'][] {
+  const totals = new Map<Schemas['SourceChannel'], { views: number; visitors: number }>()
+  for (const row of rows) {
+    const total = totals.get(row.channel) ?? { views: 0, visitors: 0 }
+    total.views += row.views
+    total.visitors += row.visitors
+    totals.set(row.channel, total)
+  }
+  return [...totals.entries()]
+    .map(([channel, total]) => ({
+      referrer_domain: '',
+      utm_source: '',
+      utm_medium: '',
+      utm_campaign: '',
+      channel,
+      views: total.views,
+      visitors: total.visitors,
+    }))
+    .sort(
+      (a, b) =>
+        b.visitors - a.visitors ||
+        b.views - a.views ||
+        CHANNELS.indexOf(a.channel) - CHANNELS.indexOf(b.channel),
+    )
 }
 
 function mapDeviceRow(r: Record<string, unknown>): Schemas['DeviceRow'] {

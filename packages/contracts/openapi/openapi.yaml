@@ -1751,6 +1751,7 @@ paths:
       - $ref: '#/components/parameters/QueryTimezone'
       - $ref: '#/components/parameters/TopNLimit'
       - $ref: '#/components/parameters/AnalyticsFilters'
+      - $ref: '#/components/parameters/SourcesGroupBy'
     get:
       operationId: readAnalyticsSources
       tags: [read-key]
@@ -1766,6 +1767,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AnalyticsSourcesResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/MissingScopeOrSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/read/analytics/sources/referrer-paths:
+    parameters:
+      - $ref: '#/components/parameters/SiteSelector'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/ReferrerDomains'
+      - $ref: '#/components/parameters/ReferrerPathsLimit'
+      - $ref: '#/components/parameters/AnalyticsFilters'
+    get:
+      operationId: readAnalyticsReferrerPaths
+      tags: [read-key]
+      summary: Top referring pages for one or more referrer hosts.
+      description: |
+        The same read as `GET /v1/sites/{site_id}/analytics/sources/referrer-paths`,
+        under the same rules: at most 92 days, live data only, query strings,
+        fragments and `;` parameters removed, token- and email-shaped segments
+        redacted.
+
+        Requires the `analytics:read` scope.
+      security:
+        - privateApiKey: []
+        - oauthAccessToken: ['analytics:read']
+      responses:
+        '200':
+          description: Top referring pages per host.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferrerPathsResponse'
         '400':
           $ref: '#/components/responses/AnalyticsBadRange'
         '401':
@@ -3046,6 +3090,7 @@ paths:
       - $ref: '#/components/parameters/QueryTimezone'
       - $ref: '#/components/parameters/TopNLimit'
       - $ref: '#/components/parameters/AnalyticsFilters'
+      - $ref: '#/components/parameters/SourcesGroupBy'
     get:
       operationId: getAnalyticsSources
       tags: [analytics]
@@ -3057,6 +3102,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AnalyticsSourcesResponse'
+        '400':
+          $ref: '#/components/responses/AnalyticsBadRange'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/SiteSuspended'
+        '404':
+          $ref: '#/components/responses/SiteNotFound'
+        '503':
+          $ref: '#/components/responses/AnalyticsUnavailable'
+
+  /v1/sites/{site_id}/analytics/sources/referrer-paths:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/RangeFrom'
+      - $ref: '#/components/parameters/RangeTo'
+      - $ref: '#/components/parameters/QueryTimezone'
+      - $ref: '#/components/parameters/ReferrerDomains'
+      - $ref: '#/components/parameters/ReferrerPathsLimit'
+      - $ref: '#/components/parameters/AnalyticsFilters'
+    get:
+      operationId: getAnalyticsReferrerPaths
+      tags: [analytics]
+      summary: Top referring pages for one or more referrer hosts.
+      description: |
+        The pages on a referrer host that sent visits, for the hosts named in
+        `referrer_domain`: the path only, with the query string, fragment and
+        `;` parameters removed, token- and email-shaped segments redacted, and
+        at most 200 characters, ranked by visitors, at most `limit` per host.
+
+        A host that sent only its origin (`/`) or no path at all has no rows,
+        and most hosts are like that: a browser's default referrer policy
+        trims a cross-origin referrer to the origin. Read from the raw events,
+        so the range is at most 92 days and the read is live data only
+        (imported days carry no referrer path). Filters apply as on every other
+        breakdown.
+      responses:
+        '200':
+          description: Top referring pages per host.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferrerPathsResponse'
         '400':
           $ref: '#/components/responses/AnalyticsBadRange'
         '401':
@@ -9973,10 +10061,43 @@ components:
           items:
             $ref: '#/components/schemas/PageRow'
 
+    SourceChannel:
+      type: string
+      enum: [paid, email, affiliate, ai, organic_search, social, referral, direct]
+      description: |
+        The channel a source tuple belongs to, computed by the server from the
+        tuple's referrer host, `utm_source` and `utm_medium`. Rules are tried in
+        this order and the first match wins:
+
+        - `paid`: a paid `utm_medium` (cpc, ppc, paid, paidsearch, paid_search,
+          paidsocial, paid_social, paid_media, display, banner, cpm, ads).
+        - `email`: `utm_medium` email or newsletter, a `utm_source` naming a
+          newsletter or email tool, a `utm_source` of email or newsletter with
+          no `utm_medium`, or a webmail referrer.
+        - `affiliate`: `utm_medium` affiliate or partner.
+        - `ai`: an AI assistant referrer, or with no referrer a utm tag naming
+          one.
+        - `organic_search`: a search-engine referrer, `utm_medium` organic, or
+          with no referrer a `utm_source` naming an engine.
+        - `social`: a social-network referrer, a social `utm_medium`, or with no
+          referrer a `utm_source` naming a network.
+        - `referral`: any other referrer, or a visit with a `utm_source` or
+          `utm_medium` no rule matched.
+        - `direct`: no referrer, no `utm_source` and no `utm_medium`.
+          `utm_campaign` is not read: a link tagged with only a campaign and
+          no referrer is `direct`.
+
+        utm values compare case-insensitively, with `-`, `_` and spaces as one
+        separator. **An ad click without utm tags is not `paid` here**: a visit
+        that arrived with only a click id (`gclid`, `fbclid`, …) is stored under
+        the platform's host, and the sources rollup does not keep the click id,
+        so it reads as `organic_search` or `social`. Tag ad links with a paid
+        `utm_medium` to count them as `paid`.
+
     SourceRow:
       type: object
       additionalProperties: false
-      required: [referrer_domain, utm_source, utm_medium, utm_campaign, views, visitors]
+      required: [referrer_domain, utm_source, utm_medium, utm_campaign, channel, views, visitors]
       properties:
         referrer_domain:
           type: string
@@ -9992,6 +10113,8 @@ components:
           type: string
         utm_campaign:
           type: string
+        channel:
+          $ref: '#/components/schemas/SourceChannel'
         views:
           type: integer
           format: int64
@@ -10014,6 +10137,45 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SourceRow'
+
+    ReferrerPathRow:
+      type: object
+      additionalProperties: false
+      required: [referrer_domain, path, views, visitors]
+      properties:
+        referrer_domain:
+          type: string
+          description: The referrer host this page is on, as `SourceRow.referrer_domain` spells it.
+        path:
+          type: string
+          maxLength: 200
+          description: |
+            The referring page's path: no query string, no fragment and no
+            `;` parameters, at most 200 characters. A segment shaped like a
+            token or an email address reads `[redacted]`, and paths that become
+            the same after that are one row with their counts summed. Never
+            empty and never `/`.
+        views:
+          type: integer
+          format: int64
+        visitors:
+          type: integer
+          format: int64
+
+    ReferrerPathsResponse:
+      type: object
+      additionalProperties: false
+      required: [meta, items]
+      properties:
+        meta:
+          $ref: '#/components/schemas/AnalyticsMeta'
+        items:
+          type: array
+          description: |
+            Grouped by host in the order the hosts were named, each host's paths
+            ranked by visitors. Empty when no named host sent a path.
+          items:
+            $ref: '#/components/schemas/ReferrerPathRow'
 
     GeographyRow:
       type: object
@@ -14308,6 +14470,53 @@ components:
       schema:
         type: string
       example: '[{"dimension":"country","operator":"in","values":["US","CA"]}]'
+    SourcesGroupBy:
+      name: group_by
+      in: query
+      required: false
+      description: |
+        `channel` collapses the source tuples into one row per channel
+        (`SourceRow.channel`), with the referrer and utm fields empty and
+        `views` and `visitors` summed over the channel's tuples. A visitor who
+        arrived through two tuples of one channel counts twice, the same
+        over-count the dashboard's own folds make. The collapse reads the
+        deepest tuple list the report serves (500 live tuples, and 500 imported
+        ones on a range that reaches imported days), so the totals do not
+        depend on `limit`, and every tuple read counts towards its channel.
+        `meta.truncated` is true when a tuple list came back full, so there may
+        be tuples past it and the totals are a floor. Omitted, the response is
+        the tuple list, each row carrying its channel.
+      schema:
+        type: string
+        enum: [channel]
+    ReferrerDomains:
+      name: referrer_domain
+      in: query
+      required: true
+      description: |
+        The referrer hosts to read paths for, as repeated `referrer_domain=`
+        parameters (1–20), spelled as `SourceRow.referrer_domain` spells them.
+        A Sources row that folds several hosts (`x.com`, `t.co`) names them all.
+      schema:
+        type: array
+        minItems: 1
+        maxItems: 20
+        items:
+          type: string
+          minLength: 1
+          maxLength: 128
+      style: form
+      explode: true
+    ReferrerPathsLimit:
+      name: limit
+      in: query
+      required: false
+      description: The most paths returned per host, 1 to 20.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 20
+        default: 10
     PagesSort:
       name: sort
       in: query

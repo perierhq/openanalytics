@@ -399,6 +399,7 @@ describe('every read surface can ask the same question', () => {
     '/read/analytics/timeseries',
     '/read/analytics/pages',
     '/read/analytics/sources',
+    '/read/analytics/sources/referrer-paths',
     '/read/analytics/geography',
     '/read/analytics/devices',
   ]

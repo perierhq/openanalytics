@@ -76,6 +76,34 @@ export default function DashboardDocsPage() {
           looks lower than another tool&apos;s.
         </p>
         <p>
+          The Channels cut groups the same visits by how they arrived, and the
+          first rule that matches decides: Paid (a paid{" "}
+          <Code>utm_medium</Code> such as <Code>cpc</Code>), Email (an email
+          or newsletter tag, a newsletter tool as <Code>utm_source</Code>, or
+          a webmail referrer), Affiliate (<Code>utm_medium=affiliate</Code> or{" "}
+          <Code>partner</Code>), AI (the assistants in the AI referrals card),
+          Organic search (a search engine, or{" "}
+          <Code>utm_medium=organic</Code>), Social, Referral (any other site,
+          or a source or medium tag no rule names) and Direct (no referrer and
+          no source or medium tag; a link tagged with only{" "}
+          <Code>utm_campaign</Code> stays Direct). An ad click that carries
+          only the platform&apos;s click id, with no utm tag, is counted under
+          the platform&apos;s site, so it reads as Organic search or Social
+          rather than Paid; tag your ad links with a paid{" "}
+          <Code>utm_medium</Code> to see them as Paid. Channels show no
+          revenue.
+        </p>
+        <p>
+          In the Referrers list under See all, a row whose site sent visits
+          from a particular page opens to show those pages, such as a
+          Lobsters story or a GitHub README. Most sites send only their
+          address and no page, so most rows have nothing to open. Pages are
+          shown without their query string, and a part of the address that
+          looks like a token or an email address is shown as{" "}
+          <Code>[redacted]</Code>, because those links can carry one. Pages
+          are available for ranges up to 92 days.
+        </p>
+        <p>
           If you own the site and a payment provider is connected, the Sources
           card and the Entry pages cut of the Pages card also show revenue: a
           green part on each row&apos;s bar and the amount beside its number,
@@ -99,7 +127,9 @@ export default function DashboardDocsPage() {
           <Code>utm_source=chatgpt.com</Code> and Claude writes{" "}
           <Code>utm_source=Claude AI</Code>, and a click from their apps
           carries the tag with no referrer, so it is counted here rather than
-          filed under Direct. Each visit counts once. A referral is a click; being cited
+          filed under Direct. Each visit counts once, and it is the same set
+          the Channels cut counts as AI: a visit whose link also carries a
+          paid, email or affiliate tag is counted there instead. A referral is a click; being cited
           inside an answer without a click leaves no trace here, so a small
           number does not mean you are absent from AI answers. Clicks out of
           Google AI Overviews arrive as <Code>google.com</Code> and cannot be

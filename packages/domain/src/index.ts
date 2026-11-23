@@ -378,7 +378,11 @@ export {
 } from './event-sanitize.ts'
 
 export {
+  MAX_REFERRER_PATH_LENGTH,
+  REFERRER_PATHS_MAX_HOSTS,
+  REFERRER_PATHS_MAX_PER_HOST,
   canonicalReferrerHost,
+  referrerPathForDisplay,
   resolveReferrer,
   type ReferrerAttribution,
   type ReferrerContext,
@@ -387,6 +391,19 @@ export {
 export { CLICK_ID_SOURCES, clickIdSourceOf, type ClickIdSource } from './click-id.ts'
 
 export { REF_SOURCE_ALIASES, refSourceOf, type RefSource } from './ref-source.ts'
+export {
+  AI_ASSISTANT_HOSTS,
+  AI_ASSISTANT_TAGS,
+  CHANNELS,
+  EMAIL_TOOL_TAGS,
+  SEARCH_ENGINE_HOSTS,
+  SOCIAL_HOSTS,
+  WEBMAIL_HOSTS,
+  classifyChannel,
+  isChannel,
+  type Channel,
+  type ChannelInput,
+} from './channel.ts'
 
 export {
   FILTER_DIMENSIONS,
